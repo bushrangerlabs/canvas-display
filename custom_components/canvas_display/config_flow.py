@@ -5,7 +5,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_API_URL, DEFAULT_API_URL, DOMAIN
+from .const import CONF_API_URL, DOMAIN
 
 
 class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -29,7 +29,7 @@ class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
-                vol.Required(CONF_API_URL, default=DEFAULT_API_URL): cv.string,
+                vol.Required(CONF_API_URL): cv.string,
             }),
             errors=errors,
         )
@@ -54,7 +54,7 @@ class CanvasDisplayOptionsFlow(config_entries.OptionsFlow):
             else:
                 return self.async_create_entry(title="", data={CONF_API_URL: api_url})
 
-        current_url = self.config_entry.data.get(CONF_API_URL, DEFAULT_API_URL)
+        current_url = self.config_entry.data.get(CONF_API_URL, "")
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
