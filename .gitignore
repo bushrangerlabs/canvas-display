@@ -12,3 +12,6 @@ target/
 *.AppImage
 *.apk
 *.deb
+
+# Local dev server binary (not the sidecar)
+server/server
