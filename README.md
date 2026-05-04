@@ -1,36 +1,52 @@
-# Canvas UI Platform
+# Canvas Display
 
 > [!WARNING]
 > **Work in progress — not ready for use.** This project is in early active development. There are no stable releases, the API will change without notice, and nothing is production-ready yet. Come back later.
 
-The next generation of Canvas UI — a fully standalone display management platform for smart homes and kiosk deployments. **This project replaces the [canvas-ui HACS integration](https://github.com/bushrangerlabs/canvas-ui).** It has everything canvas-ui has (the full drag-and-drop editor, all widgets, Home Assistant entity integration) plus a standalone server, multi-device management, and a native Tauri app for Linux and Android. No Home Assistant required to run it.
+A fully standalone display management platform for smart homes and kiosk deployments. Canvas Display is a companion to [Canvas UI](https://github.com/bushrangerlabs/canvas-ui) — while Canvas UI embeds a canvas viewer panel inside Home Assistant, Canvas Display runs as a native kiosk app with its own server, giving you full control of what's shown on dedicated display devices.
 
 ## Packages
 
 | Package | Description |
 |---|---|
-| `server/` | Node.js + SQLite backend — central config store, REST API, real-time WebSocket sync, device management |
-| `web/` | React SPA — the full drag-and-drop canvas editor, all widgets, HA data source config, device management UI |
-| `browser/` | Tauri native app — kiosk display client for Linux (AppImage) and Android (APK), connects to server for views and HA for live entity data |
+| `server/` | Node.js + SQLite backend — config store, REST API, real-time WebSocket sync, MQTT command/control |
+| `web/` | React admin SPA — page/panel editor, device settings, dashboard |
+| `browser/` | Tauri native app — kiosk display client for Linux, connects to server for page assignments and HA for live entity data |
+| `custom_components/canvas_display/` | Home Assistant custom component — exposes Canvas Display devices as HA entities for automations |
 
 ## Architecture
 
 ```
-Canvas UI Server (server/)
-  ├── SQLite database — views, devices, assignments
-  ├── REST API — CRUD for views, devices, data sources
-  └── WebSocket — real-time push to all connected clients
+Canvas Display Server (server/)
+  ├── SQLite database — pages, panels, settings
+  ├── REST API — CRUD for pages/panels, settings, MQTT config
+  └── WebSocket — real-time page push to connected kiosk clients
 
-Canvas UI Web (web/)
-  ├── Full drag-drop view editor (uses existing widget library)
-  └── Device management UI
+Canvas Display Web (web/)
+  ├── Dashboard — server status, active page, quick-activate
+  ├── Pages editor — drag/resize panels, URL assignment
+  └── Settings — MQTT broker config, device name, canvas defaults
 
-Canvas UI Browser (browser/)
-  ├── Tauri — Linux AppImage + Android APK
-  ├── Connects to server for config
-  ├── Connects to HA for entity data
-  └── MQTT command/control
+Canvas Display Browser (browser/)
+  ├── Tauri — Linux deb/AppImage
+  ├── Connects to server for page assignments
+  ├── Connects to HA for entity data (Canvas UI widgets)
+  └── Receives MQTT commands for page changes and panel navigation
 ```
+
+## MQTT Control
+
+Once connected to an MQTT broker, Canvas Display publishes state and subscribes to commands:
+
+```
+canvas_display/{device_name}/state              ← device online/offline + active page
+canvas_display/{device_name}/cmd/page           → {"page": "my page name"}
+canvas_display/{device_name}/cmd/navigate       → {"panel": "panel name", "url": "https://..."}
+canvas_display/{device_name}/cmd/reload         → {}
+canvas_display/{device_name}/cmd/quit           → {}
+```
+
+Both device name and IDs are accepted in topic and payload fields.
 
 ## Getting Started
 
@@ -55,4 +71,4 @@ npm run dev
 
 ## Related
 
-- [canvas-ui](https://github.com/bushrangerlabs/canvas-ui) — HACS panel for Home Assistant
+- [Canvas UI](https://github.com/bushrangerlabs/canvas-ui) — HACS panel that embeds the canvas editor and viewer inside Home Assistant
