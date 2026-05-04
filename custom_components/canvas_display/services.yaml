@@ -1,0 +1,87 @@
+set_page:
+  name: Set Page
+  description: >
+    Push a page to the Canvas Display device, making it the active display.
+    Accepts either the page name or page ID.
+  fields:
+    page:
+      name: Page
+      description: The name or ID of the page to display.
+      required: true
+      example: "Weather Dashboard"
+      selector:
+        text:
+    device_name:
+      name: Device Name
+      description: >
+        Name of the Canvas Display device to target (as shown in the integration
+        title). Leave empty to target all connected devices.
+      required: false
+      example: "Living Room Display"
+      selector:
+        text:
+
+navigate_panel:
+  name: Navigate Panel
+  description: >
+    Send a URL to a specific panel on the active page of a Canvas Display device.
+    Accepts panel name or panel ID. Optionally scope to a page when multiple
+    pages have a panel with the same name.
+  fields:
+    panel:
+      name: Panel
+      description: The name or ID of the panel to navigate.
+      required: true
+      example: "main"
+      selector:
+        text:
+    url:
+      name: URL
+      description: The URL to load in the panel.
+      required: true
+      example: "https://example.com"
+      selector:
+        text:
+    page:
+      name: Page (scope)
+      description: >
+        Optional page name or ID to scope the panel lookup. Useful when panels
+        on different pages share the same name.
+      required: false
+      example: "Weather Dashboard"
+      selector:
+        text:
+    device_name:
+      name: Device Name
+      description: >
+        Name of the Canvas Display device to target. Leave empty to target all.
+      required: false
+      example: "Living Room Display"
+      selector:
+        text:
+
+reload:
+  name: Reload Display
+  description: Reload the browser display on a Canvas Display device.
+  fields:
+    device_name:
+      name: Device Name
+      description: >
+        Name of the Canvas Display device to target. Leave empty to target all.
+      required: false
+      example: "Living Room Display"
+      selector:
+        text:
+
+quit:
+  name: Quit Display
+  description: Show the quit dialog on a Canvas Display device.
+  fields:
+    device_name:
+      name: Device Name
+      description: >
+        Name of the Canvas Display device to target. Leave empty to target all.
+      required: false
+      example: "Living Room Display"
+      selector:
+        text:

@@ -10,6 +10,7 @@ import { initWss } from './ws/index';
 import { haRoutes } from './routes/ha';
 import { pageRoutes } from './routes/pages';
 import { settingsRoutes } from './routes/settings';
+import { commandRoutes } from './routes/commands';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 
 async function main() {
@@ -29,6 +30,7 @@ async function main() {
   await app.register(haRoutes,       { prefix: '/api' });
   await app.register(pageRoutes,     { prefix: '/api' });
   await app.register(settingsRoutes, { prefix: '/api' });
+  await app.register(commandRoutes,  { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────
   // config.staticDir resolves to: STATIC_DIR env (set by Tauri), or

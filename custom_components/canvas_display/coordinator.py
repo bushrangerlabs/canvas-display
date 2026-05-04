@@ -80,6 +80,74 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if resp.status not in (200, 204):
                 raise Exception(f"Failed to push page: HTTP {resp.status}")
 
+    async def async_set_page(self, page: str) -> None:
+        """POST /api/commands/page — set active page by name or ID."""
+        session = self._get_session()
+        # Try as ID first; if it looks like a name send it as 'page' (name lookup)
+        pages_by_id: dict = (self.data or {}).get("pages", {})
+        page_names: dict = (self.data or {}).get("page_names", {})
+        if page in pages_by_id:
+            body = {"page_id": page}
+        elif page in page_names:
+            body = {"page_id": page_names[page]}
+        else:
+            # Let the server resolve it (case-insensitive name match)
+            body = {"page": page}
+        async with session.post(
+            f"{self.api_url}/api/commands/page",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                text = await resp.text()
+                raise Exception(f"set_page failed: HTTP {resp.status} — {text}")
+        await self.async_request_refresh()
+
+    async def async_navigate_panel(self, panel: str, url: str, page: str | None = None) -> None:
+        """POST /api/commands/navigate — send URL to a panel by name or ID."""
+        session = self._get_session()
+        body: dict = {"url": url}
+        # Determine if panel is an ID or a name
+        all_panels = {
+            p["id"]: p
+            for pg in (self.data or {}).get("pages", {}).values()
+            for p in pg.get("panels", [])
+        }
+        if panel in all_panels:
+            body["panel_id"] = panel
+        else:
+            body["panel"] = panel
+        if page:
+            body["page"] = page
+        async with session.post(
+            f"{self.api_url}/api/commands/navigate",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                text = await resp.text()
+                raise Exception(f"navigate_panel failed: HTTP {resp.status} — {text}")
+
+    async def async_reload(self) -> None:
+        """POST /api/commands/reload — reload the browser display."""
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/commands/reload",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"reload failed: HTTP {resp.status}")
+
+    async def async_quit(self) -> None:
+        """POST /api/commands/quit — show quit dialog on the display."""
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/commands/quit",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"quit failed: HTTP {resp.status}")
+
     async def async_shutdown(self) -> None:
         """Close the aiohttp session on unload."""
         if self._session and not self._session.closed:
