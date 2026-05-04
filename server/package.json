@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
-    "build:sidecar": "tsc && cp -r public ../browser/linux/src-tauri/binaries/public && npx pkg dist/index.js --target node20-linux-x64 --compress GZip --output ../browser/linux/src-tauri/binaries/canvas-display-server-x86_64-unknown-linux-gnu"
+    "build:sidecar": "tsc && rm -rf ../browser/linux/src-tauri/binaries/public && cp -r public ../browser/linux/src-tauri/binaries/public && npx pkg dist/index.js --target node20-linux-x64 --compress GZip --output ../browser/linux/src-tauri/binaries/canvas-display-server-x86_64-unknown-linux-gnu"
   },
   "pkg": {
     "targets": ["node20-linux-x64"],
