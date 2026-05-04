@@ -1,4 +1,4 @@
-"""DataUpdateCoordinator for Canvas UI Platform — fetches devices and pages."""
+"""DataUpdateCoordinator for Canvas Display — fetches settings and pages."""
 from __future__ import annotations
 
 import logging
@@ -9,13 +9,15 @@ import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=30)
 
 
-class CanvasUIPlatformCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Polls the Canvas UI Platform server for devices and pages."""
+class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Polls the Canvas Display server for settings and pages."""
 
     def __init__(self, hass: HomeAssistant, api_url: str) -> None:
         self.api_url = api_url.rstrip("/")
@@ -23,7 +25,7 @@ class CanvasUIPlatformCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(
             hass,
             _LOGGER,
-            name="Canvas UI Platform",
+            name="Canvas Display",
             update_interval=SCAN_INTERVAL,
         )
 
@@ -33,52 +35,50 @@ class CanvasUIPlatformCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._session
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch devices and pages from the platform API."""
+        """Fetch settings and pages from the Canvas Display API."""
         session = self._get_session()
         try:
             async with session.get(
-                f"{self.api_url}/api/devices", timeout=aiohttp.ClientTimeout(total=10)
+                f"{self.api_url}/health",
+                timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
-                if resp.status != 200:
-                    raise UpdateFailed(f"Devices API returned {resp.status}")
-                devices: list[dict] = await resp.json()
+                online = resp.status == 200
 
             async with session.get(
-                f"{self.api_url}/api/pages", timeout=aiohttp.ClientTimeout(total=10)
+                f"{self.api_url}/api/settings",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    raise UpdateFailed(f"Settings API returned {resp.status}")
+                settings: dict = await resp.json()
+
+            async with session.get(
+                f"{self.api_url}/api/pages",
+                timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"Pages API returned {resp.status}")
                 pages: list[dict] = await resp.json()
 
         except aiohttp.ClientError as err:
-            raise UpdateFailed(f"Cannot connect to Canvas UI Platform at {self.api_url}: {err}") from err
+            raise UpdateFailed(f"Cannot connect to Canvas Display at {self.api_url}: {err}") from err
 
         return {
-            "devices": {d["id"]: d for d in devices},
+            "online": online,
+            "settings": settings,
             "pages": {p["id"]: p for p in pages},
+            "page_names": {p["name"]: p["id"] for p in pages},
         }
 
-    async def async_set_device_page(self, device_id: str, page_id: str) -> None:
-        """PATCH assigned_page_id on a device (server pushes load_page to kiosk)."""
+    async def async_push_page(self, page_id: str) -> None:
+        """POST /api/pages/{id}/push — activates page on the kiosk."""
         session = self._get_session()
-        async with session.patch(
-            f"{self.api_url}/api/devices/{device_id}",
-            json={"assigned_page_id": page_id},
+        async with session.post(
+            f"{self.api_url}/api/pages/{page_id}/push",
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status not in (200, 204):
-                raise Exception(f"Failed to set page: HTTP {resp.status}")
-
-    async def async_navigate_panel(self, device_id: str, panel_id: str, url: str) -> None:
-        """Send a navigate_panel command to a device (live, ephemeral)."""
-        session = self._get_session()
-        async with session.post(
-            f"{self.api_url}/api/devices/{device_id}/command",
-            json={"action": "navigate_panel", "payload": {"panel_id": panel_id, "url": url}},
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status not in (200, 202):
-                raise Exception(f"Failed to send navigate_panel: HTTP {resp.status}")
+                raise Exception(f"Failed to push page: HTTP {resp.status}")
 
     async def async_shutdown(self) -> None:
         """Close the aiohttp session on unload."""

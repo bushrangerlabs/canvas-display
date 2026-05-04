@@ -1,4 +1,4 @@
-"""Config flow for Canvas UI Platform companion integration."""
+"""Config flow for Canvas Display integration."""
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
@@ -8,8 +8,8 @@ from homeassistant.helpers import config_validation as cv
 from .const import CONF_API_URL, DEFAULT_API_URL, DOMAIN
 
 
-class CanvasUIPlatformConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow for Canvas UI Platform."""
+class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Config flow for Canvas Display."""
 
     VERSION = 1
 
@@ -25,10 +25,9 @@ class CanvasUIPlatformConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if error:
                 errors["base"] = error
             else:
-                return self.async_create_entry(
-                    title="Canvas UI Platform",
-                    data={CONF_API_URL: api_url},
-                )
+                # Use device_name from server as the entry title
+                title = await _get_device_name(api_url) or "Canvas Display"
+                return self.async_create_entry(title=title, data={CONF_API_URL: api_url})
 
         return self.async_show_form(
             step_id="user",
@@ -38,22 +37,13 @@ class CanvasUIPlatformConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_import(self, _):
-        """Handle YAML import."""
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
-        return self.async_create_entry(
-            title="Canvas UI Platform",
-            data={CONF_API_URL: DEFAULT_API_URL},
-        )
-
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        return CanvasUIPlatformOptionsFlow(config_entry)
+        return CanvasDisplayOptionsFlow(config_entry)
 
 
-class CanvasUIPlatformOptionsFlow(config_entries.OptionsFlow):
+class CanvasDisplayOptionsFlow(config_entries.OptionsFlow):
     """Allow changing the API URL after setup."""
 
     async def async_step_init(self, user_input=None):
@@ -78,15 +68,31 @@ class CanvasUIPlatformOptionsFlow(config_entries.OptionsFlow):
 
 
 async def _test_connection(api_url: str) -> str | None:
-    """Return error key string if connection fails, None if OK."""
+    """Return error key if connection fails, None if OK."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{api_url}/api/devices",
+                f"{api_url}/health",
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status != 200:
                     return "cannot_connect"
     except aiohttp.ClientError:
         return "cannot_connect"
+    return None
+
+
+async def _get_device_name(api_url: str) -> str | None:
+    """Fetch device_name from /api/settings to use as entry title."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{api_url}/api/settings",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("device_name")
+    except Exception:
+        pass
     return None
