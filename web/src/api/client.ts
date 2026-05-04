@@ -61,17 +61,6 @@ export const viewsApi = {
   duplicate: (id: string) => api.post<ServerView>(`/api/views/${id}/duplicate`),
 };
 
-// ── Devices ───────────────────────────────────────────────────────────────────
-
-import type { Device } from '../types';
-
-export const devicesApi = {
-  list: () => api.get<Device[]>('/api/devices'),
-  get: (id: string) => api.get<Device>(`/api/devices/${id}`),
-  patch: (id: string, data: Partial<Device>) => api.patch<Device>(`/api/devices/${id}`, data),
-  assignView: (deviceId: string, viewId: string) =>
-    api.post<void>(`/api/devices/${deviceId}/assign-view`, { viewId }),
-};
 
 // ── Pages ──────────────────────────────────────────────────────────────────────
 

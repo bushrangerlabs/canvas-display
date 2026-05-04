@@ -1,3 +1,4 @@
+import './pkg-native-patch'; // MUST be first — extracts better_sqlite3.node from pkg snapshot
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -6,9 +7,10 @@ import path from 'path';
 import { config } from './config';
 import { initDb } from './db/index';
 import { initWss } from './ws/index';
-import { deviceRoutes } from './routes/devices';
 import { haRoutes } from './routes/ha';
 import { pageRoutes } from './routes/pages';
+import { settingsRoutes } from './routes/settings';
+import { connectMqtt, disconnectMqtt } from './mqtt/index';
 
 async function main() {
   // ── Database ──────────────────────────────────────────────────────────────
@@ -24,12 +26,14 @@ async function main() {
   await app.register(jwt, { secret: config.jwtSecret });
 
   // ── Routes ────────────────────────────────────────────────────────────────
-  await app.register(deviceRoutes, { prefix: '/api' });
-  await app.register(haRoutes,     { prefix: '/api' });
-  await app.register(pageRoutes,   { prefix: '/api' });
+  await app.register(haRoutes,       { prefix: '/api' });
+  await app.register(pageRoutes,     { prefix: '/api' });
+  await app.register(settingsRoutes, { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────
-  const webRoot = path.join(__dirname, '..', 'public');
+  // config.staticDir resolves to: STATIC_DIR env (set by Tauri), or
+  // public/ beside the binary (standalone pkg), or ./public (dev).
+  const webRoot = config.staticDir;
   await app.register(staticFiles, {
     root: webRoot,
     prefix: '/',
@@ -69,11 +73,17 @@ async function main() {
     console.log(`  API   →  http://${host}:${config.port}/api`);
     console.log(`  WS    →  ws://${host}:${config.port}/ws`);
     console.log(`  DB    →  ${config.dbPath}\n`);
+
+    // Start MQTT client if configured
+    await connectMqtt();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
+
+process.on('SIGTERM', () => { disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  () => { disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

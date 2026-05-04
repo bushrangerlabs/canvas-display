@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
 import { getDb } from '../db/index';
 import { broadcast, sendCommand, getConnectedDeviceIds } from '../ws/index';
+import { publishDeviceState } from '../mqtt/index';
 
 export async function deviceRoutes(app: FastifyInstance) {
 
@@ -83,12 +84,15 @@ export async function deviceRoutes(app: FastifyInstance) {
       vals.push(req.params.id);
       db.prepare(`UPDATE devices SET ${fields.join(', ')} WHERE id=?`).run(...vals);
 
-      // If assigned page changed, push load_view to the device immediately
+      // If assigned page changed, push load_page to the device immediately
       if (body.assigned_page_id) {
         const page = db.prepare('SELECT * FROM pages WHERE id = ?').get(body.assigned_page_id) as any;
-        if (page?.canvas_view_id) {
-          sendCommand(req.params.id, { type: 'load_view', canvas_view_id: page.canvas_view_id });
+        if (page) {
+          const panels = db.prepare('SELECT * FROM page_panels WHERE page_id=? ORDER BY position, id').all(body.assigned_page_id);
+          const pageData = { ...page, floating_config: page.floating_config ? JSON.parse(page.floating_config) : null, panels };
+          sendCommand(req.params.id, { type: 'load_page', page_id: body.assigned_page_id, page_data: pageData });
         }
+        publishDeviceState(req.params.id);
       }
     }
     return db.prepare('SELECT * FROM devices WHERE id = ?').get(req.params.id);

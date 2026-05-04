@@ -120,43 +120,6 @@ export interface ServerView {
   updated_at: string;
 }
 
-// ── Devices ──────────────────────────────────────────────────────────────────
-
-export interface Device {
-  id: string;
-  name: string;
-  description?: string;
-  platform?: string;
-  slug?: string;
-  /** The page currently assigned to this device */
-  assigned_page_id?: string | null;
-  ip_address?: string;
-  app_version?: string;
-  screen_width?: number;
-  screen_height?: number;
-  pixel_ratio?: number;
-  connected: boolean;
-  last_seen?: string;
-  metadata?: Record<string, any>;
-}
-
-// ── Schedules ────────────────────────────────────────────────────────────────
-
-export interface ScheduleEntry {
-  viewId: string;
-  viewName: string;
-  duration: number;   // seconds
-}
-
-export interface Schedule {
-  id: string;
-  name: string;
-  entries: ScheduleEntry[];
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 // ── Pages ────────────────────────────────────────────────────────────────────
 
 export interface PagePanel {

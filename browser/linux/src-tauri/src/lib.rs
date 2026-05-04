@@ -1,8 +1,13 @@
 use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::ShellExt;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]
 use libc;
+
+// ─── Sidecar state ──────────────────────────────────────────────────────────
+
+struct ServerChild(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
 // ─── Crash Log ────────────────────────────────────────────────────────────────
 
@@ -285,7 +290,42 @@ pub fn run() {
             create_panel_webview,
         ])
         .setup(|app| {
-            klog("setup: disabling GPU on main window");
+            // ── Spawn embedded server sidecar ──────────────────────────────
+            let data_dir = app.path().app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/canvas-ui"));
+            std::fs::create_dir_all(&data_dir).ok();
+            let data_dir_str = data_dir.to_string_lossy().to_string();
+            klog(&format!("setup: data dir = {}", data_dir_str));
+
+            // Pass resource dir so sidecar can locate native .node bindings and static assets
+            let binaries_resource_dir = app.path().resource_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+                .join("binaries");
+            let binaries_dir_str = binaries_resource_dir.to_string_lossy().to_string();
+            let static_dir_str = binaries_resource_dir.join("public").to_string_lossy().to_string();
+            klog(&format!("setup: resource binaries dir = {}", binaries_dir_str));
+
+            match app.shell()
+                .sidecar("canvas-ui-server")
+                .expect("canvas-ui-server sidecar not found")
+                .env("CANVAS_DATA_DIR", &data_dir_str)
+                .env("NATIVE_BINDING_DIR", &binaries_dir_str)
+                .env("STATIC_DIR", &static_dir_str)
+                .env("PORT", "3100")
+                .env("HOST", "0.0.0.0")
+                .spawn()
+            {
+                Ok((_rx, child)) => {
+                    klog("setup: canvas-ui-server sidecar started");
+                    app.manage(ServerChild(Mutex::new(Some(child))));
+                }
+                Err(e) => {
+                    klog(&format!("setup: failed to start sidecar: {}", e));
+                    // Non-fatal — app still works without the server (kiosk display only)
+                    app.manage(ServerChild(Mutex::new(None)));
+                }
+            }
+
             #[cfg(target_os = "linux")]
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.with_webview(|wv| {
@@ -307,6 +347,19 @@ pub fn run() {
             klog("setup: done");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Canvas UI");
+        .build(tauri::generate_context!())
+        .expect("error building Canvas UI")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill the embedded server on exit
+                if let Some(state) = app_handle.try_state::<ServerChild>() {
+                    if let Ok(mut guard) = state.0.lock() {
+                        if let Some(child) = guard.take() {
+                            klog("exit: killing canvas-ui-server sidecar");
+                            let _ = child.kill();
+                        }
+                    }
+                }
+            }
+        });
 }

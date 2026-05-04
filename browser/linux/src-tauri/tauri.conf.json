@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
-  "productName": "Canvas UI",
+  "productName": "Canvas Display",
   "version": "0.1.92",
-  "identifier": "com.bushrangerlabs.canvas-ui-browser",
+  "identifier": "com.bushrangerlabs.canvas-display-browser",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Canvas UI",
+        "title": "Canvas Display",
         "width": 1920,
         "height": 1080,
         "fullscreen": true,
@@ -28,6 +28,13 @@
   "bundle": {
     "active": true,
     "targets": ["appimage", "deb"],
+    "externalBin": [
+      "binaries/canvas-display-server"
+    ],
+    "resources": {
+      "binaries/better_sqlite3.node": "binaries/better_sqlite3.node",
+      "binaries/public": "binaries/public"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

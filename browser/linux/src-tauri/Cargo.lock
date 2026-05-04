@@ -369,7 +369,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "canvas-ui-browser-linux"
+name = "canvas-display-browser-linux"
 version = "0.1.0"
 dependencies = [
  "libc",

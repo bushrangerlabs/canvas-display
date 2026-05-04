@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
-import DevicesPage from './pages/DevicesPage';
+import NavLayout from './components/NavLayout';
+import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import PagesPage from './pages/PagesPage';
 
@@ -31,12 +32,14 @@ export default function App() {
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
       <BrowserRouter basename={getBasename()}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/devices" replace />} />
-          <Route path="/devices" element={<DevicesPage />} />
-          <Route path="/pages" element={<PagesPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+        <NavLayout>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/pages" element={<PagesPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </NavLayout>
       </BrowserRouter>
     </ThemeProvider>
   );

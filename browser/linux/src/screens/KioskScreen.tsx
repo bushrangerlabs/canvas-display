@@ -253,33 +253,24 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   // Cleanup on unmount
   useEffect(() => () => { closeAllPanelWindows(); }, []);
 
-  // ── Device registration with automatic retry ──────────────────────────
-  // Retries indefinitely with capped backoff — handles the kiosk starting
-  // before the server (add-on) is ready.
+  // ── Wait for server ready with automatic retry ───────────────────────
+  // Polls /health until the server responds — handles the kiosk starting
+  // before the server (sidecar) is ready.
   useEffect(() => {
     let cancelled = false;
 
+    // Ensure we have a stable local device ID (no server round-trip needed)
+    const localId = config.deviceId || nanoid(10);
+    if (!config.deviceId) {
+      saveDeviceId(localId);
+      setDeviceId(localId);
+    }
+
     async function attempt(n: number) {
       try {
-        const id = config.deviceId || nanoid(10);
-        const res = await fetch(`${config.serverUrl}/api/devices/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id,
-            name:         config.deviceName,
-            platform:     'linux',
-            app_version:  '0.1.0',
-            screen_width:  window.screen.width,
-            screen_height: window.screen.height,
-            pixel_ratio:   window.devicePixelRatio,
-          }),
-        });
-        if (!res.ok) throw new Error(`Registration failed: ${res.status}`);
-        const device = await res.json();
+        const res = await fetch(`${config.serverUrl}/health`);
+        if (!res.ok) throw new Error(`Server not ready: ${res.status}`);
         if (cancelled) return;
-        await saveDeviceId(device.id);
-        setDeviceId(device.id);
         setRetryCount(0);
         setAppState('ready');
       } catch (e) {
@@ -298,7 +289,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       cancelled = true;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
-  }, [config.serverUrl, config.deviceId, config.deviceName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [config.serverUrl, config.deviceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Open native WebviewWindow panels ─────────────────────────────────────
   const openPanelWindows = useCallback(async (panels: PagePanel[], floating: FloatingConfig | null) => {
@@ -377,7 +368,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
             y:             window.screenY ?? 0,
             width:         sw,
             height:        sh,
-            title:         'Canvas UI',
+            title:         'Canvas Display',
             visible:       true,
             ingressSession: null,
             initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
@@ -493,7 +484,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         y:             window.screenY ?? 0,
         width:         sw,
         height:        sh,
-        title:         'Canvas UI',
+        title:         'Canvas Display',
         visible:       true,
         ingressSession: null,
         initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
@@ -558,7 +549,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
 
       {/* Quit confirmation dialog — triggered by add-on or settings */}
       <Dialog open={showQuitDialog} onClose={() => setShowQuitDialog(false)}>
-        <DialogTitle>Quit Canvas UI?</DialogTitle>
+        <DialogTitle>Quit Canvas Display?</DialogTitle>
         <DialogContent>
           <DialogContentText>This will close the kiosk app.</DialogContentText>
         </DialogContent>

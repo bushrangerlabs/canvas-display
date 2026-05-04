@@ -58,10 +58,10 @@ export default function SettingsScreen({ onSaved, isEditing, existingConfig, onC
     }}>
       <Paper elevation={4} sx={{ width: '100%', maxWidth: 480, p: 4, borderRadius: 3 }}>
         <Typography variant="h5" fontWeight={700} gutterBottom>
-          Canvas UI — Device Setup
+          Canvas Display — Device Setup
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          {isEditing ? 'Update device configuration' : 'Configure this device to connect to your Canvas UI server and Home Assistant.'}
+          {isEditing ? 'Update device configuration' : 'Configure this device to connect to your Canvas Display server and Home Assistant.'}
         </Typography>
 
         <Divider sx={{ mb: 3 }} />
@@ -70,15 +70,15 @@ export default function SettingsScreen({ onSaved, isEditing, existingConfig, onC
           fullWidth label="Device Name" value={deviceName}
           onChange={e => setDeviceName(e.target.value)}
           placeholder="Kitchen Tablet"
-          helperText="How this device appears in the Canvas UI server"
+          helperText="How this device appears in the Canvas Display server"
           sx={{ mb: 2 }}
         />
 
         <TextField
-          fullWidth label="Canvas UI Server URL" value={serverUrl}
+          fullWidth label="Canvas Display Server URL" value={serverUrl}
           onChange={e => setServerUrl(e.target.value)}
           placeholder="http://192.168.1.10:3000"
-          helperText="Base URL of your canvas-ui-platform server"
+          helperText="Base URL of your Canvas Display server"
           sx={{ mb: 2 }}
         />
 

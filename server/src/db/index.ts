@@ -222,4 +222,39 @@ const migrations: Array<{
       `);
     },
   },
+  {
+    version: 5,
+    name: 'seed default server_settings',
+    up: (db) => {
+      const defaults: Record<string, string> = {
+        device_name:     'Canvas UI Device',
+        server_port:     '3100',
+        mqtt_enabled:    '0',
+        mqtt_broker_url: 'mqtt://localhost:1883',
+        mqtt_username:   '',
+        mqtt_password:   '',
+      };
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO server_settings (key, value, updated_at)
+        VALUES (?, ?, datetime('now'))
+      `);
+      for (const [key, value] of Object.entries(defaults)) {
+        insert.run(key, value);
+      }
+    },
+  },
+  {
+    version: 6,
+    name: 'active_page_id and device_id settings',
+    up: (db) => {
+      const { nanoid } = require('nanoid') as typeof import('nanoid');
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO server_settings (key, value, updated_at)
+        VALUES (?, ?, datetime('now'))
+      `);
+      insert.run('active_page_id', '');
+      // Stable UUID used for MQTT topic: canvas_ui/{device_id}/...
+      insert.run('device_id', nanoid(12));
+    },
+  },
 ];

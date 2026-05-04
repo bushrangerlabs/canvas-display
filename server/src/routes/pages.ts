@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
 import { getDb } from '../db/index';
-import { sendCommand } from '../ws/index';
+import { broadcast } from '../ws/index';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -108,22 +108,19 @@ export async function pageRoutes(app: FastifyInstance) {
     const db = getDb();
     if (!db.prepare('SELECT id FROM pages WHERE id = ?').get(req.params.id))
       return reply.code(404).send({ error: 'Page not found' });
-    db.prepare('UPDATE devices SET assigned_page_id=NULL WHERE assigned_page_id=?').run(req.params.id);
     db.prepare('DELETE FROM pages WHERE id = ?').run(req.params.id);
     return { success: true };
   });
 
-  // POST /api/pages/:id/push  — push load_page to all assigned devices
+  // POST /api/pages/:id/push  — push load_page to all connected browser clients
   app.post<{ Params: { id: string } }>('/pages/:id/push', async (req, reply) => {
     const db = getDb();
     const page = getPageWithPanels(db, req.params.id);
     if (!page) return reply.code(404).send({ error: 'Page not found' });
-
-    const devices = db.prepare('SELECT id FROM devices WHERE assigned_page_id=?').all(page.id) as any[];
-    for (const dev of devices) {
-      sendCommand(dev.id, { type: 'load_page', page_id: page.id, page_data: page });
-    }
-    return { pushed_to: devices.length };
+    // Store as active page in settings
+    db.prepare(`UPDATE server_settings SET value=?, updated_at=datetime('now') WHERE key='active_page_id'`).run(page.id);
+    broadcast({ type: 'load_page', page_id: page.id, page_data: page }, 'browser');
+    return { pushed_to: 1 };
   });
 
   // ── Panel sub-routes ──────────────────────────────────────────────────────

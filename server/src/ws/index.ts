@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { getDb } from '../db/index';
+import { publishDeviceState } from '../mqtt/index';
 
 export type ClientType = 'browser' | 'editor' | 'api';
 
@@ -80,8 +81,8 @@ export function initWss(server: any): WebSocketServer {
       const client = clients.get(ws);
       if (client?.deviceId) {
         console.log(`[ws] Device ${client.deviceId} disconnected`);
-        // Notify editors that device went offline
         broadcast({ type: 'device_offline', device_id: client.deviceId }, 'editor');
+        publishDeviceState(client.deviceId);
       }
       clients.delete(ws);
     });
@@ -115,32 +116,25 @@ function handleMessage(ws: WebSocket, msg: any): void {
       console.log(`[ws] Hello from ${client.clientType}${client.deviceId ? ` (${client.deviceId})` : ''}`);
       send(ws, { type: 'hello_ack', server_version: '0.1.0' });
 
-      // Persist screen dimensions if provided
-      if (client.clientType === 'browser' && client.deviceId && msg.screen_width) {
+      // For browser clients, push the currently active page immediately
+      if (client.clientType === 'browser') {
         try {
           const db = getDb();
-          db.prepare('UPDATE devices SET screen_width=?, screen_height=?, pixel_ratio=? WHERE id=?')
-            .run(msg.screen_width, msg.screen_height ?? null, msg.pixel_ratio ?? null, client.deviceId);
-        } catch { /* non-critical */ }
-      }
-
-      // For browser clients, push their assigned page immediately
-      if (client.clientType === 'browser' && client.deviceId) {
-        try {
-          const db = getDb();
-          const device = db.prepare('SELECT assigned_page_id FROM devices WHERE id = ?').get(client.deviceId) as any;
-
-          if (device?.assigned_page_id) {
-            const page = db.prepare('SELECT * FROM pages WHERE id = ?').get(device.assigned_page_id) as any;
+          const row = db.prepare(`SELECT value FROM server_settings WHERE key = 'active_page_id'`).get() as any;
+          const activePageId = row?.value;
+          if (activePageId) {
+            const page = db.prepare('SELECT * FROM pages WHERE id = ?').get(activePageId) as any;
             if (page) {
-              const panels = db.prepare('SELECT * FROM page_panels WHERE page_id=? ORDER BY position, id').all(device.assigned_page_id);
+              const panels = db.prepare('SELECT * FROM page_panels WHERE page_id=? ORDER BY position, id').all(activePageId);
               const pageData = { ...page, floating_config: page.floating_config ? JSON.parse(page.floating_config) : null, panels };
-              send(ws, { type: 'load_page', page_id: device.assigned_page_id, page_data: pageData });
+              send(ws, { type: 'load_page', page_id: activePageId, page_data: pageData });
             }
           }
         } catch (err) {
-          console.warn('[ws] Failed to push initial page:', err);
+          console.warn('[ws] Failed to push active page on hello:', err);
         }
+        // Publish updated device state to MQTT
+        publishDeviceState(client.deviceId ?? 'local');
       }
       break;
     }

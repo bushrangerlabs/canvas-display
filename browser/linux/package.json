@@ -1,5 +1,5 @@
 {
-  "name": "canvas-ui-browser-linux",
+  "name": "canvas-display-browser-linux",
   "private": true,
   "version": "0.1.0",
   "type": "module",

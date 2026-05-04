@@ -17,12 +17,9 @@ import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
-import LayersIcon from '@mui/icons-material/Layers';
 import SendIcon from '@mui/icons-material/Send';
 import WebAssetIcon from '@mui/icons-material/WebAsset';
-import { useNavigate } from 'react-router-dom';
 import { pagesApi, type PanelCreate } from '../api/client';
 import type { Page, PagePanel } from '../types';
 
@@ -173,7 +170,6 @@ function PanelDialog({ open, initial, onClose, onSave }: PanelDialogProps) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function PagesPage() {
-  const navigate = useNavigate();
   const [pages, setPages] = useState<Page[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -243,7 +239,7 @@ export default function PagesPage() {
   };
 
   const deletePage = async (id: string) => {
-    if (!confirm('Delete this page? Devices assigned to it will be unassigned.')) return;
+    if (!confirm('Delete this page?')) return;
     try {
       await pagesApi.delete(id);
       setPages(prev => prev.filter(p => p.id !== id));
@@ -256,8 +252,8 @@ export default function PagesPage() {
   const pushPage = async () => {
     if (!selectedId) return;
     try {
-      const { pushed_to } = await pagesApi.push(selectedId);
-      alert(`Pushed to ${pushed_to} device(s).`);
+      await pagesApi.push(selectedId);
+      // No alert needed — the kiosk loads it immediately via WS
     } catch (e: any) {
       setError(e.message);
     }
@@ -309,17 +305,15 @@ export default function PagesPage() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', bgcolor: 'background.default' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default' }}>
       {/* Top bar */}
-      <Paper square elevation={2} sx={{ px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-        <IconButton onClick={() => navigate('/devices')} size="small"><ArrowBackIcon /></IconButton>
-        <LayersIcon sx={{ color: 'primary.main' }} />
+      <Box sx={{ px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
         <Typography variant="h6" sx={{ flexGrow: 1 }}>Pages</Typography>
         <Tooltip title="Refresh"><IconButton onClick={load} size="small"><RefreshIcon /></IconButton></Tooltip>
         <Button variant="contained" size="small" startIcon={<AddIcon />} onClick={() => setNewDialog(true)}>
           New Page
         </Button>
-      </Paper>
+      </Box>
 
       {error && <Alert severity="error" onClose={() => setError(null)} sx={{ mx: 2, mt: 1 }}>{error}</Alert>}
 
@@ -393,9 +387,9 @@ export default function PagesPage() {
                   startIcon={<SendIcon />}
                   onClick={pushPage}
                   size="small"
-                  title="Send load_page to all assigned devices"
+                  title="Set as active page on the kiosk"
                 >
-                  Push
+                  Activate
                 </Button>
               </Stack>
 
