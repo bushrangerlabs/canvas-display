@@ -306,8 +306,8 @@ pub fn run() {
             klog(&format!("setup: resource binaries dir = {}", binaries_dir_str));
 
             match app.shell()
-                .sidecar("canvas-ui-server")
-                .expect("canvas-ui-server sidecar not found")
+                .sidecar("canvas-display-server")
+                .expect("canvas-display-server sidecar not found")
                 .env("CANVAS_DATA_DIR", &data_dir_str)
                 .env("NATIVE_BINDING_DIR", &binaries_dir_str)
                 .env("STATIC_DIR", &static_dir_str)
@@ -316,7 +316,7 @@ pub fn run() {
                 .spawn()
             {
                 Ok((_rx, child)) => {
-                    klog("setup: canvas-ui-server sidecar started");
+                    klog("setup: canvas-display-server sidecar started");
                     app.manage(ServerChild(Mutex::new(Some(child))));
                 }
                 Err(e) => {
@@ -355,7 +355,7 @@ pub fn run() {
                 if let Some(state) = app_handle.try_state::<ServerChild>() {
                     if let Ok(mut guard) = state.0.lock() {
                         if let Some(child) = guard.take() {
-                            klog("exit: killing canvas-ui-server sidecar");
+                            klog("exit: killing canvas-display-server sidecar");
                             let _ = child.kill();
                         }
                     }
