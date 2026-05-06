@@ -456,7 +456,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       // Generic command envelope sent by POST /api/devices/:id/command
       case 'command': {
         const action = cmd.action as string | undefined;
-        if (action) await handleCommand({ ...cmd, type: action });
+        if (action) await handleCommand({ ...cmd, ...(cmd.payload ?? {}), type: action });
         break;
       }
     }
