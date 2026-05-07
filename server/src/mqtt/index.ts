@@ -17,6 +17,7 @@
 import * as mqttLib from 'mqtt';
 import { getDb } from '../db/index';
 import { broadcast, getConnectedDeviceIds } from '../ws/index';
+import { getAudioState } from '../routes/audio';
 
 let client: mqttLib.MqttClient | null = null;
 let _enabled = false;
@@ -179,11 +180,16 @@ function publishAllDeviceStates(): void {
 
 function subscribeCommandTopics(): void {
   if (!client) return;
-  // Subscribe to all device command topics
   client.subscribe('canvas_display/+/cmd/+', { qos: 1 }, (err) => {
     if (err) console.error('[mqtt] Subscribe error:', err.message);
     else console.log('[mqtt] Subscribed to canvas_display/+/cmd/+');
   });
+}
+
+/** Publish current audio state as a retained message. Called by audio routes after state changes. */
+export function publishAudioState(): void {
+  const mqttDeviceId = getSetting('device_id') ?? 'local';
+  publish(`canvas_display/${mqttDeviceId}/audio/state`, getAudioState(), true);
 }
 
 function handleCommandMessage(topic: string, payload: Buffer): void {
@@ -300,6 +306,56 @@ function handleCommandMessage(topic: string, payload: Buffer): void {
     case 'quit':
       broadcast({ type: 'command', action: 'show_quit_dialog', payload: {} }, 'browser');
       break;
+
+    case 'audio': {
+      // Accepts: { action: 'play', url: '...', title?: '...', volume?: 75 }
+      //          { action: 'pause' | 'resume' | 'stop' }
+      //          { action: 'volume', level: 75 }
+      //          { action: 'mute', muted: true }
+      const audioAction = data.action as string | undefined;
+      if (!audioAction) { console.warn('[mqtt] audio cmd: missing action'); return; }
+      // Delegate to the REST layer by running the same logic inline
+      import('../routes/audio').then(async (audioMod) => {
+        try {
+          switch (audioAction) {
+            case 'play': {
+              if (!data.url) { console.warn('[mqtt] audio play: missing url'); return; }
+              // Reuse server-side helpers via a lightweight fetch to our own API
+              const { default: http } = await import('http');
+              const body = JSON.stringify({ url: data.url, title: data.title, volume: data.volume });
+              const req2 = http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/play', method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } });
+              req2.write(body); req2.end();
+              break;
+            }
+            case 'pause':  { const { default: http } = await import('http'); http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/pause',  method: 'POST' }).end(); break; }
+            case 'resume': { const { default: http } = await import('http'); http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/resume', method: 'POST' }).end(); break; }
+            case 'stop':   { const { default: http } = await import('http'); http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/stop',   method: 'POST' }).end(); break; }
+            case 'volume': {
+              const { default: http } = await import('http');
+              const body = JSON.stringify({ level: data.level ?? 75 });
+              const req2 = http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/volume', method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } });
+              req2.write(body); req2.end();
+              break;
+            }
+            case 'mute': {
+              const { default: http } = await import('http');
+              const body = JSON.stringify({ muted: data.muted ?? true });
+              const req2 = http.request({ host: '127.0.0.1', port: 3100, path: '/api/audio/mute', method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } });
+              req2.write(body); req2.end();
+              break;
+            }
+            default:
+              console.warn(`[mqtt] audio: unknown action: ${audioAction}`);
+          }
+        } catch (err) {
+          console.error('[mqtt] audio command error:', err);
+        }
+      }).catch(err => console.error('[mqtt] audio import error:', err));
+      break;
+    }
 
     default:
       console.warn(`[mqtt] Unknown command action: ${action}`);

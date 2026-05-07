@@ -108,4 +108,16 @@ export async function commandRoutes(app: FastifyInstance) {
     broadcast({ type: 'command', action: 'show_quit_dialog', payload: {} }, 'browser');
     return { success: true };
   });
+
+  // POST /api/commands/screen_on — turn display on
+  app.post('/commands/screen_on', async (_req, _reply) => {
+    broadcast({ type: 'screen_on' }, 'browser');
+    return { success: true };
+  });
+
+  // POST /api/commands/screen_off — turn display off
+  app.post('/commands/screen_off', async (_req, _reply) => {
+    broadcast({ type: 'screen_off' }, 'browser');
+    return { success: true };
+  });
 }
