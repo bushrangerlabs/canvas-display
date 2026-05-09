@@ -35,7 +35,7 @@ class ServerStatusSensor(CoordinatorEntity[CanvasDisplayCoordinator], SensorEnti
 
     @property
     def device_info(self) -> DeviceInfo:
-        settings = self.coordinator.data.get("settings", {})
+        settings = (self.coordinator.data or {}).get("settings", {})
         device_name = settings.get("device_name", "Canvas Display")
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
@@ -47,4 +47,4 @@ class ServerStatusSensor(CoordinatorEntity[CanvasDisplayCoordinator], SensorEnti
 
     @property
     def native_value(self) -> str:
-        return "online" if self.coordinator.data.get("online", False) else "offline"
+        return "online" if (self.coordinator.data or {}).get("online", False) else "offline"

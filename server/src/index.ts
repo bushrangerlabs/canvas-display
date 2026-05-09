@@ -13,6 +13,7 @@ import { settingsRoutes } from './routes/settings';
 import { commandRoutes } from './routes/commands';
 import { audioRoutes }   from './routes/audio';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
+import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
 
 async function main() {
   // ── Database ──────────────────────────────────────────────────────────────
@@ -80,14 +81,19 @@ async function main() {
 
     // Start MQTT client if configured
     await connectMqtt();
+
+    // Start ESPHome voice satellite if enabled in DB or env
+    if (isVoiceEnabled()) {
+      await startVoiceServer();
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
 
-process.on('SIGTERM', () => { disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  () => { disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { await stopVoiceServer(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { await stopVoiceServer(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

@@ -40,7 +40,7 @@ class ActivePageSelect(CoordinatorEntity[CanvasDisplayCoordinator], SelectEntity
 
     @property
     def device_info(self) -> DeviceInfo:
-        settings = self.coordinator.data.get("settings", {})
+        settings = (self.coordinator.data or {}).get("settings", {})
         device_name = settings.get("device_name", "Canvas Display")
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
@@ -52,24 +52,24 @@ class ActivePageSelect(CoordinatorEntity[CanvasDisplayCoordinator], SelectEntity
 
     @property
     def options(self) -> list[str]:
-        return [p["name"] for p in self.coordinator.data.get("pages", {}).values()]
+        return [p["name"] for p in (self.coordinator.data or {}).get("pages", {}).values()]
 
     @property
     def current_option(self) -> str | None:
-        settings = self.coordinator.data.get("settings", {})
+        settings = (self.coordinator.data or {}).get("settings", {})
         active_page_id = settings.get("active_page_id")
         if not active_page_id:
             return None
-        page = self.coordinator.data.get("pages", {}).get(active_page_id)
+        page = (self.coordinator.data or {}).get("pages", {}).get(active_page_id)
         return page["name"] if page else None
 
     @property
     def available(self) -> bool:
-        return self.coordinator.data.get("online", False)
+        return (self.coordinator.data or {}).get("online", False)
 
     async def async_select_option(self, option: str) -> None:
         """Switch to the selected page."""
-        page_id = self.coordinator.data.get("page_names", {}).get(option)
+        page_id = (self.coordinator.data or {}).get("page_names", {}).get(option)
         if page_id is None:
             _LOGGER.warning("Canvas Display: page '%s' not found", option)
             return

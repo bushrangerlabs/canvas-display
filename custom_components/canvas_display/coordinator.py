@@ -44,6 +44,16 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) as resp:
                 online = resp.status == 200
 
+            if not online:
+                # Server is reachable but not healthy — keep last known pages/settings
+                prior = self.data or {}
+                return {
+                    "online": False,
+                    "settings": prior.get("settings", {}),
+                    "pages": prior.get("pages", {}),
+                    "page_names": prior.get("page_names", {}),
+                }
+
             async with session.get(
                 f"{self.api_url}/api/settings",
                 timeout=aiohttp.ClientTimeout(total=10),
@@ -60,7 +70,7 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"Pages API returned {resp.status}")
                 pages: list[dict] = await resp.json()
 
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             raise UpdateFailed(f"Cannot connect to Canvas Display at {self.api_url}: {err}") from err
 
         return {

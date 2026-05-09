@@ -11,11 +11,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Paper, Divider, Slider, Switch, FormControlLabel,
   TextField, Button, Stack, Alert, CircularProgress,
-  Chip,
+  Chip, Select, MenuItem, InputLabel, FormControl, IconButton, Tooltip,
 } from '@mui/material';
 
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
+import MicIcon from '@mui/icons-material/Mic';
+import MicOffIcon from '@mui/icons-material/MicOff';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { api } from '../api/client';
 import { useEditorStore } from '../store';
 
@@ -26,12 +29,30 @@ interface ServerSettings {
   mqtt_broker_url: string;
   mqtt_username: string;
   mqtt_password: string;
+  voice_enabled: string;
+  voice_port: string;
+  voice_mic_device: string;
+  voice_friendly_name: string;
+  voice_wake_word: string;
+  voice_tts_volume: string;
 }
 
 interface MqttStatus {
   enabled: boolean;
   url: string;
   connected: boolean;
+}
+
+interface VoiceStatus {
+  status: 'disabled' | 'starting' | 'running' | 'stopped' | 'error';
+  port: number;
+  micDevice: string;
+  friendlyName: string;
+}
+
+interface MicrophoneDevice {
+  id: string;
+  label: string;
 }
 
 export default function SettingsPage() {
@@ -52,6 +73,30 @@ export default function SettingsPage() {
   const [reconnecting, setReconnecting] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Voice settings state
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voicePort, setVoicePort] = useState('6053');
+  const [voiceMicDevice, setVoiceMicDevice] = useState('default');
+  const [voiceFriendlyName, setVoiceFriendlyName] = useState('Canvas Display');
+  const [voiceWakeWord, setVoiceWakeWord] = useState('okay_nabu');
+  const [voiceTtsVolume, setVoiceTtsVolume] = useState('80');
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [voiceRestarting, setVoiceRestarting] = useState(false);
+  const [micDevices, setMicDevices] = useState<MicrophoneDevice[]>([{ id: 'default', label: 'Default' }]);
+  const [micDevicesLoading, setMicDevicesLoading] = useState(false);
+
+  const loadMicDevices = useCallback(async () => {
+    setMicDevicesLoading(true);
+    try {
+      const devices = await api.get<MicrophoneDevice[]>('/api/settings/voice/microphones');
+      if (devices.length > 0) setMicDevices(devices);
+    } catch {
+      // non-fatal — keep existing list
+    } finally {
+      setMicDevicesLoading(false);
+    }
+  }, []);
+
   const loadSettings = useCallback(async () => {
     try {
       const [s, m] = await Promise.all([
@@ -65,22 +110,39 @@ export default function SettingsPage() {
       setMqttUsername(s.mqtt_username ?? '');
       setMqttPassword(''); // never pre-fill password
       setMqttStatus(m);
+      setVoiceEnabled(s.voice_enabled === '1');
+      setVoicePort(s.voice_port ?? '6053');
+      setVoiceMicDevice(s.voice_mic_device ?? 'default');
+      setVoiceFriendlyName(s.voice_friendly_name ?? 'Canvas Display');
+      setVoiceWakeWord(s.voice_wake_word ?? 'okay_nabu');
+      setVoiceTtsVolume(s.voice_tts_volume ?? '80');
+      // Fetch voice status separately (non-fatal)
+      api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
     } catch (e) {
       console.error('Failed to load settings', e);
     }
   }, []);
 
-  useEffect(() => { loadSettings(); }, [loadSettings]);
+  useEffect(() => {
+    loadSettings();
+    loadMicDevices();
+  }, [loadSettings, loadMicDevices]);
 
   async function saveSettings() {
     setSaving(true);
     setSaveMsg(null);
     try {
       const body: Record<string, string> = {
-        device_name: deviceName,
-        mqtt_enabled: mqttEnabled ? '1' : '0',
-        mqtt_broker_url: mqttUrl,
-        mqtt_username: mqttUsername,
+        device_name:         deviceName,
+        mqtt_enabled:        mqttEnabled ? '1' : '0',
+        mqtt_broker_url:     mqttUrl,
+        mqtt_username:       mqttUsername,
+        voice_enabled:       voiceEnabled ? '1' : '0',
+        voice_port:          voicePort,
+        voice_mic_device:    voiceMicDevice,
+        voice_friendly_name: voiceFriendlyName,
+        voice_wake_word:     voiceWakeWord,
+        voice_tts_volume:    voiceTtsVolume,
       };
       if (mqttPassword && mqttPassword !== '••••••••') {
         body.mqtt_password = mqttPassword;
@@ -110,6 +172,23 @@ export default function SettingsPage() {
       setSaveMsg({ type: 'error', text: e.message ?? 'Reconnect failed.' });
     } finally {
       setReconnecting(false);
+    }
+  }
+
+  async function restartVoice() {
+    setVoiceRestarting(true);
+    setSaveMsg(null);
+    try {
+      await saveSettings();
+      const result = await api.post<{ ok: boolean; status: string }>('/api/settings/voice/restart');
+      setSaveMsg({ type: 'success', text: `Voice satellite ${result.status}.` });
+      setTimeout(() => {
+        api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
+      }, 1500);
+    } catch (e: any) {
+      setSaveMsg({ type: 'error', text: e.message ?? 'Voice restart failed.' });
+    } finally {
+      setVoiceRestarting(false);
     }
   }
 
@@ -242,6 +321,134 @@ export default function SettingsPage() {
 
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
               MQTT topics: <code>canvas_display/{'<device_id>'}/state</code>, <code>canvas_display/{'<device_id>'}/cmd/page</code>, <code>canvas_display/{'<device_id>'}/cmd/navigate</code>
+            </Typography>
+          </Paper>
+
+          {/* ── Voice Satellite ──────────────────────────────────────────── */}
+          <Paper sx={{ p: 3 }}>
+            <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Voice Satellite
+              </Typography>
+              {voiceStatus && (
+                <Chip
+                  size="small"
+                  icon={voiceStatus.status === 'running' ? <MicIcon /> : <MicOffIcon />}
+                  label={voiceStatus.status}
+                  color={voiceStatus.status === 'running' ? 'success' : voiceStatus.status === 'error' ? 'error' : 'default'}
+                />
+              )}
+            </Stack>
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={voiceEnabled}
+                  onChange={(e) => setVoiceEnabled(e.target.checked)}
+                />
+              }
+              label="Enable voice satellite"
+              sx={{ mb: 2, display: 'block' }}
+            />
+
+            <Stack spacing={2}>
+              <Stack direction="row" spacing={2}>
+                <TextField
+                  label="Port"
+                  size="small"
+                  value={voicePort}
+                  onChange={(e) => setVoicePort(e.target.value)}
+                  disabled={!voiceEnabled}
+                  helperText="ESPHome API port (default 6053)"
+                  sx={{ width: 120 }}
+                />
+                <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
+                  <InputLabel>Mic Device</InputLabel>
+                  <Select
+                    label="Mic Device"
+                    value={micDevices.some(d => d.id === voiceMicDevice) ? voiceMicDevice : 'default'}
+                    onChange={(e) => setVoiceMicDevice(e.target.value)}
+                    endAdornment={
+                      <Tooltip title="Refresh microphone list">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => { e.stopPropagation(); loadMicDevices(); }}
+                            disabled={micDevicesLoading}
+                            sx={{ mr: 2 }}
+                          >
+                            {micDevicesLoading
+                              ? <CircularProgress size={14} />
+                              : <RefreshIcon fontSize="small" />}
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    }
+                  >
+                    {micDevices.map(d => (
+                      <MenuItem key={d.id} value={d.id}>{d.label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Stack>
+              <Stack direction="row" spacing={2}>
+                <TextField
+                  label="Friendly Name"
+                  size="small"
+                  value={voiceFriendlyName}
+                  onChange={(e) => setVoiceFriendlyName(e.target.value)}
+                  disabled={!voiceEnabled}
+                  helperText="Shown in HA device UI"
+                  sx={{ flex: 1 }}
+                />
+                <TextField
+                  label="Wake Word ID"
+                  size="small"
+                  value={voiceWakeWord}
+                  onChange={(e) => setVoiceWakeWord(e.target.value)}
+                  disabled={!voiceEnabled}
+                  helperText='e.g. "okay_nabu"'
+                  sx={{ flex: 1 }}
+                />
+              </Stack>
+              <Box>
+                <Typography variant="body2" gutterBottom color={voiceEnabled ? 'text.primary' : 'text.disabled'}>
+                  TTS volume: {voiceTtsVolume}%
+                </Typography>
+                <Slider
+                  value={parseInt(voiceTtsVolume) || 80}
+                  min={0} max={100} step={5}
+                  onChange={(_, v) => setVoiceTtsVolume(String(v))}
+                  valueLabelDisplay="auto"
+                  disabled={!voiceEnabled}
+                  sx={{ width: '100%', maxWidth: 320 }}
+                />
+              </Box>
+            </Stack>
+
+            <Stack direction="row" spacing={1.5} sx={{ mt: 2.5 }}>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={saveSettings}
+                disabled={saving}
+                startIcon={saving ? <CircularProgress size={14} /> : null}
+              >
+                Save
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={restartVoice}
+                disabled={voiceRestarting}
+                startIcon={voiceRestarting ? <CircularProgress size={14} /> : null}
+              >
+                {voiceEnabled ? 'Save & Restart' : 'Save & Stop'}
+              </Button>
+            </Stack>
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+              After enabling, add this device in HA via <strong>Settings → Devices & Services → ESPHome</strong> using this device's IP and the port above.
             </Typography>
           </Paper>
 

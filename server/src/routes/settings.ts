@@ -10,15 +10,23 @@
 import { FastifyInstance } from 'fastify';
 import { getDb } from '../db/index';
 import { connectMqtt, disconnectMqtt, reconnectMqtt, getMqttSettings, isMqttConnected } from '../mqtt/index';
+import { startVoiceServer, stopVoiceServer, getVoiceState, updateVoiceSettings } from '../voice/index';
+import { listMicrophones } from '../voice/mic';
 
 // Keys that exist and their defaults
 const SETTING_DEFAULTS: Record<string, string> = {
-  device_name:       'Canvas UI Device',
-  server_port:       '3100',
-  mqtt_enabled:      '0',
-  mqtt_broker_url:   'mqtt://localhost:1883',
-  mqtt_username:     '',
-  mqtt_password:     '',
+  device_name:          'Canvas UI Device',
+  server_port:          '3100',
+  mqtt_enabled:         '0',
+  mqtt_broker_url:      'mqtt://localhost:1883',
+  mqtt_username:        '',
+  mqtt_password:        '',
+  voice_enabled:        '0',
+  voice_port:           '6053',
+  voice_mic_device:     'default',
+  voice_friendly_name:  'Canvas Display',
+  voice_wake_word:      'okay_nabu',
+  voice_tts_volume:     '80',
 };
 
 const REDACTED_KEYS = new Set(['mqtt_password']);
@@ -95,5 +103,37 @@ export async function settingsRoutes(app: FastifyInstance) {
     disconnectMqtt();
     reply.code(202);
     return { ok: true };
+  });
+
+  // GET /api/settings/voice — voice satellite status
+  app.get('/settings/voice', async () => {
+    return getVoiceState();
+  });
+
+  // POST /api/settings/voice/restart — apply voice settings and (re)start
+  app.post('/settings/voice/restart', async (req, reply) => {
+    const s = getAllSettings();
+    const enabled = s.voice_enabled === '1';
+    if (!enabled) {
+      await stopVoiceServer();
+      reply.code(202);
+      return { ok: true, status: 'stopped' };
+    }
+    updateVoiceSettings({
+      port:         parseInt(s.voice_port),
+      micDevice:    s.voice_mic_device,
+      friendlyName: s.voice_friendly_name,
+      wakeWord:     s.voice_wake_word,
+      ttsVolume:    parseInt(s.voice_tts_volume),
+    });
+    await stopVoiceServer();
+    await startVoiceServer();
+    reply.code(202);
+    return { ok: true, status: getVoiceState().status };
+  });
+
+  // GET /api/settings/voice/microphones — list available ALSA capture devices
+  app.get('/settings/voice/microphones', async () => {
+    return listMicrophones();
   });
 }
