@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # release.sh <version> "Release notes"
-# Bumps config.yaml, builds web, commits, tags, and pushes.
+# Bumps config.yaml, builds web + server sidecar + deb, commits, tags, and pushes.
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -25,7 +25,21 @@ npm run build
 cd "$REPO_ROOT"
 echo "✓ web built"
 
-# ── 3. Commit, tag, push ─────────────────────────────────────────────────────
+# ── 3. Build server sidecar binary ───────────────────────────────────────────
+echo "Building server sidecar…"
+cd "$REPO_ROOT/server"
+npm run build:sidecar
+cd "$REPO_ROOT"
+echo "✓ server sidecar built"
+
+# ── 4. Build Tauri .deb ───────────────────────────────────────────────────────
+echo "Building Tauri .deb…"
+cd "$REPO_ROOT/browser/linux"
+npm run tauri build -- --bundles deb
+cd "$REPO_ROOT"
+echo "✓ .deb built → browser/linux/src-tauri/target/release/bundle/deb/"
+
+# ── 5. Commit, tag, push ─────────────────────────────────────────────────────
 git add -A
 git commit -m "chore: release v${VERSION}${NOTES:+
 
