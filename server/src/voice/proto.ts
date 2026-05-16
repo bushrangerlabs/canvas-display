@@ -162,14 +162,19 @@ export const MSG = {
 
 // ── Voice assistant feature flags ──────────────────────────────────────────
 
+// Values match aioesphomeapi VoiceAssistantFeature enum exactly
 export const VA_FEATURE = {
-  SUPPORTS_WAKE_WORD: 1 << 0,            // = 1
-  SUPPORTS_START_CONVERSATION: 1 << 1,   // = 2
-  SUPPORTS_ANNOUNCE: 1 << 2,             // = 4
+  VOICE_ASSISTANT: 1 << 0,      // = 1  basic voice assistant support
+  SPEAKER: 1 << 1,              // = 2  device has hardware speaker (WAV streaming)
+  API_AUDIO: 1 << 2,            // = 4  audio transmitted via API/TCP
+  TIMERS: 1 << 3,               // = 8  timer support
+  ANNOUNCE: 1 << 4,             // = 16 announcement support; also gates HA's _update_satellite_config()
+  START_CONVERSATION: 1 << 5,   // = 32 device can initiate conversations
+  MULTI_CHANNEL_AUDIO: 1 << 6,  // = 64 multi-channel audio
 } as const;
 
 export const VA_SUBSCRIBE_FLAG = {
-  API_AUDIO: 1,  // audio over the API TCP connection instead of UDP
+  API_AUDIO: 1 << 2,  // = 4 — matches VoiceAssistantSubscriptionFlag.API_AUDIO in aioesphomeapi
 } as const;
 
 export const VA_REQUEST_FLAG = {

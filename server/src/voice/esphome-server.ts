@@ -188,9 +188,9 @@ class VoiceConnection extends EventEmitter {
           macAddress: mac,
           friendlyName: this.settings.friendlyName,
           voiceAssistantFeatureFlags:
-            VA_FEATURE.SUPPORTS_WAKE_WORD |
-            VA_FEATURE.SUPPORTS_START_CONVERSATION |
-            VA_FEATURE.SUPPORTS_ANNOUNCE,
+            VA_FEATURE.VOICE_ASSISTANT |   // 1 — basic VA support
+            VA_FEATURE.API_AUDIO |         // 4 — audio via TCP
+            VA_FEATURE.ANNOUNCE,           // 16 — triggers HA's _update_satellite_config() call
         }));
         this.state = 'READY';
         break;
