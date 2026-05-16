@@ -35,7 +35,7 @@ export async function listMicrophones(): Promise<MicrophoneDevice[]> {
       const cardNum = match[1];
       const cardName = match[2];
       const deviceNum = match[3];
-      const id = `hw:${cardNum},${deviceNum}`;
+      const id = `plughw:${cardNum},${deviceNum}`;
       devices.push({ id, label: `${cardName} (${id})` });
     }
   } catch {
@@ -52,7 +52,9 @@ export class MicCapture extends EventEmitter {
   /** @param device ALSA device name, e.g. 'default' or 'hw:1,0' */
   constructor(device = 'default') {
     super();
-    this.device = device;
+    // Use plughw: for hw: devices — enables ALSA's plug layer for automatic
+    // channel/format/rate conversion (e.g. stereo-only mics → mono 16kHz)
+    this.device = device.startsWith('hw:') ? device.replace('hw:', 'plughw:') : device;
   }
 
   get isRunning(): boolean {
