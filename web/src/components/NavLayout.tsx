@@ -7,6 +7,7 @@ import { Box, List, ListItemButton, ListItemIcon, ListItemText, Divider, Tooltip
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import LayersIcon from '@mui/icons-material/Layers';
 import SettingsIcon from '@mui/icons-material/Settings';
+import TerminalIcon from '@mui/icons-material/Terminal';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const NAV_WIDTH = 200;
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard', path: '/',        icon: <DashboardIcon fontSize="small" /> },
   { label: 'Pages',     path: '/pages',   icon: <LayersIcon    fontSize="small" /> },
   { label: 'Settings',  path: '/settings', icon: <SettingsIcon  fontSize="small" /> },
+  { label: 'Logs',      path: '/logs',    icon: <TerminalIcon  fontSize="small" /> },
 ];
 
 export default function NavLayout({ children }: { children: ReactNode }) {

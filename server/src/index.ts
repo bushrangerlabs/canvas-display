@@ -1,4 +1,5 @@
 import './pkg-native-patch'; // MUST be first — extracts better_sqlite3.node from pkg snapshot
+import './logs';             // intercept console output BEFORE anything else logs
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -12,6 +13,7 @@ import { pageRoutes } from './routes/pages';
 import { settingsRoutes } from './routes/settings';
 import { commandRoutes } from './routes/commands';
 import { audioRoutes }   from './routes/audio';
+import { logRoutes }     from './routes/logs';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
 
@@ -33,7 +35,8 @@ async function main() {
   await app.register(pageRoutes,     { prefix: '/api' });
   await app.register(settingsRoutes, { prefix: '/api' });
   await app.register(commandRoutes,  { prefix: '/api' });
-  await app.register(audioRoutes,     { prefix: '/api' });
+  await app.register(audioRoutes,    { prefix: '/api' });
+  await app.register(logRoutes,      { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────
   // config.staticDir resolves to: STATIC_DIR env (set by Tauri), or

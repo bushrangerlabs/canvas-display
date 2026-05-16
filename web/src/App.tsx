@@ -4,6 +4,7 @@ import NavLayout from './components/NavLayout';
 import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import PagesPage from './pages/PagesPage';
+import LogsPage from './pages/LogsPage';
 
 // When served through HA ingress the path is /api/hassio_ingress/<token>/...
 // Extract that prefix as the router basename so React Router sees clean paths.
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/pages" element={<PagesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </NavLayout>

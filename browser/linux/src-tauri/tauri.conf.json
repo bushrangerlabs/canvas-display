@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "Canvas Display",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.bushrangerlabs.canvas-display-browser",
   "build": {
     "frontendDist": "../dist",
