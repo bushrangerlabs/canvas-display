@@ -315,9 +315,31 @@ pub fn run() {
                 .env("HOST", "0.0.0.0")
                 .spawn()
             {
-                Ok((_rx, child)) => {
+                Ok((mut rx, child)) => {
                     klog("setup: canvas-display-server sidecar started");
                     app.manage(ServerChild(Mutex::new(Some(child))));
+
+                    // Forward sidecar stdout/stderr to the kiosk log file
+                    tauri::async_runtime::spawn(async move {
+                        use tauri_plugin_shell::process::CommandEvent;
+                        while let Some(event) = rx.recv().await {
+                            match event {
+                                CommandEvent::Stdout(line) => {
+                                    let msg = String::from_utf8_lossy(&line);
+                                    klog(&format!("[server] {}", msg.trim_end()));
+                                }
+                                CommandEvent::Stderr(line) => {
+                                    let msg = String::from_utf8_lossy(&line);
+                                    klog(&format!("[server:err] {}", msg.trim_end()));
+                                }
+                                CommandEvent::Terminated(status) => {
+                                    klog(&format!("[server] process terminated: {:?}", status));
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     klog(&format!("setup: failed to start sidecar: {}", e));
