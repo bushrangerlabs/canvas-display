@@ -81,9 +81,8 @@ export class MicCapture extends EventEmitter {
 
     this.proc.stderr?.on('data', (chunk: Buffer) => {
       const msg = chunk.toString().trim();
-      // arecord prints informational lines to stderr — only treat as error
-      // if it looks problematic
-      if (msg && !msg.startsWith('Recording WAVE')) {
+      // arecord prints informational lines to stderr — ignore them
+      if (msg && !msg.startsWith('Recording WAVE') && !msg.startsWith('Recording raw data')) {
         this.emit('error', new Error(`arecord: ${msg}`));
       }
     });
