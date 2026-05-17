@@ -70,6 +70,8 @@ export class MicCapture extends EventEmitter {
       '-r', '16000',
       '-c', '1',
       '-t', 'raw',
+      '--period-size=512',   // 32ms chunks — consistent small frames for OWW sliding window
+      '--buffer-size=4096',  // 256ms ring buffer (8 periods) — avoids xruns without adding latency
     ];
 
     this.proc = spawn('arecord', args);

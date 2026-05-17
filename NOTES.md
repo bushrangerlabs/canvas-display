@@ -1,7 +1,103 @@
 # Canvas UI Platform — Notes & Planning
 
 > Living document. Updated as decisions are made.  
-> Last updated: April 2026
+> Last updated: May 2026
+
+---
+
+## 🔊 Voice Satellite — Setup & Troubleshooting (May 2026)
+
+### Architecture
+- Canvas Display server runs an **ESPHome API TCP server** on port **6053**
+- HA connects to it as if it were an ESPHome voice satellite device
+- Server streams mic audio to HA → HA sends to OWW for wake word detection → STT → TTS response
+- TTS audio comes back over TCP and is played via `mpv`
+
+### Key files
+| File | Purpose |
+|---|---|
+| `server/src/voice/esphome-server.ts` | ESPHome TCP protocol, mic streaming, TTS playback |
+| `server/src/voice/index.ts` | Start/stop lifecycle, settings hot-reload |
+| `server/src/voice/mic.ts` | `arecord` wrapper — captures mic as 16kHz mono PCM |
+| `server/src/voice/proto.ts` | Protobuf encode/decode for ESPHome messages |
+| `server/src/voice/framing.ts` | ESPHome binary framing (0x00 + varint length + msgType) |
+
+### Wake word support
+Server advertises two wake words to HA:
+- `okay_nabu` — Okay Nabu
+- `hey_jarvis` — Hey Jarvis
+
+Active wake word is set via Settings → Voice Satellite → Wake Word dropdown and stored in DB. HA / OWW picks whichever is set as active.
+
+### Root cause fixed: wake word not detecting (May 2026)
+All HA assist pipelines had `wake_word_entity: null` — HA couldn't connect to OWW so the pipeline would start then immediately end.
+
+**Fix applied directly to HA storage:**
+```bash
+# On HA server: /config/.storage/assist_pipeline.pipelines
+# Pipeline id: 01jtybpfrx4garq8np5d2afxfg ("Home Assistant Cloud 1")
+# Set:
+"wake_word_entity": "wake_word.openwakeword"
+"wake_word_id": "okay_nabu"
+# Then restart HA core
+```
+
+If this happens again: HA UI → Settings → Voice Assistants → select pipeline → Wake word → choose openWakeWord entity.
+
+### OWW log patterns — normal vs. problem
+| Pattern | Meaning |
+|---|---|
+| `Loaded models → Receiving audio → disconnect` (every ~30s) | ✅ Normal — one pipeline session cycling |
+| `Sent info + disconnect` (every ~32s) | ✅ Normal — HA polling OWW for wake word list |
+| `Receiving audio` never appears | ❌ Audio not reaching OWW — check pipeline config |
+| No score lines with debug logging on | Audio flowing but wake word not triggering — check mic quality / threshold |
+
+### OWW configuration (on HA add-on)
+- Threshold: **0.3** (lowered from 0.5 for better sensitivity)
+- Trigger level: **1** (fire on first activation)
+- Debug logging: **ON**
+
+### Mic device
+- Working device: `plughw:4,0` (HD Pro Webcam C920)
+- Test mic directly: `arecord -D plughw:4,0 -f S16_LE -r 16000 -c 1 -d 3 /tmp/test.wav && aplay /tmp/test.wav`
+- Server uses `arecord` child process, killed/restarted on settings change — the `mic error: Aborted by signal Terminated` log line on restart is **normal**
+
+### Server log — expected sequence on startup
+```
+[voice] ESPHome voice server listening on port 6053
+[voice] Voice satellite started — listening for HA on port 6053
+[voice] HA connected from 192.168.1.103
+[voice] Pipeline accepted by HA (port=0)
+[voice] Mic started, streaming to HA
+[voice] Wake word detection started        ← pipeline live, audio streaming to OWW
+[voice] Wake word detected!                ← fires when wake word recognised
+[voice] STT started — listening
+[voice] STT ended: <transcript>
+[voice] TTS started / TTS audio stream starting
+[voice] Playing TTS audio (NNNN bytes PCM)
+[voice] Pipeline run complete — restarting wake word   ← loops back
+```
+
+### Unhandled msgTypes — known safe to ignore
+- `msgType=3` — `GetTimeRequest` — HA requests server time; we don't respond (HA ignores no-response)
+- `msgType=34` — `ListEntitiesBinarySensorRequest`
+- `msgType=38` — `ListEntitiesTextSensorRequest`
+
+These are HA polling all entity types after connection. We send `LIST_ENTITIES_DONE` for `MSG.LIST_ENTITIES_REQUEST` but HA also sends per-type requests. Safe to ignore.
+
+---
+
+## 📋 Live Log Viewer (v0.2.1)
+
+Added a real-time server log viewer accessible at `/logs`.
+
+| File | Role |
+|---|---|
+| `server/src/logs.ts` | Monkey-patches `console.log/warn/error`; 1000-line ring buffer; emits via `logEmitter` EventEmitter |
+| `server/src/routes/logs.ts` | `GET /api/logs/history` (JSON) · `GET /api/logs/stream` (SSE) |
+| `web/src/pages/LogsPage.tsx` | SSE-based viewer — filter, level filter (All/Warn+/Errors), pause scroll, download |
+
+**Important:** `server/src/index.ts` imports `./logs` as the **very first import** so no log lines are missed before modules load.
 
 ---
 
