@@ -273,13 +273,18 @@ class VoiceConnection extends EventEmitter {
       }
 
       case MSG.VOICE_ASSISTANT_CONFIGURATION_REQUEST: {
+        const SUPPORTED_WAKE_WORDS: Array<{ id: string; label: string }> = [
+          { id: 'okay_nabu',  label: 'Okay Nabu'  },
+          { id: 'hey_jarvis', label: 'Hey Jarvis' },
+        ];
+        const active = this.settings.wakeWord || 'okay_nabu';
         this.send(MSG.VOICE_ASSISTANT_CONFIGURATION_RESPONSE, encodeVoiceAssistantConfigurationResponse({
-          availableWakeWords: [{
-            id: this.settings.wakeWord || 'okay_nabu',
-            wakeWord: this.settings.wakeWord || 'Okay Nabu',
+          availableWakeWords: SUPPORTED_WAKE_WORDS.map(w => ({
+            id: w.id,
+            wakeWord: w.label,
             trainedLanguages: ['en'],
-          }],
-          activeWakeWords: [this.settings.wakeWord || 'okay_nabu'],
+          })),
+          activeWakeWords: [active],
           maxActiveWakeWords: 1,
         }));
         break;

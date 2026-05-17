@@ -401,15 +401,17 @@ export default function SettingsPage() {
                   helperText="Shown in HA device UI"
                   sx={{ flex: 1 }}
                 />
-                <TextField
-                  label="Wake Word ID"
-                  size="small"
-                  value={voiceWakeWord}
-                  onChange={(e) => setVoiceWakeWord(e.target.value)}
-                  disabled={!voiceEnabled}
-                  helperText='e.g. "okay_nabu"'
-                  sx={{ flex: 1 }}
-                />
+                <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
+                  <InputLabel>Wake Word</InputLabel>
+                  <Select
+                    label="Wake Word"
+                    value={voiceWakeWord}
+                    onChange={(e) => setVoiceWakeWord(e.target.value)}
+                  >
+                    <MenuItem value="okay_nabu">Okay Nabu</MenuItem>
+                    <MenuItem value="hey_jarvis">Hey Jarvis</MenuItem>
+                  </Select>
+                </FormControl>
               </Stack>
               <Box>
                 <Typography variant="body2" gutterBottom color={voiceEnabled ? 'text.primary' : 'text.disabled'}>
