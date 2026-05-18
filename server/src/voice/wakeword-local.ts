@@ -167,7 +167,9 @@ export class WakeWordDetector extends EventEmitter {
       if (!msg) return;
       if (msg.startsWith('error:')) {
         console.error('[wakeword]', msg);
-        this.emit('error', new Error(msg));
+        if (this.listenerCount('error') > 0) {
+          this.emit('error', new Error(msg));
+        }
       } else {
         // Log everything so startup failures are visible in the server logs
         console.log('[wakeword]', msg);
@@ -178,13 +180,19 @@ export class WakeWordDetector extends EventEmitter {
       const wasReady = this._ready;
       this._ready = false;
       this.proc = null;
-      if (!wasReady && code !== 0) {
-        // Died on startup — likely openwakeword not installed
-        this.emit('error', new Error(
+      // code===null means killed by signal (our own stop() call) — not an error
+      if (!wasReady && typeof code === 'number' && code !== 0) {
+        // Died on startup with a real exit code — emit error only if someone is listening
+        const err = new Error(
           code === 2
-            ? 'openwakeword not installed — run: pip3 install openwakeword'
+            ? 'openwakeword not installed — run: ~/.venv/oww/bin/pip install openwakeword'
             : 'Wake word process failed to start (exit code ' + code + ')'
-        ));
+        );
+        if (this.listenerCount('error') > 0) {
+          this.emit('error', err);
+        } else {
+          console.error('[wakeword]', err.message);
+        }
       } else {
         this.emit('close', code);
       }
