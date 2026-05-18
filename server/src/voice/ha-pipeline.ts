@@ -57,11 +57,10 @@ export class HAPipeline extends EventEmitter {
     this.connect();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.destroyed = true;
     this.clearReconnect();
-    // Fire-and-forget stop — caller doesn't need to await device release
-    this.stopMic().catch(() => {});
+    await this.stopMic(); // wait for arecord to fully exit before returning
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -126,10 +125,11 @@ export class HAPipeline extends EventEmitter {
     ws.on('close', () => {
       if (this.connState === 'closed') return;
       console.log('[voice] HA WS disconnected — reconnecting in', this.reconnectDelay, 'ms');
-      this.stopMic();
-      this.ws = null;
-      this.connState = 'idle';
-      this.scheduleReconnect();
+      this.stopMic().catch(() => {}).finally(() => {
+        this.ws = null;
+        this.connState = 'idle';
+        this.scheduleReconnect();
+      });
     });
 
     ws.on('error', (err) => {

@@ -101,7 +101,7 @@ export async function startVoiceServer(): Promise<void> {
 
 export async function stopVoiceServer(): Promise<void> {
   if (!_pipeline) return;
-  _pipeline.stop();
+  await _pipeline.stop(); // waits for arecord to fully release the audio device
   _pipeline = null;
   _status = 'stopped';
   console.log('[voice] Voice assistant stopped');
