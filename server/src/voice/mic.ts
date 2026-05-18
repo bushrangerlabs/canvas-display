@@ -1,11 +1,18 @@
 /**
- * USB/default microphone capture via arecord.
+ * Microphone capture — uses parec (PulseAudio/PipeWire) or arecord (bare ALSA).
  *
- * Spawns: arecord -D <device> -f S16_LE -r 16000 -c 1 -t raw
+ * When PipeWire/PulseAudio is running it holds ALSA devices exclusively, so
+ * arecord -D plughw:X,Y fails with "Device or resource busy".  Using parec
+ * goes through the PipeWire/PA layer and works correctly.
+ *
+ * Device selection:
+ *   - PulseAudio source name (e.g. alsa_input.usb-046d_...analog-stereo) → parec
+ *   - 'default' → parec (PA default source)
+ *   - 'plughw:X,Y' or 'hw:X,Y' → arecord (bare ALSA, no PipeWire)
  *
  * Emits:
- *   'data'  (chunk: Buffer) — raw PCM chunks as they arrive (~every 100ms)
- *   'error' (err: Error)    — arecord stderr / spawn failure
+ *   'data'  (chunk: Buffer) — raw S16LE 16kHz mono PCM chunks
+ *   'error' (err: Error)    — stderr lines or spawn failure
  *   'close' ()              — process exited
  */
 
@@ -21,26 +28,46 @@ export interface MicrophoneDevice {
 }
 
 /**
- * Lists available ALSA capture devices via `arecord -l`.
- * Always includes "default" as the first entry.
+ * Lists available capture devices.
+ * Prefers PulseAudio/PipeWire source names (via pactl) — these work even when
+ * PipeWire holds ALSA devices exclusively.  Falls back to arecord -l.
  */
 export async function listMicrophones(): Promise<MicrophoneDevice[]> {
   const devices: MicrophoneDevice[] = [{ id: 'default', label: 'Default' }];
+
+  // Try PipeWire/PulseAudio sources first
+  try {
+    const { stdout } = await execAsync('pactl list short sources');
+    for (const line of stdout.trim().split('\n')) {
+      const parts = line.split('\t');
+      if (parts.length < 2) continue;
+      const name = parts[1].trim();
+      if (!name || name.endsWith('.monitor') || name === 'auto_null') continue;
+      // Human-readable label: strip alsa_input. prefix and codec suffixes
+      const label = name
+        .replace(/^alsa_input\./, '')
+        .replace(/\.analog-stereo$|\.analog-mono$|\.stereo-fallback$|\.mono-fallback$/, '')
+        .replace(/_/g, ' ');
+      devices.push({ id: name, label });
+    }
+    if (devices.length > 1) return devices;
+  } catch {
+    // pactl not available — fall through to arecord
+  }
+
+  // Fall back to bare ALSA (systems without PipeWire/PulseAudio)
   try {
     const { stdout } = await execAsync('arecord -l');
-    // Lines look like: card 1: USB [USB Audio Device], device 0: USB Audio [USB Audio]
     const re = /^card (\d+):\s+\S+\s+\[([^\]]+)\],\s+device (\d+):/gm;
     let match: RegExpExecArray | null;
     while ((match = re.exec(stdout)) !== null) {
-      const cardNum = match[1];
-      const cardName = match[2];
-      const deviceNum = match[3];
-      const id = `plughw:${cardNum},${deviceNum}`;
-      devices.push({ id, label: `${cardName} (${id})` });
+      const id = `plughw:${match[1]},${match[3]}`;
+      devices.push({ id, label: `${match[2]} (${id})` });
     }
   } catch {
-    // arecord not available or no capture devices — return just "default"
+    // arecord not available either — return just "default"
   }
+
   return devices;
 }
 
@@ -49,12 +76,19 @@ export class MicCapture extends EventEmitter {
   private proc: ChildProcess | null = null;
   private running = false;
 
-  /** @param device ALSA device name, e.g. 'default' or 'hw:1,0' */
+  /**
+   * @param device  'default' or a PulseAudio source name (PA/PipeWire path),
+   *                or 'plughw:X,Y'/'hw:X,Y' (bare ALSA — only when no PipeWire).
+   */
   constructor(device = 'default') {
     super();
-    // Use plughw: for hw: devices — enables ALSA's plug layer for automatic
-    // channel/format/rate conversion (e.g. stereo-only mics → mono 16kHz)
+    // hw: → plughw: enables the ALSA plug layer for bare-ALSA users
     this.device = device.startsWith('hw:') ? device.replace('hw:', 'plughw:') : device;
+  }
+
+  /** Returns true if the device should use parec (PipeWire/PulseAudio path). */
+  private get usePulse(): boolean {
+    return !this.device.startsWith('plughw:') && !this.device.startsWith('hw:');
   }
 
   get isRunning(): boolean {
@@ -64,17 +98,36 @@ export class MicCapture extends EventEmitter {
   start(): void {
     if (this.running) return;
 
-    const args = [
-      '-D', this.device,
-      '-f', 'S16_LE',
-      '-r', '16000',
-      '-c', '1',
-      '-t', 'raw',
-      '--period-size=512',   // 32ms chunks — consistent small frames for OWW sliding window
-      '--buffer-size=4096',  // 256ms ring buffer (8 periods) — avoids xruns without adding latency
-    ];
+    let cmd: string;
+    let args: string[];
 
-    this.proc = spawn('arecord', args);
+    if (this.usePulse) {
+      // PipeWire/PulseAudio path — works even when PipeWire holds ALSA devices
+      cmd = 'parec';
+      args = [
+        '--format=s16le',
+        '--rate=16000',
+        '--channels=1',
+        '--latency-msec=32',  // ~512 samples — matches OWW sliding window needs
+      ];
+      if (this.device !== 'default') {
+        args.push(`--device=${this.device}`);
+      }
+    } else {
+      // Bare ALSA path — only works when PipeWire is NOT running
+      cmd = 'arecord';
+      args = [
+        '-D', this.device,
+        '-f', 'S16_LE',
+        '-r', '16000',
+        '-c', '1',
+        '-t', 'raw',
+        '--period-size=512',
+        '--buffer-size=4096',
+      ];
+    }
+
+    this.proc = spawn(cmd, args);
     this.running = true;
 
     this.proc.stdout?.on('data', (chunk: Buffer) => {
@@ -83,9 +136,12 @@ export class MicCapture extends EventEmitter {
 
     this.proc.stderr?.on('data', (chunk: Buffer) => {
       const msg = chunk.toString().trim();
-      // arecord prints informational lines to stderr — ignore them
-      if (msg && !msg.startsWith('Recording WAVE') && !msg.startsWith('Recording raw data')) {
-        this.emit('error', new Error(`arecord: ${msg}`));
+      // Ignore normal informational lines from arecord/parec
+      if (msg &&
+          !msg.startsWith('Recording WAVE') &&
+          !msg.startsWith('Recording raw data') &&
+          !msg.startsWith('connected to')) {
+        this.emit('error', new Error(`${this.usePulse ? 'parec' : 'arecord'}: ${msg}`));
       }
     });
 
