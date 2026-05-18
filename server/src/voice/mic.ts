@@ -102,14 +102,36 @@ export class MicCapture extends EventEmitter {
     });
   }
 
-  stop(): void {
-    if (!this.proc) return;
+  stop(): Promise<void> {
+    if (!this.proc) return Promise.resolve();
     this.running = false;
-    try {
-      this.proc.kill('SIGTERM');
-    } catch {
-      // already dead
-    }
+    const proc = this.proc;
     this.proc = null;
+
+    return new Promise<void>((resolve) => {
+      // Safety net: force-kill after 500ms if SIGTERM doesn't work
+      const killTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 500);
+
+      proc.once('close', () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
+
+      // Also resolve immediately if process is already dead
+      if (proc.exitCode !== null) {
+        clearTimeout(killTimer);
+        resolve();
+        return;
+      }
+
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        clearTimeout(killTimer);
+        resolve();
+      }
+    });
   }
 }

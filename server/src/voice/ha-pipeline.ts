@@ -60,7 +60,8 @@ export class HAPipeline extends EventEmitter {
   stop(): void {
     this.destroyed = true;
     this.clearReconnect();
-    this.stopMic();
+    // Fire-and-forget stop — caller doesn't need to await device release
+    this.stopMic().catch(() => {});
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -187,27 +188,30 @@ export class HAPipeline extends EventEmitter {
     if (this.destroyed || !this.ws || this.connState !== 'ready') return;
     this.runId = this.msgId++;
     this.binaryHandlerId = 0;
-    this.stopMic();
+    // Stop mic first (await device release), then fire the pipeline command
+    this.stopMic().then(() => {
+      if (this.destroyed || !this.ws || this.connState !== 'ready') return;
 
-    const msg: Record<string, unknown> = {
-      id: this.runId,
-      type: 'assist_pipeline/run',
-      start_stage: 'wake_word',
-      end_stage: 'tts',
-      input: {
-        timeout: 60,            // seconds of silence before giving up on wake word
-        sample_rate: 16000,
-        noise_suppression_level: 2,
-        auto_gain_dbfs: 15,
-      },
-    };
+      const msg: Record<string, unknown> = {
+        id: this.runId,
+        type: 'assist_pipeline/run',
+        start_stage: 'wake_word',
+        end_stage: 'tts',
+        input: {
+          timeout: 60,            // seconds of silence before giving up on wake word
+          sample_rate: 16000,
+          noise_suppression_level: 2,
+          auto_gain_dbfs: 15,
+        },
+      };
 
-    if (this.settings.pipelineId) {
-      msg.pipeline = this.settings.pipelineId;
-    }
+      if (this.settings.pipelineId) {
+        msg.pipeline = this.settings.pipelineId;
+      }
 
-    this.sendJson(msg);
-    console.log('[voice] Pipeline run', this.runId, 'started — waiting for wake word');
+      this.sendJson(msg);
+      console.log('[voice] Pipeline run', this.runId, 'started — waiting for wake word');
+    }).catch(() => {});
   }
 
   private handlePipelineEvent(event: { type: string; data?: any }): void {
@@ -242,12 +246,12 @@ export class HAPipeline extends EventEmitter {
       case 'stt-vad-end':
         // End of speech — HA has all audio it needs; stop mic to free resource
         console.log('[voice] Speech ended');
-        this.stopMic();
+        this.stopMic().catch(() => {});
         break;
 
       case 'stt-end':
         console.log('[voice] Transcript:', data?.stt_output?.text ?? '(empty)');
-        this.stopMic();
+        this.stopMic().catch(() => {});
         break;
 
       case 'intent-start':
@@ -272,8 +276,7 @@ export class HAPipeline extends EventEmitter {
 
       case 'run-end':
         console.log('[voice] Pipeline run ended — restarting');
-        this.stopMic();
-        setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, 500);
+        this.stopMic().then(() => { if (!this.destroyed) this.runPipeline(); }).catch(() => {});
         break;
 
       case 'error': {
@@ -282,12 +285,12 @@ export class HAPipeline extends EventEmitter {
         if (code === 'wake-word-timeout') {
           // Normal — no one spoke for `timeout` seconds; just restart
           console.log('[voice] Wake word timeout — restarting pipeline');
-          this.stopMic();
-          setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, 200);
+          this.stopMic().then(() => { if (!this.destroyed) this.runPipeline(); }).catch(() => {});
         } else {
           console.error(`[voice] Pipeline error [${code}]:`, message);
-          this.stopMic();
-          setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, 3000);
+          this.stopMic().then(() => {
+            if (!this.destroyed) setTimeout(() => this.runPipeline(), 3000);
+          }).catch(() => {});
         }
         break;
       }
@@ -322,10 +325,11 @@ export class HAPipeline extends EventEmitter {
     console.log('[voice] Mic streaming started (device:', this.settings.micDevice, ')');
   }
 
-  private stopMic(): void {
+  private async stopMic(): Promise<void> {
     if (!this.mic) return;
-    this.mic.stop();
+    const mic = this.mic;
     this.mic = null;
+    await mic.stop();
   }
 
   // ── TTS playback ───────────────────────────────────────────────────────────
