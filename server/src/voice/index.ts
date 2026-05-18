@@ -1,11 +1,17 @@
 /**
- * Voice satellite lifecycle — start/stop the ESPHome API server.
+ * Voice assistant lifecycle — start/stop the HA Assist Pipeline client.
  *
  * Settings are persisted in the server_settings DB table (managed via the
  * Settings UI).  Env vars are used as fallbacks when no DB row exists yet.
+ *
+ * Architecture (Phase 2):
+ *   - No local TCP server — we connect outbound to HA's WebSocket API
+ *   - HA's OWW add-on handles wake word detection
+ *   - HA's STT/TTS pipelines handle the rest
+ *   - TTS audio is played locally via mpv
  */
 
-import { EspHomeServer, EspHomeServerSettings } from './esphome-server.js';
+import { HAPipeline, HAPipelineSettings } from './ha-pipeline.js';
 import { getDb } from '../db/index.js';
 
 function dbGet(key: string, fallback: string): string {
@@ -18,13 +24,14 @@ function dbGet(key: string, fallback: string): string {
 }
 
 /** Load current settings from DB (with env-var fallbacks). */
-export function loadSettingsFromDb(): EspHomeServerSettings {
+export function loadSettingsFromDb(): HAPipelineSettings {
   return {
-    port:         parseInt(dbGet('voice_port',          process.env.VOICE_PORT          ?? '6053')),
-    micDevice:    dbGet('voice_mic_device',              process.env.VOICE_MIC_DEVICE    ?? 'default'),
-    friendlyName: dbGet('voice_friendly_name',           process.env.VOICE_FRIENDLY_NAME ?? 'Canvas Display'),
-    wakeWord:     dbGet('voice_wake_word',               process.env.VOICE_WAKE_WORD     ?? 'okay_nabu'),
-    ttsVolume:    parseInt(dbGet('voice_tts_volume',     process.env.VOICE_TTS_VOLUME    ?? '80')),
+    haUrl:      dbGet('voice_ha_url',      process.env.VOICE_HA_URL      ?? 'http://homeassistant.local:8123'),
+    haToken:    dbGet('voice_ha_token',    process.env.VOICE_HA_TOKEN    ?? ''),
+    micDevice:  dbGet('voice_mic_device',  process.env.VOICE_MIC_DEVICE  ?? 'default'),
+    wakeWord:   dbGet('voice_wake_word',   process.env.VOICE_WAKE_WORD   ?? 'okay_nabu'),
+    ttsVolume:  parseInt(dbGet('voice_tts_volume', process.env.VOICE_TTS_VOLUME ?? '80')),
+    pipelineId: dbGet('voice_pipeline_id', process.env.VOICE_PIPELINE_ID ?? ''),
   };
 }
 
@@ -39,79 +46,80 @@ export type VoiceStatus = 'disabled' | 'starting' | 'running' | 'stopped' | 'err
 
 export interface VoiceState {
   status: VoiceStatus;
-  port: number;
   micDevice: string;
-  friendlyName: string;
+  haUrl: string;
 }
 
-let _server: EspHomeServer | null = null;
+let _pipeline: HAPipeline | null = null;
 let _status: VoiceStatus = 'disabled';
 
 // Runtime settings — loaded from DB on first start, overrideable at runtime
-let _settings: EspHomeServerSettings = {
-  port:         6053,
-  micDevice:    'default',
-  friendlyName: 'Canvas Display',
-  wakeWord:     'okay_nabu',
-  ttsVolume:    80,
+let _settings: HAPipelineSettings = {
+  haUrl:      'http://homeassistant.local:8123',
+  haToken:    '',
+  micDevice:  'default',
+  wakeWord:   'okay_nabu',
+  ttsVolume:  80,
+  pipelineId: '',
 };
 
 export async function startVoiceServer(): Promise<void> {
-  if (_server) return; // already running
+  if (_pipeline) return; // already running
 
   // Always reload from DB before starting so UI changes take effect on reboot
   _settings = loadSettingsFromDb();
   _status = 'starting';
 
+  if (!_settings.haToken) {
+    console.warn('[voice] No HA token configured — voice assistant disabled');
+    _status = 'error';
+    return;
+  }
+
   try {
-    _server = new EspHomeServer(_settings);
-    _server.on('error', (err: Error) => {
-      console.error('[voice] Fatal server error:', err.message);
-      _status = 'error';
-      _server = null;
-    });
-    _server.on('voiceEvent', (event) => {
+    _pipeline = new HAPipeline(_settings);
+
+    _pipeline.on('voiceEvent', (event) => {
       // Forward voice events to WebSocket clients for UI indicators
       import('../ws/index.js').then(m => {
         m.broadcast({ type: 'voice_event', ...event });
       }).catch(() => {});
     });
 
-    await _server.start();
+    _pipeline.start();
     _status = 'running';
 
-    console.log(`[voice] Voice satellite started — listening for HA on port ${_settings.port}`);
+    console.log(`[voice] Voice assistant started — HA: ${_settings.haUrl}`);
     console.log(`[voice] Mic device: ${_settings.micDevice} | Wake word: ${_settings.wakeWord}`);
   } catch (err) {
-    console.error('[voice] Failed to start voice satellite:', err);
+    console.error('[voice] Failed to start voice assistant:', err);
     _status = 'error';
-    _server = null;
+    _pipeline = null;
     throw err;
   }
 }
 
 export async function stopVoiceServer(): Promise<void> {
-  if (!_server) return;
-  await _server.stop();
-  _server = null;
+  if (!_pipeline) return;
+  _pipeline.stop();
+  _pipeline = null;
   _status = 'stopped';
-  console.log('[voice] Voice satellite stopped');
+  console.log('[voice] Voice assistant stopped');
 }
 
 export function getVoiceState(): VoiceState {
   return {
-    status:       _status,
-    port:         _settings.port,
-    micDevice:    _settings.micDevice,
-    friendlyName: _settings.friendlyName,
+    status:    _status,
+    micDevice: _settings.micDevice,
+    haUrl:     _settings.haUrl,
   };
 }
 
 /** Update settings at runtime (e.g. from settings API) */
-export function updateVoiceSettings(settings: Partial<EspHomeServerSettings>): void {
+export function updateVoiceSettings(settings: Partial<HAPipelineSettings>): void {
   Object.assign(_settings, settings);
-  if (_server) {
-    _server.updateSettings(settings);
+  if (_pipeline) {
+    _pipeline.updateSettings(settings);
   }
 }
 

@@ -22,14 +22,15 @@ const SETTING_DEFAULTS: Record<string, string> = {
   mqtt_username:        '',
   mqtt_password:        '',
   voice_enabled:        '0',
-  voice_port:           '6053',
   voice_mic_device:     'default',
-  voice_friendly_name:  'Canvas Display',
   voice_wake_word:      'okay_nabu',
   voice_tts_volume:     '80',
+  voice_ha_url:         'http://homeassistant.local:8123',
+  voice_ha_token:       '',
+  voice_pipeline_id:    '',
 };
 
-const REDACTED_KEYS = new Set(['mqtt_password']);
+const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token']);
 
 function getAllSettings(): Record<string, string> {
   const db = getDb();
@@ -120,11 +121,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       return { ok: true, status: 'stopped' };
     }
     updateVoiceSettings({
-      port:         parseInt(s.voice_port),
-      micDevice:    s.voice_mic_device,
-      friendlyName: s.voice_friendly_name,
-      wakeWord:     s.voice_wake_word,
-      ttsVolume:    parseInt(s.voice_tts_volume),
+      haUrl:      s.voice_ha_url,
+      micDevice:  s.voice_mic_device,
+      wakeWord:   s.voice_wake_word,
+      ttsVolume:  parseInt(s.voice_tts_volume),
+      pipelineId: s.voice_pipeline_id,
     });
     await stopVoiceServer();
     await startVoiceServer();

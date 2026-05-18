@@ -19,6 +19,8 @@ import WifiOffIcon from '@mui/icons-material/WifiOff';
 import MicIcon from '@mui/icons-material/Mic';
 import MicOffIcon from '@mui/icons-material/MicOff';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { api } from '../api/client';
 import { useEditorStore } from '../store';
 
@@ -30,11 +32,12 @@ interface ServerSettings {
   mqtt_username: string;
   mqtt_password: string;
   voice_enabled: string;
-  voice_port: string;
   voice_mic_device: string;
-  voice_friendly_name: string;
   voice_wake_word: string;
   voice_tts_volume: string;
+  voice_ha_url: string;
+  voice_ha_token: string;
+  voice_pipeline_id: string;
 }
 
 interface MqttStatus {
@@ -45,9 +48,8 @@ interface MqttStatus {
 
 interface VoiceStatus {
   status: 'disabled' | 'starting' | 'running' | 'stopped' | 'error';
-  port: number;
   micDevice: string;
-  friendlyName: string;
+  haUrl: string;
 }
 
 interface MicrophoneDevice {
@@ -75,11 +77,13 @@ export default function SettingsPage() {
 
   // Voice settings state
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [voicePort, setVoicePort] = useState('6053');
   const [voiceMicDevice, setVoiceMicDevice] = useState('default');
-  const [voiceFriendlyName, setVoiceFriendlyName] = useState('Canvas Display');
   const [voiceWakeWord, setVoiceWakeWord] = useState('okay_nabu');
   const [voiceTtsVolume, setVoiceTtsVolume] = useState('80');
+  const [voiceHaUrl, setVoiceHaUrl] = useState('http://homeassistant.local:8123');
+  const [voiceHaToken, setVoiceHaToken] = useState('');
+  const [voicePipelineId, setVoicePipelineId] = useState('');
+  const [showHaToken, setShowHaToken] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [voiceRestarting, setVoiceRestarting] = useState(false);
   const [micDevices, setMicDevices] = useState<MicrophoneDevice[]>([{ id: 'default', label: 'Default' }]);
@@ -111,11 +115,12 @@ export default function SettingsPage() {
       setMqttPassword(''); // never pre-fill password
       setMqttStatus(m);
       setVoiceEnabled(s.voice_enabled === '1');
-      setVoicePort(s.voice_port ?? '6053');
       setVoiceMicDevice(s.voice_mic_device ?? 'default');
-      setVoiceFriendlyName(s.voice_friendly_name ?? 'Canvas Display');
       setVoiceWakeWord(s.voice_wake_word ?? 'okay_nabu');
       setVoiceTtsVolume(s.voice_tts_volume ?? '80');
+      setVoiceHaUrl(s.voice_ha_url ?? 'http://homeassistant.local:8123');
+      setVoiceHaToken(''); // never pre-fill token
+      setVoicePipelineId(s.voice_pipeline_id ?? '');
       // Fetch voice status separately (non-fatal)
       api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
     } catch (e) {
@@ -137,13 +142,16 @@ export default function SettingsPage() {
         mqtt_enabled:        mqttEnabled ? '1' : '0',
         mqtt_broker_url:     mqttUrl,
         mqtt_username:       mqttUsername,
-        voice_enabled:       voiceEnabled ? '1' : '0',
-        voice_port:          voicePort,
-        voice_mic_device:    voiceMicDevice,
-        voice_friendly_name: voiceFriendlyName,
-        voice_wake_word:     voiceWakeWord,
-        voice_tts_volume:    voiceTtsVolume,
+        voice_enabled:      voiceEnabled ? '1' : '0',
+        voice_mic_device:   voiceMicDevice,
+        voice_wake_word:    voiceWakeWord,
+        voice_tts_volume:   voiceTtsVolume,
+        voice_ha_url:       voiceHaUrl,
+        voice_pipeline_id:  voicePipelineId,
       };
+      if (voiceHaToken && voiceHaToken !== '••••••••') {
+        body.voice_ha_token = voiceHaToken;
+      }
       if (mqttPassword && mqttPassword !== '••••••••') {
         body.mqtt_password = mqttPassword;
       }
@@ -181,7 +189,7 @@ export default function SettingsPage() {
     try {
       await saveSettings();
       const result = await api.post<{ ok: boolean; status: string }>('/api/settings/voice/restart');
-      setSaveMsg({ type: 'success', text: `Voice satellite ${result.status}.` });
+      setSaveMsg({ type: 'success', text: `Voice assistant ${result.status}.` });
       setTimeout(() => {
         api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
       }, 1500);
@@ -352,16 +360,37 @@ export default function SettingsPage() {
             />
 
             <Stack spacing={2}>
+              <TextField
+                label="HA URL"
+                size="small"
+                fullWidth
+                value={voiceHaUrl}
+                onChange={(e) => setVoiceHaUrl(e.target.value)}
+                disabled={!voiceEnabled}
+                placeholder="http://192.168.1.103:8123"
+                helperText="Base URL of your Home Assistant instance"
+              />
+              <TextField
+                label="HA Long-Lived Token"
+                size="small"
+                fullWidth
+                type={showHaToken ? 'text' : 'password'}
+                value={voiceHaToken}
+                onChange={(e) => setVoiceHaToken(e.target.value)}
+                disabled={!voiceEnabled}
+                placeholder="Leave blank to keep existing"
+                helperText="HA Profile → Security → Long-Lived Access Tokens"
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <IconButton size="small" onClick={() => setShowHaToken(v => !v)} edge="end">
+                        {showHaToken ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                      </IconButton>
+                    ),
+                  },
+                }}
+              />
               <Stack direction="row" spacing={2}>
-                <TextField
-                  label="Port"
-                  size="small"
-                  value={voicePort}
-                  onChange={(e) => setVoicePort(e.target.value)}
-                  disabled={!voiceEnabled}
-                  helperText="ESPHome API port (default 6053)"
-                  sx={{ width: 120 }}
-                />
                 <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
                   <InputLabel>Mic Device</InputLabel>
                   <Select
@@ -390,17 +419,6 @@ export default function SettingsPage() {
                     ))}
                   </Select>
                 </FormControl>
-              </Stack>
-              <Stack direction="row" spacing={2}>
-                <TextField
-                  label="Friendly Name"
-                  size="small"
-                  value={voiceFriendlyName}
-                  onChange={(e) => setVoiceFriendlyName(e.target.value)}
-                  disabled={!voiceEnabled}
-                  helperText="Shown in HA device UI"
-                  sx={{ flex: 1 }}
-                />
                 <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
                   <InputLabel>Wake Word</InputLabel>
                   <Select
@@ -413,6 +431,16 @@ export default function SettingsPage() {
                   </Select>
                 </FormControl>
               </Stack>
+              <TextField
+                label="Pipeline ID (optional)"
+                size="small"
+                fullWidth
+                value={voicePipelineId}
+                onChange={(e) => setVoicePipelineId(e.target.value)}
+                disabled={!voiceEnabled}
+                placeholder="Leave blank to use the default pipeline"
+                helperText="HA pipeline UUID — leave blank to use the preferred pipeline"
+              />
               <Box>
                 <Typography variant="body2" gutterBottom color={voiceEnabled ? 'text.primary' : 'text.disabled'}>
                   TTS volume: {voiceTtsVolume}%
@@ -450,7 +478,8 @@ export default function SettingsPage() {
             </Stack>
 
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-              After enabling, add this device in HA via <strong>Settings → Devices & Services → ESPHome</strong> using this device's IP and the port above.
+              Uses the HA Assist Pipeline API — wake word detection is handled by the OWW add-on in HA.
+              Token: <strong>HA Profile → Security → Long-Lived Access Tokens</strong>.
             </Typography>
           </Paper>
 
