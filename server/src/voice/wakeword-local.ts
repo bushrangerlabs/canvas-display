@@ -19,9 +19,16 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, writeFileSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join } from 'path';
+
+/** Prefer the canvas-display venv if present, fall back to system python3. */
+function findPython3(): string {
+  const venvPy = join(homedir(), '.venv', 'oww', 'bin', 'python3');
+  if (existsSync(venvPy)) return venvPy;
+  return 'python3';
+}
 
 // Python script written to /tmp at startup.
 // Reads 80ms PCM chunks from stdin, runs OWW inference, prints "detected:<model>"
@@ -106,7 +113,9 @@ export class WakeWordDetector extends EventEmitter {
     if (this.proc) return;
 
     const modelName = this.wakeWord.replace(/ /g, '_');
-    this.proc = spawn('python3', [this.scriptPath, modelName], {
+    const python = findPython3();
+    console.log('[wakeword] Using Python:', python);
+    this.proc = spawn(python, [this.scriptPath, modelName], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -153,7 +162,7 @@ export class WakeWordDetector extends EventEmitter {
     this.proc.on('error', (err) => {
       this._ready = false;
       this.proc = null;
-      console.error('[wakeword] Failed to spawn python3:', err.message);
+      console.error('[wakeword] Failed to spawn Python (tried', findPython3() + '):', err.message);
       this.emit('error', err);
     });
   }
