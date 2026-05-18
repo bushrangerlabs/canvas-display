@@ -1,41 +1,41 @@
 /**
- * HA Assist Pipeline — connects outbound to HA's native WebSocket API and
- * runs the assist_pipeline starting at the wake_word stage.
+ * HA Assist Pipeline — connects outbound to HA's native WebSocket API.
  *
- * Replaces the ESPHome TCP satellite. We connect TO HA instead of waiting
- * for HA to connect to us.
+ * Wake word detection runs LOCALLY via Python openWakeWord (wakeword-local.ts).
+ * Once the wake word fires, the pipeline starts at the 'stt' stage on HA.
+ * HA only needs faster-whisper + piper — no openWakeWord add-on required.
  *
- * Cycle per invocation:
- *   1. WebSocket connect + auth to HA
- *   2. assist_pipeline/run { start_stage: 'wake_word', end_stage: 'tts' }
- *   3. run-start  → get stt_binary_handler_id → start mic → stream audio
- *   4. wake_word-end → wake word detected (optional chime)
- *   5. stt-end    → transcript received → stop mic
- *   6. tts-end    → TTS URL → play via mpv
- *   7. run-end    → back to step 2 (new pipeline run)
+ * Audio flow:
+ *   Mic (parec/arecord, runs continuously)
+ *     wake_word state: mic audio -> Python OWW process (local detection)
+ *     stt state:       mic audio -> HA WebSocket binary frames
  */
 
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { spawn } from 'child_process';
 import { MicCapture } from './mic.js';
+import { WakeWordDetector } from './wakeword-local.js';
 
 export interface HAPipelineSettings {
-  haUrl: string;        // e.g. 'http://192.168.1.103:8123'
-  haToken: string;      // long-lived access token
-  micDevice: string;    // ALSA device  e.g. 'plughw:4,0' or 'default'
-  wakeWord: string;     // informational — OWW on HA side handles it
-  ttsVolume: number;    // 0-100
-  pipelineId: string;   // optional — empty string uses HA default pipeline
+  haUrl: string;
+  haToken: string;
+  micDevice: string;
+  wakeWord: string;
+  ttsVolume: number;
+  pipelineId: string;
 }
 
 type ConnState = 'idle' | 'connecting' | 'authenticating' | 'ready' | 'closed';
+type VoiceState = 'wake_word' | 'stt';
 
 export class HAPipeline extends EventEmitter {
   private settings: HAPipelineSettings;
   private ws: WebSocket | null = null;
   private mic: MicCapture | null = null;
+  private wwd: WakeWordDetector | null = null;
   private connState: ConnState = 'idle';
+  private voiceState: VoiceState = 'wake_word';
   private msgId = 1;
   private runId = 0;
   private binaryHandlerId = 0;
@@ -60,7 +60,8 @@ export class HAPipeline extends EventEmitter {
   async stop(): Promise<void> {
     this.destroyed = true;
     this.clearReconnect();
-    await this.stopMic(); // wait for arecord to fully exit before returning
+    this.stopWakeWord();
+    await this.stopMic();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -68,10 +69,7 @@ export class HAPipeline extends EventEmitter {
     this.connState = 'closed';
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
   private wsUrl(): string {
-    // Convert http(s):// → ws(s)://  and append the HA WS path
     return this.settings.haUrl
       .replace(/\/$/, '')
       .replace(/^http/, 'ws') + '/api/websocket';
@@ -99,8 +97,6 @@ export class HAPipeline extends EventEmitter {
     }, this.reconnectDelay);
   }
 
-  // ── WebSocket connection ───────────────────────────────────────────────────
-
   private connect(): void {
     if (this.destroyed) return;
     this.connState = 'connecting';
@@ -109,12 +105,10 @@ export class HAPipeline extends EventEmitter {
     const ws = new WebSocket(this.wsUrl(), { rejectUnauthorized: false });
     this.ws = ws;
 
-    ws.on('open', () => {
-      this.reconnectDelay = 2000; // reset backoff on successful connect
-    });
+    ws.on('open', () => { this.reconnectDelay = 2000; });
 
     ws.on('message', (data, isBinary) => {
-      if (isBinary) return; // HA only sends JSON over the WS API
+      if (isBinary) return;
       try {
         this.handleMessage(JSON.parse(data.toString()));
       } catch (err) {
@@ -125,6 +119,7 @@ export class HAPipeline extends EventEmitter {
     ws.on('close', () => {
       if (this.connState === 'closed') return;
       console.log('[voice] HA WS disconnected — reconnecting in', this.reconnectDelay, 'ms');
+      this.stopWakeWord();
       this.stopMic().catch(() => {}).finally(() => {
         this.ws = null;
         this.connState = 'idle';
@@ -137,10 +132,7 @@ export class HAPipeline extends EventEmitter {
     });
   }
 
-  // ── Message handling ───────────────────────────────────────────────────────
-
   private handleMessage(msg: any): void {
-    // Auth flow
     if (msg.type === 'auth_required') {
       this.connState = 'authenticating';
       this.sendJson({ type: 'auth', access_token: this.settings.haToken });
@@ -148,98 +140,146 @@ export class HAPipeline extends EventEmitter {
     }
 
     if (msg.type === 'auth_ok') {
-      console.log('[voice] HA authenticated (core', msg.ha_version, ') — starting pipeline');
+      console.log('[voice] HA authenticated (core', msg.ha_version, ')');
       this.connState = 'ready';
-      this.runPipeline();
+      console.log('[voice] Voice assistant started — HA:', this.settings.haUrl);
+      console.log('[voice] Mic:', this.settings.micDevice, '| Wake word:', this.settings.wakeWord);
+      this.startWakeWordPhase();
       return;
     }
 
     if (msg.type === 'auth_invalid') {
-      console.error('[voice] HA auth failed — check the long-lived access token in Settings');
-      // Don't reconnect immediately — bad token won't self-heal
-      setTimeout(() => {
-        if (!this.destroyed) this.scheduleReconnect();
-      }, 30_000);
+      console.error('[voice] HA auth failed — check token in Settings');
+      setTimeout(() => { if (!this.destroyed) this.scheduleReconnect(); }, 30_000);
       return;
     }
 
-    // Pipeline result (success/error for the initial run command)
     if (msg.type === 'result' && msg.id === this.runId) {
       if (!msg.success) {
         const code: string = msg.error?.code ?? 'unknown';
-        const message: string = msg.error?.message ?? '';
         console.error('[voice] Pipeline start failed:', JSON.stringify(msg.error));
-        // invalid_format = bad request we sent — don't retry instantly, back off
         const delay = code === 'invalid_format' ? 30_000 : 3000;
-        setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, delay);
+        setTimeout(() => { if (!this.destroyed) this.startWakeWordPhase(); }, delay);
       }
       return;
     }
 
-    // Pipeline events
     if (msg.type === 'event' && msg.id === this.runId) {
       this.handlePipelineEvent(msg.event);
     }
   }
 
-  // ── Pipeline run lifecycle ─────────────────────────────────────────────────
+  // ── Wake word phase: mic audio -> local Python OWW ─────────────────────────
 
-  private runPipeline(): void {
+  private startWakeWordPhase(): void {
+    if (this.destroyed) return;
+    this.voiceState = 'wake_word';
+    this.binaryHandlerId = 0;
+
+    // Mic runs continuously for the lifetime of the pipeline
+    if (!this.mic) {
+      const mic = new MicCapture(this.settings.micDevice);
+      this.mic = mic;
+      mic.on('data',  (chunk: Buffer) => this.onMicData(chunk));
+      mic.on('error', (err: Error)    => console.error('[voice] Mic error:', err.message));
+      mic.on('close', (code: number | null) => {
+        if (!this.destroyed && this.mic === mic) {
+          console.warn('[voice] Mic closed unexpectedly (code', code, ')');
+          this.mic = null;
+          this.stopWakeWord();
+          setTimeout(() => { if (!this.destroyed) this.startWakeWordPhase(); }, 2000);
+        }
+      });
+      mic.start();
+    }
+
+    this.stopWakeWord();
+    const wwd = new WakeWordDetector(this.settings.wakeWord);
+    this.wwd = wwd;
+
+    wwd.on('ready', () => {
+      console.log('[voice] Wake word detection active (local OWW)...');
+    });
+
+    wwd.on('detected', () => {
+      console.log('[voice] Wake word detected! Starting STT pipeline...');
+      this.stopWakeWord();
+      this.runSttPipeline();
+    });
+
+    wwd.on('error', (err: Error) => {
+      const msg = err.message ?? '';
+      console.error('[voice] Wake word error:', msg);
+      const delay = msg.includes('not installed') ? 60_000 : 5000;
+      setTimeout(() => { if (!this.destroyed) this.startWakeWordPhase(); }, delay);
+    });
+
+    wwd.on('close', (code: number | null) => {
+      if (!this.destroyed && this.wwd === wwd && this.voiceState === 'wake_word') {
+        console.warn('[voice] Wake word process closed (code', code, ') — restarting...');
+        this.wwd = null;
+        setTimeout(() => { if (!this.destroyed) this.startWakeWordPhase(); }, 2000);
+      }
+    });
+
+    wwd.start();
+  }
+
+  private stopWakeWord(): void {
+    if (this.wwd) {
+      this.wwd.removeAllListeners();
+      this.wwd.stop();
+      this.wwd = null;
+    }
+  }
+
+  // ── STT pipeline phase: mic audio -> HA WebSocket ─────────────────────────
+
+  private runSttPipeline(): void {
     if (this.destroyed || !this.ws || this.connState !== 'ready') return;
+    this.voiceState = 'stt';
     this.runId = this.msgId++;
     this.binaryHandlerId = 0;
-    // Stop mic first (await device release), then fire the pipeline command
-    this.stopMic().then(() => {
-      if (this.destroyed || !this.ws || this.connState !== 'ready') return;
 
-      const input: Record<string, unknown> = {
-          timeout: 3600,          // 1 hour — pipeline stays alive, auto-restarts on timeout
-          sample_rate: 16000,
-          noise_suppression_level: 2,
-          auto_gain_dbfs: 15,
-        };
+    const msg: Record<string, unknown> = {
+      id:          this.runId,
+      type:        'assist_pipeline/run',
+      start_stage: 'stt',
+      end_stage:   'tts',
+      input: { sample_rate: 16000 },
+    };
 
-      // Tell HA which wake word to listen for — phrase uses spaces not underscores
-      if (this.settings.wakeWord) {
-        input.wake_word_phrase = this.settings.wakeWord.replace(/_/g, ' ');
-      }
+    if (this.settings.pipelineId) {
+      msg.pipeline = this.settings.pipelineId;
+    }
 
-      const msg: Record<string, unknown> = {
-        id: this.runId,
-        type: 'assist_pipeline/run',
-        start_stage: 'wake_word',
-        end_stage: 'tts',
-        input,
-      };
-
-      if (this.settings.pipelineId) {
-        msg.pipeline = this.settings.pipelineId;
-      }
-
-      this.sendJson(msg);
-      console.log('[voice] Pipeline run', this.runId, 'started — waiting for wake word');
-    }).catch(() => {});
+    this.sendJson(msg);
+    console.log('[voice] Pipeline run', this.runId, 'started at STT stage');
   }
+
+  // ── Mic data router ────────────────────────────────────────────────────────
+
+  private onMicData(chunk: Buffer): void {
+    if (this.voiceState === 'wake_word' && this.wwd) {
+      this.wwd.feed(chunk);
+    } else if (this.voiceState === 'stt' && this.binaryHandlerId > 0 && this.ws?.readyState === WebSocket.OPEN) {
+      const frame = Buffer.allocUnsafe(1 + chunk.length);
+      frame[0] = this.binaryHandlerId;
+      chunk.copy(frame, 1);
+      this.ws.send(frame);
+    }
+  }
+
+  // ── Pipeline event handling ────────────────────────────────────────────────
 
   private handlePipelineEvent(event: { type: string; data?: any }): void {
     const { type, data } = event;
     this.emit('voiceEvent', { type, data });
 
     switch (type) {
-      case 'run-start': {
-        // stt_binary_handler_id is under runner_data
+      case 'run-start':
         this.binaryHandlerId = data?.runner_data?.stt_binary_handler_id ?? 1;
-        console.log('[voice] run-start, binary handler_id =', this.binaryHandlerId);
-        this.startMic();
-        break;
-      }
-
-      case 'wake_word-start':
-        console.log('[voice] Wake word detection active...');
-        break;
-
-      case 'wake_word-end':
-        console.log('[voice] Wake word detected! Listening for speech...');
+        console.log('[voice] run-start, binary handler_id =', this.binaryHandlerId, '— streaming to HA STT');
         break;
 
       case 'stt-start':
@@ -251,54 +291,39 @@ export class HAPipeline extends EventEmitter {
         break;
 
       case 'stt-vad-end':
-        // End of speech — HA has all audio it needs; stop mic to free resource
         console.log('[voice] Speech ended');
-        this.stopMic().catch(() => {});
         break;
 
       case 'stt-end':
         console.log('[voice] Transcript:', data?.stt_output?.text ?? '(empty)');
-        this.stopMic().catch(() => {});
-        break;
-
-      case 'intent-start':
         break;
 
       case 'intent-end':
         console.log('[voice] Intent:', data?.intent_output?.response?.speech?.plain?.speech ?? '(no speech)');
         break;
 
-      case 'tts-start':
-        break;
-
       case 'tts-end': {
         const url: string | undefined = data?.tts_output?.url;
         if (url) {
           const fullUrl = url.startsWith('http') ? url : this.settings.haUrl.replace(/\/$/, '') + url;
-          console.log('[voice] TTS →', fullUrl);
+          console.log('[voice] TTS ->', fullUrl);
           this.playTts(fullUrl);
         }
         break;
       }
 
       case 'run-end':
-        console.log('[voice] Pipeline run ended — restarting');
-        this.stopMic().then(() => { if (!this.destroyed) this.runPipeline(); }).catch(() => {});
+        console.log('[voice] Pipeline run ended — returning to wake word detection');
+        this.startWakeWordPhase();
         break;
 
       case 'error': {
         const code: string = data?.code ?? 'unknown';
         const message: string = data?.message ?? '';
-        if (code === 'wake-word-timeout') {
-          // Normal — no one spoke for `timeout` seconds; just restart
-          console.log('[voice] Wake word timeout — restarting pipeline');
-          this.stopMic().then(() => { if (!this.destroyed) this.runPipeline(); }).catch(() => {});
-        } else {
-          console.error(`[voice] Pipeline error [${code}]:`, message);
-          this.stopMic().then(() => {
-            if (!this.destroyed) setTimeout(() => this.runPipeline(), 3000);
-          }).catch(() => {});
-        }
+        console.error('[voice] Pipeline error [' + code + ']:', message);
+        setTimeout(() => {
+          if (!this.destroyed) this.startWakeWordPhase();
+        }, code === 'stt-no-text-recognized' ? 500 : 2000);
         break;
       }
 
@@ -307,30 +332,7 @@ export class HAPipeline extends EventEmitter {
     }
   }
 
-  // ── Mic streaming ──────────────────────────────────────────────────────────
-
-  private startMic(): void {
-    if (this.mic) return; // already running
-    const mic = new MicCapture(this.settings.micDevice);
-    this.mic = mic;
-
-    mic.on('data', (chunk: Buffer) => {
-      if (this.binaryHandlerId > 0 && this.ws?.readyState === WebSocket.OPEN) {
-        // Prefix every chunk with the handler_id byte as required by HA's WS API
-        const frame = Buffer.allocUnsafe(1 + chunk.length);
-        frame[0] = this.binaryHandlerId;
-        chunk.copy(frame, 1);
-        this.ws.send(frame);
-      }
-    });
-
-    mic.on('error', (err: Error) => {
-      console.error('[voice] Mic error:', err.message);
-    });
-
-    mic.start();
-    console.log('[voice] Mic streaming started (device:', this.settings.micDevice, ')');
-  }
+  // ── Mic stop ───────────────────────────────────────────────────────────────
 
   private async stopMic(): Promise<void> {
     if (!this.mic) return;
@@ -343,12 +345,12 @@ export class HAPipeline extends EventEmitter {
 
   private playTts(url: string): void {
     const vol = Math.max(0, Math.min(100, this.settings.ttsVolume));
-    const mpv = spawn('mpv', ['--no-video', '--really-quiet', `--volume=${vol}`, url], {
+    const mpv = spawn('mpv', ['--no-video', '--really-quiet', '--volume=' + vol, url], {
       stdio: 'ignore',
       detached: false,
     });
     mpv.on('error', (err) => console.error('[voice] mpv error:', err.message));
-    mpv.on('exit', (code) => {
+    mpv.on('exit',  (code) => {
       if (code !== 0 && code !== null) console.error('[voice] mpv exited with code', code);
     });
   }
