@@ -165,8 +165,12 @@ export class HAPipeline extends EventEmitter {
     // Pipeline result (success/error for the initial run command)
     if (msg.type === 'result' && msg.id === this.runId) {
       if (!msg.success) {
+        const code: string = msg.error?.code ?? 'unknown';
+        const message: string = msg.error?.message ?? '';
         console.error('[voice] Pipeline start failed:', JSON.stringify(msg.error));
-        setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, 3000);
+        // invalid_format = bad request we sent — don't retry instantly, back off
+        const delay = code === 'invalid_format' ? 30_000 : 3000;
+        setTimeout(() => { if (!this.destroyed) this.runPipeline(); }, delay);
       }
       return;
     }
@@ -195,7 +199,6 @@ export class HAPipeline extends EventEmitter {
         sample_rate: 16000,
         noise_suppression_level: 2,
         auto_gain_dbfs: 15,
-        volume_multiplier: 1.0,
       },
     };
 
