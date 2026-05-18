@@ -192,17 +192,24 @@ export class HAPipeline extends EventEmitter {
     this.stopMic().then(() => {
       if (this.destroyed || !this.ws || this.connState !== 'ready') return;
 
+      const input: Record<string, unknown> = {
+          timeout: 3600,          // 1 hour — pipeline stays alive, auto-restarts on timeout
+          sample_rate: 16000,
+          noise_suppression_level: 2,
+          auto_gain_dbfs: 15,
+        };
+
+      // Tell HA which wake word to listen for — phrase uses spaces not underscores
+      if (this.settings.wakeWord) {
+        input.wake_word_phrase = this.settings.wakeWord.replace(/_/g, ' ');
+      }
+
       const msg: Record<string, unknown> = {
         id: this.runId,
         type: 'assist_pipeline/run',
         start_stage: 'wake_word',
         end_stage: 'tts',
-        input: {
-          timeout: 60,            // seconds of silence before giving up on wake word
-          sample_rate: 16000,
-          noise_suppression_level: 2,
-          auto_gain_dbfs: 15,
-        },
+        input,
       };
 
       if (this.settings.pipelineId) {

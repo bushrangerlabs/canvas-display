@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "Canvas Display",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "identifier": "com.bushrangerlabs.canvas-display-browser",
   "build": {
     "frontendDist": "../dist",
@@ -45,6 +45,15 @@
     "linux": {
       "appimage": {
         "bundleMediaFramework": true
+      },
+      "deb": {
+        "depends": [
+          "libc6",
+          "libwebkit2gtk-4.1-0",
+          "alsa-utils",
+          "pulseaudio-utils",
+          "mpv"
+        ]
       }
     }
   }
