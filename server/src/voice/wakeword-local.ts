@@ -34,7 +34,30 @@ function findPython3(): string {
 // Reads 80ms PCM chunks from stdin, runs OWW inference, prints "detected:<model>"
 const PYTHON_SCRIPT = `
 import sys
+import os
+import glob
 import numpy as np
+
+def find_model_file(name):
+    """Find a wake word model file by name, checking openwakeword's resources dir.
+    Handles okay_nabu -> ok_nabu alias and versioned suffixes like _v0.1."""
+    try:
+        import openwakeword
+        resources_dir = os.path.join(os.path.dirname(openwakeword.__file__), 'resources', 'models')
+    except Exception:
+        return None
+    # Names to try (also handle okay_nabu -> ok_nabu alias)
+    candidates = [name, name.replace('okay_', 'ok_')]
+    for candidate in candidates:
+        for ext in ['.tflite', '.onnx']:
+            # Exact match
+            p = os.path.join(resources_dir, candidate + ext)
+            if os.path.exists(p):
+                return p
+            # Versioned match: name_v0.1.tflite
+            for p in sorted(glob.glob(os.path.join(resources_dir, candidate + '_v*' + ext)), reverse=True):
+                return p
+    return None
 
 def main():
     if len(sys.argv) < 2:
@@ -49,17 +72,25 @@ def main():
         import openwakeword
         from openwakeword.model import Model
     except ImportError:
-        print("error: openwakeword not installed — run: pip3 install openwakeword", file=sys.stderr, flush=True)
+        print("error: openwakeword not installed — run: ~/.venv/oww/bin/pip install openwakeword", file=sys.stderr, flush=True)
         sys.exit(2)
 
-    # Download the model weights on first run (cached in ~/.cache/openwakeword)
-    try:
-        openwakeword.utils.download_models([model_name])
-    except Exception as e:
-        print(f"warning: model download failed ({e}); trying cached copy", file=sys.stderr, flush=True)
+    model_path = find_model_file(model_name)
+    if not model_path:
+        # List available models for diagnostics
+        try:
+            resources_dir = os.path.join(os.path.dirname(openwakeword.__file__), 'resources', 'models')
+            available = [os.path.splitext(f)[0] for f in os.listdir(resources_dir) if f.endswith(('.tflite', '.onnx'))]
+        except Exception:
+            available = []
+        print(f"error: model '{model_name}' not found. Available: {available}", file=sys.stderr, flush=True)
+        sys.exit(3)
+
+    framework = 'tflite' if model_path.endswith('.tflite') else 'onnx'
+    print(f"loading model: {os.path.basename(model_path)} ({framework})", file=sys.stderr, flush=True)
 
     try:
-        oww = Model(wakeword_models=[model_name], inference_framework='tflite')
+        oww = Model(wakeword_model_paths=[model_path], inference_framework=framework)
     except Exception as e:
         print(f"error: failed to load model '{model_name}': {e}", file=sys.stderr, flush=True)
         sys.exit(3)
