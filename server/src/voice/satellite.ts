@@ -553,6 +553,15 @@ async def _serve(config: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # Ask the kernel to send SIGKILL to this process when the parent (Node) dies,
+    # regardless of how the parent terminates (clean exit, SIGTERM, SIGKILL, crash).
+    # This prevents orphaned satellite processes holding the TCP port open.
+    try:
+        import ctypes as _ct
+        _ct.CDLL("libc.so.6").prctl(1, 9)  # PR_SET_PDEATHSIG=1, SIGKILL=9
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser(description="Canvas Display Voice Satellite")
     ap.add_argument("--port",          type=int, default=6053)
     ap.add_argument("--name",          default="canvas-display")
@@ -656,10 +665,19 @@ export class VoiceSatelliteProcess extends EventEmitter {
     const proc = spawn(python, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     this.proc = proc;
 
-    // Kill child if the Node process exits unexpectedly (orphan prevention).
-    const _exitGuard = () => { try { process.kill(proc.pid!, 'SIGKILL'); } catch { /* already dead */ } };
-    process.once('exit', _exitGuard);
-    proc.once('close', () => process.removeListener('exit', _exitGuard));
+    // Belt-and-suspenders orphan prevention (primary guard is prctl in Python):
+    // If Node exits or receives a signal, SIGKILL the child first.
+    const _killChild = () => { try { process.kill(proc.pid!, 'SIGKILL'); } catch { /* already dead */ } };
+    const _onExit    = () => _killChild();
+    const _onSig     = () => { _killChild(); };
+    process.once('exit',    _onExit);
+    process.once('SIGTERM', _onSig);
+    process.once('SIGINT',  _onSig);
+    proc.once('close', () => {
+      process.removeListener('exit',    _onExit);
+      process.removeListener('SIGTERM', _onSig);
+      process.removeListener('SIGINT',  _onSig);
+    });
 
     proc.stdout?.on('data', (data: Buffer) => {
       for (const line of data.toString().split('\n')) {
