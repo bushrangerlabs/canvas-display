@@ -620,9 +620,10 @@ export class VoiceSatelliteProcess extends EventEmitter {
     this.destroyed = true;
     this._clearRestart();
     if (this.proc) {
-      this.proc.removeAllListeners();
-      this.proc.kill('SIGTERM');
+      const p = this.proc;
       this.proc = null;
+      p.removeAllListeners();
+      try { process.kill(p.pid!, 'SIGKILL'); } catch { /* already dead */ }
     }
   }
 
@@ -654,6 +655,11 @@ export class VoiceSatelliteProcess extends EventEmitter {
 
     const proc = spawn(python, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     this.proc = proc;
+
+    // Kill child if the Node process exits unexpectedly (orphan prevention).
+    const _exitGuard = () => { try { process.kill(proc.pid!, 'SIGKILL'); } catch { /* already dead */ } };
+    process.once('exit', _exitGuard);
+    proc.once('close', () => process.removeListener('exit', _exitGuard));
 
     proc.stdout?.on('data', (data: Buffer) => {
       for (const line of data.toString().split('\n')) {
