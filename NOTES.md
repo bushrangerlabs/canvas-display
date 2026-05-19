@@ -5,6 +5,26 @@
 
 ---
 
+## ⚠️ Voice Architecture — Needs Refactor (TODO)
+
+The current voice implementation uses a custom Python OWW subprocess + direct HA WebSocket `assist_pipeline/run`. This works but is fragile (venv setup, model management, manual tflite shim).
+
+**We should migrate to follow [OHF-Voice/linux-voice-assistant](https://github.com/OHF-Voice/linux-voice-assistant):**
+- Uses the **ESPHome/Wyoming protocol** (port 6053) — HA treats it as a proper voice satellite device
+- Ships `okay_nabu` and other wake word models directly in the repo (`wakewords/` dir)
+- Local OWW detection on-device, HA handles STT + TTS
+- Supports MicroWakeWord, WebRTC noise suppression, auto-gain
+- Tested on Python 3.11 and 3.12, runs as a Docker container or systemd service
+- Model loading via `--wake-word-dir` path (avoids the openwakeword package API churn we hit)
+
+Canvas display already has `server/src/voice/esphome-server.ts` — the ESPHome protocol is partially there. The refactor would be:
+1. Drop the custom Python OWW subprocess (`wakeword-local.ts`)
+2. Drop the direct WebSocket pipeline client (`ha-pipeline.ts`)
+3. Ship `okay_nabu` (and others) as bundled `.tflite` files in server resources
+4. Rewrite voice to use the Wyoming/ESPHome satellite protocol — HA's voice integration then handles the full pipeline
+
+---
+
 ## 🔊 Voice Satellite — Setup & Troubleshooting (May 2026)
 
 ### Architecture
