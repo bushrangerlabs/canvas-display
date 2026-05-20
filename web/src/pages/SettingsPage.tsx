@@ -413,6 +413,12 @@ export default function SettingsPage() {
                   >
                     <MenuItem value="okay_nabu">Okay Nabu</MenuItem>
                     <MenuItem value="hey_jarvis">Hey Jarvis</MenuItem>
+                    <MenuItem value="hey_mycroft">Hey Mycroft</MenuItem>
+                    <MenuItem value="hey_luna">Hey Luna</MenuItem>
+                    <MenuItem value="hey_home_assistant">Hey Home Assistant</MenuItem>
+                    <MenuItem value="okay_computer">Okay Computer</MenuItem>
+                    <MenuItem value="alexa">Alexa</MenuItem>
+                    <MenuItem value="choo_choo_homie">Choo Choo Homie</MenuItem>
                   </Select>
                 </FormControl>
               </Stack>

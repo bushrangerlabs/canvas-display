@@ -172,7 +172,10 @@ _BLOCK_BYTES   = _BLOCK_SAMPLES * _CHANNELS * _SAMPLE_WIDTH
 # MicroWakeWord models are downloaded from OHF-Voice/linux-voice-assistant repo.
 # This is the same model source that HA ships — probability_cutoff comes from .json.
 _MWW_BASE_URL = "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/main/wakewords"
-_MWW_KNOWN = {"okay_nabu", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "stop"}
+_MWW_KNOWN = {
+    "okay_nabu", "hey_jarvis", "hey_mycroft", "hey_luna",
+    "hey_home_assistant", "okay_computer", "alexa", "choo_choo_homie", "stop",
+}
 _MODEL_DIR = Path.home() / ".local" / "share" / "canvas-display" / "wakewords"
 
 def _ensure_mww_model(name: str) -> "Optional[Path]":
