@@ -42,7 +42,11 @@ export async function listMicrophones(): Promise<MicrophoneDevice[]> {
       const parts = line.split('\t');
       if (parts.length < 2) continue;
       const name = parts[1].trim();
-      if (!name || name.endsWith('.monitor') || name === 'auto_null') continue;
+      if (!name) continue;
+      // Exclude non-microphone sources
+      if (name.endsWith('.monitor')) continue;        // loopback monitors
+      if (name === 'auto_null') continue;             // null sink
+      if (/iec958|iec60958|spdif|hdmi/i.test(name)) continue; // S/PDIF & HDMI (digital, no mic signal)
       // Human-readable label: strip alsa_input. prefix and codec suffixes
       const label = name
         .replace(/^alsa_input\./, '')

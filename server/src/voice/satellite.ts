@@ -59,6 +59,7 @@ import asyncio
 import glob
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -461,10 +462,23 @@ class VoiceSatellite(asyncio.Protocol):
         _LOGGER.info("Listening for wake word: %s", self.config.wake_word)
 
         chunk_count = 0
+        silence_check_done = False
         while mic.poll() is None and (self._wake_word_active or self._streaming):
             raw = mic.stdout.read(_CHUNK_BYTES)
             if not raw or len(raw) < _CHUNK_BYTES:
                 break
+
+            # After ~2 s of audio, check if mic is actually delivering signal
+            if not silence_check_done and chunk_count >= 25:
+                silence_check_done = True
+                amp = np.abs(np.frombuffer(raw, dtype=np.int16)).max()
+                if amp < 5:
+                    _LOGGER.error(
+                        "Mic '%s' appears silent (max_amp=%d). "
+                        "Check PulseAudio/PipeWire: run 'pactl list short sources' "
+                        "and select the correct analog-stereo source.",
+                        self.config.mic_device, amp
+                    )
 
             # Stream audio to HA while in STT phase
             if self._streaming:
@@ -517,6 +531,11 @@ class VoiceSatellite(asyncio.Protocol):
 
     def _mic_cmd(self) -> list:
         dev = self.config.mic_device
+        # Reject known non-microphone sources (S/PDIF, HDMI) — they produce silence
+        if dev and re.search(r"iec958|iec60958|spdif|hdmi", dev, re.I):
+            _LOGGER.warning("Device '%s' is a digital output port (S/PDIF/HDMI) — "
+                            "it will produce silence. Falling back to 'default'.", dev)
+            dev = "default"
         if dev.startswith("hw:") or dev.startswith("plughw:"):
             return ["arecord", "-D", dev, "-f", "S16_LE", "-r", "16000", "-c", "1", "-"]
         cmd = ["parec", "--format=s16le", "--rate=16000", "--channels=1"]
@@ -622,11 +641,17 @@ export class VoiceSatelliteProcess extends EventEmitter {
   private destroyed = false;
   private restartTimer: NodeJS.Timeout | null = null;
   private restartDelay = 2000;
+  // Single global exit handler — registered once, kills the current child.
+  private _exitHandler: () => void;
 
   constructor(settings: SatelliteSettings) {
     super();
     this.settings = { ...settings };
     this.scriptPath = join(tmpdir(), 'canvas-display-satellite.py');
+    this._exitHandler = () => {
+      if (this.proc) try { process.kill(this.proc.pid!, 'SIGKILL'); } catch { /* already dead */ }
+    };
+    process.once('exit', this._exitHandler);
     this._writeScript();
   }
 
@@ -647,6 +672,7 @@ export class VoiceSatelliteProcess extends EventEmitter {
   async stop(): Promise<void> {
     this.destroyed = true;
     this._clearRestart();
+    process.removeListener('exit', this._exitHandler);
     if (this.proc) {
       const p = this.proc;
       this.proc = null;
@@ -681,19 +707,11 @@ export class VoiceSatelliteProcess extends EventEmitter {
 
     console.log(`[satellite] Spawning: ${python} --port ${s.port} --wake-word ${s.wakeWord}`);
 
+    // Belt-and-suspenders orphan prevention (primary guard is prctl in Python):
+    // The single global _exitHandler (registered in constructor) kills this.proc
+    // on Node exit — no per-spawn listeners needed.
     const proc = spawn(python, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     this.proc = proc;
-
-    // Belt-and-suspenders orphan prevention (primary guard is prctl in Python):
-    // If Node exits, SIGKILL the child. We do NOT hook SIGTERM/SIGINT here because
-    // (a) prctl handles OS-level cleanup and (b) hooking signals on every restart
-    // causes MaxListenersExceededWarning and prevents Node from exiting cleanly.
-    const _killChild = () => { try { process.kill(proc.pid!, 'SIGKILL'); } catch { /* already dead */ } };
-    const _onExit    = () => _killChild();
-    process.once('exit', _onExit);
-    proc.once('close', () => {
-      process.removeListener('exit', _onExit);
-    });
 
     proc.stdout?.on('data', (data: Buffer) => {
       for (const line of data.toString().split('\n')) {
