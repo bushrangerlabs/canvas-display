@@ -226,6 +226,13 @@ def _load_wake_model(name: str):
             try:
                 model    = MicroWakeWord.from_config(config_path)
                 features = MicroWakeWordFeatures()
+                # Cap at 0.85 — OHF-Voice ships hey_jarvis at 0.97 which is too
+                # strict for a display mic that isn't right next to the speaker.
+                _MAX_CUTOFF = 0.85
+                if model.probability_cutoff > _MAX_CUTOFF:
+                    _LOGGER.info("Capping cutoff %.2f → %.2f for %s",
+                                 model.probability_cutoff, _MAX_CUTOFF, name)
+                    model.probability_cutoff = _MAX_CUTOFF
                 _LOGGER.info("Loaded MicroWakeWord model: %s (cutoff=%.2f)",
                              name, model.probability_cutoff)
                 return ("micro", model, features)
