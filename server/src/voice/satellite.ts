@@ -380,12 +380,14 @@ class VoiceSatellite(asyncio.Protocol):
             self._pipeline_active = False
             self._wake_word_active = True
             _LOGGER.info("Pipeline ended — wake word detection active")
+            self._ensure_mic_running()
 
         elif et == _EVT_TIMED_OUT:
             self._streaming = False
             self._pipeline_active = False
             self._wake_word_active = True
             _LOGGER.warning("Pipeline timed out — resuming wake word detection")
+            self._ensure_mic_running()
 
         elif et == _EVT_ERROR:
             code = data.get("code", "?")
@@ -394,6 +396,7 @@ class VoiceSatellite(asyncio.Protocol):
             self._streaming = False
             self._pipeline_active = False
             self._wake_word_active = True
+            self._ensure_mic_running()
 
     def _handle_announce(self, msg: VoiceAssistantAnnounceRequest) -> None:
         urls = [u for u in (msg.preannounce_media_id, msg.media_id) if u]
@@ -412,6 +415,13 @@ class VoiceSatellite(asyncio.Protocol):
 
         threading.Thread(target=_play, daemon=True).start()
 
+    def _ensure_mic_running(self) -> None:
+        """Restart the mic+OWW thread if it has exited (called from event loop thread)."""
+        if self._mic_thread is None or not self._mic_thread.is_alive():
+            _LOGGER.info("Restarting mic thread")
+            self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True, name="mic-oww")
+            self._mic_thread.start()
+
     # ── Mic + wake word (background thread) ────────────────────────────────────
 
     def _mic_loop(self) -> None:
@@ -429,7 +439,7 @@ class VoiceSatellite(asyncio.Protocol):
         framework = "tflite" if model_path.endswith(".tflite") else "onnx"
         _LOGGER.info("Loading OWW model: %s (%s)", os.path.basename(model_path), framework)
         try:
-            oww = OWWModel(wakeword_model_paths=[model_path], inference_framework=framework)
+            oww = OWWModel(wakeword_models=[model_path], inference_framework=framework)
             self._oww = oww
         except Exception as e:
             _LOGGER.error("Failed to load OWW: %s", e)
@@ -450,6 +460,7 @@ class VoiceSatellite(asyncio.Protocol):
 
         _LOGGER.info("Listening for wake word: %s", self.config.wake_word)
 
+        chunk_count = 0
         while mic.poll() is None and (self._wake_word_active or self._streaming):
             raw = mic.stdout.read(_CHUNK_BYTES)
             if not raw or len(raw) < _CHUNK_BYTES:
@@ -464,16 +475,22 @@ class VoiceSatellite(asyncio.Protocol):
                 try:
                     audio = np.frombuffer(raw, dtype=np.int16)
                     preds = oww.predict(audio)
+                    chunk_count += 1
+                    # Periodic diagnostic: log best score every ~16 s (200 chunks)
+                    if chunk_count % 200 == 0:
+                        best = max(preds.values()) if preds else 0.0
+                        _LOGGER.info("OWW chunk=%d best_score=%.3f models=%s",
+                                     chunk_count, best, list(preds.keys()))
                     for ww_name, score in preds.items():
-                        if score >= 0.5:
+                        if score >= 0.35:
                             _LOGGER.info("Wake word detected: %s (%.3f)", ww_name, score)
                             oww.reset()
                             self._on_wake_word(ww_name)
                             break
                 except Exception as e:
-                    _LOGGER.debug("OWW predict error: %s", e)
+                    _LOGGER.warning("OWW predict error: %s", e)
 
-        _LOGGER.info("Mic loop exited")
+        _LOGGER.info("Mic loop exited (chunks=%d)", chunk_count)
 
     def _on_wake_word(self, ww_name: str) -> None:
         """Called from mic thread — triggers the HA pipeline."""
@@ -481,6 +498,9 @@ class VoiceSatellite(asyncio.Protocol):
             return
         self._pipeline_active  = True
         self._wake_word_active = False
+        # Set _streaming True synchronously so the mic loop condition stays True
+        # while call_soon_threadsafe delivers the send to the event loop.
+        self._streaming = True
 
         # Normalise: "ok_nabu_v0.1" → "okay nabu"
         phrase = ww_name.split("_v")[0]               # strip version suffix
@@ -491,7 +511,6 @@ class VoiceSatellite(asyncio.Protocol):
 
         def _start() -> None:
             self._send(VoiceAssistantRequest(start=True, wake_word_phrase=phrase))
-            self._streaming = True
 
         if self._loop:
             self._loop.call_soon_threadsafe(_start)
@@ -666,17 +685,14 @@ export class VoiceSatelliteProcess extends EventEmitter {
     this.proc = proc;
 
     // Belt-and-suspenders orphan prevention (primary guard is prctl in Python):
-    // If Node exits or receives a signal, SIGKILL the child first.
+    // If Node exits, SIGKILL the child. We do NOT hook SIGTERM/SIGINT here because
+    // (a) prctl handles OS-level cleanup and (b) hooking signals on every restart
+    // causes MaxListenersExceededWarning and prevents Node from exiting cleanly.
     const _killChild = () => { try { process.kill(proc.pid!, 'SIGKILL'); } catch { /* already dead */ } };
     const _onExit    = () => _killChild();
-    const _onSig     = () => { _killChild(); };
-    process.once('exit',    _onExit);
-    process.once('SIGTERM', _onSig);
-    process.once('SIGINT',  _onSig);
+    process.once('exit', _onExit);
     proc.once('close', () => {
-      process.removeListener('exit',    _onExit);
-      process.removeListener('SIGTERM', _onSig);
-      process.removeListener('SIGINT',  _onSig);
+      process.removeListener('exit', _onExit);
     });
 
     proc.stdout?.on('data', (data: Buffer) => {
