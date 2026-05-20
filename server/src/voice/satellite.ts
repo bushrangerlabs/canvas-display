@@ -52,30 +52,59 @@ const SATELLITE_PY = `
 Canvas Display Voice Satellite
 ESPHome-compatible TCP server for HA voice assistant integration.
 HA connects to this satellite using the ESPHome native API protocol.
+
+Follows the OHF-Voice/linux-voice-assistant reference architecture:
+  - soundcard library for microphone capture (PulseAudio/PipeWire native)
+  - pymicro_wakeword for MicroWakeWord models (okay_nabu etc.)
+  - pyopen_wakeword for OpenWakeWord models (fallback)
+  - Models auto-downloaded from OHF-Voice repo on first run
 """
 
 import argparse
 import asyncio
-import glob
+import json
 import logging
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
-from typing import Optional
+import urllib.request
+from pathlib import Path
+from typing import Optional, Union
 
 import numpy as np
 
-# ── openWakeWord ──────────────────────────────────────────────────────────────
+# ── soundcard (PulseAudio/PipeWire mic capture) ────────────────────────────────
 try:
-    import openwakeword
-    from openwakeword.model import Model as OWWModel
-    _OWW_OK = True
+    import soundcard as sc
+    _SC_OK = True
 except ImportError:
-    _OWW_OK = False
-    OWWModel = None
+    _SC_OK = False
+
+# ── pymicro_wakeword (MicroWakeWord — preferred for okay_nabu) ─────────────────
+try:
+    from pymicro_wakeword import MicroWakeWord, MicroWakeWordFeatures  # type: ignore[import]
+    _MWW_OK = True
+except ImportError:
+    _MWW_OK = False
+
+# ── pyopen_wakeword (OpenWakeWord streaming API) ───────────────────────────────
+try:
+    from pyopen_wakeword import OpenWakeWord, OpenWakeWordFeatures  # type: ignore[import]
+    _POWW_OK = True
+except ImportError:
+    _POWW_OK = False
+
+_OWW_RAW_OK = False
+# Fallback: raw openwakeword (if pyopen_wakeword not available)
+if not _POWW_OK:
+    try:
+        import openwakeword as _oww_pkg
+        from openwakeword.model import Model as _OWWRawModel
+        _OWW_RAW_OK = True
+    except ImportError:
+        pass
 
 # ── aioesphomeapi (protobuf types + MESSAGE_TYPE_TO_PROTO mapping) ─────────────
 try:
@@ -136,10 +165,126 @@ _EVT_TIMED_OUT    = 98
 _SAMPLE_RATE   = 16000
 _CHANNELS      = 1
 _SAMPLE_WIDTH  = 2       # int16 = 2 bytes
-_CHUNK_SAMPLES = 1280    # 80 ms @ 16 kHz — OWW recommended window
-_CHUNK_BYTES   = _CHUNK_SAMPLES * _CHANNELS * _SAMPLE_WIDTH
+_BLOCK_SAMPLES = 1280    # 80 ms @ 16 kHz
+_BLOCK_BYTES   = _BLOCK_SAMPLES * _CHANNELS * _SAMPLE_WIDTH
 
-# ── ESPHome framing helpers ───────────────────────────────────────────────────
+# ── Wake word model management ─────────────────────────────────────────────────
+# MicroWakeWord models are downloaded from OHF-Voice/linux-voice-assistant repo.
+# This is the same model source that HA ships — probability_cutoff comes from .json.
+_MWW_BASE_URL = "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/main/wakewords"
+_MWW_KNOWN = {"okay_nabu", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "stop"}
+_MODEL_DIR = Path.home() / ".local" / "share" / "canvas-display" / "wakewords"
+
+def _ensure_mww_model(name: str) -> "Optional[Path]":
+    """Download MicroWakeWord model files if not already present.
+    Returns path to the .json config, or None if unavailable."""
+    if name not in _MWW_KNOWN:
+        return None
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    json_path  = _MODEL_DIR / f"{name}.json"
+    tflite_path = _MODEL_DIR / f"{name}.tflite"
+    missing = [p for p in (json_path, tflite_path) if not p.exists()]
+    if missing:
+        _LOGGER.info("Downloading MicroWakeWord model: %s", name)
+        for ext in (".json", ".tflite"):
+            dest = _MODEL_DIR / f"{name}{ext}"
+            if not dest.exists():
+                try:
+                    url = f"{_MWW_BASE_URL}/{name}{ext}"
+                    urllib.request.urlretrieve(url, dest)
+                    _LOGGER.info("  Downloaded %s", dest.name)
+                except Exception as e:
+                    _LOGGER.warning("  Failed to download %s: %s", dest.name, e)
+                    return None
+    return json_path if json_path.exists() and tflite_path.exists() else None
+
+def _find_oww_model(name: str) -> "Optional[str]":
+    """Locate a raw OWW .tflite / .onnx model file by wake-word name."""
+    try:
+        import glob as _glob
+        res = os.path.join(os.path.dirname(_oww_pkg.__file__), "resources", "models")
+        for candidate in (name, name.replace("okay_", "ok_")):
+            for ext in (".tflite", ".onnx"):
+                p = os.path.join(res, candidate + ext)
+                if os.path.exists(p):
+                    return p
+                matches = sorted(_glob.glob(os.path.join(res, candidate + "_v*" + ext)), reverse=True)
+                if matches:
+                    return matches[0]
+    except Exception:
+        pass
+    return None
+
+def _load_wake_model(name: str):
+    """Load a wake word model. Returns (kind, model, features) or None.
+    kind: 'micro' | 'oww_streaming' | 'oww_raw'
+    """
+    # 1) MicroWakeWord (preferred — okay_nabu, hey_jarvis, etc.)
+    if _MWW_OK:
+        config_path = _ensure_mww_model(name)
+        if config_path:
+            try:
+                model    = MicroWakeWord.from_config(config_path)
+                features = MicroWakeWordFeatures()
+                _LOGGER.info("Loaded MicroWakeWord model: %s (cutoff=%.2f)",
+                             name, model.probability_cutoff)
+                return ("micro", model, features)
+            except Exception as e:
+                _LOGGER.warning("Failed to load MWW %s: %s", name, e)
+
+    # 2) pyopen_wakeword streaming API
+    if _POWW_OK:
+        try:
+            import glob as _glob
+            # Look for a .json config + .tflite pair
+            res = _MODEL_DIR / f"{name}.tflite"
+            if not res.exists():
+                # also check openwakeword resources
+                raw_path = _find_oww_model(name) if _OWW_RAW_OK else None
+                if raw_path:
+                    res = Path(raw_path)
+            if res.exists():
+                model    = OpenWakeWord.from_file(str(res))
+                features = OpenWakeWordFeatures.from_builtin()
+                _LOGGER.info("Loaded pyopen_wakeword model: %s", res.name)
+                return ("oww_streaming", model, features)
+        except Exception as e:
+            _LOGGER.warning("Failed to load pyopen_wakeword %s: %s", name, e)
+
+    # 3) Raw openwakeword fallback (batch predict API)
+    if _OWW_RAW_OK:
+        raw_path = _find_oww_model(name)
+        if raw_path:
+            try:
+                model = _OWWRawModel(wakeword_models=[raw_path], inference_framework="tflite")
+                _LOGGER.info("Loaded raw OWW model: %s", os.path.basename(raw_path))
+                return ("oww_raw", model, None)
+            except Exception as e:
+                _LOGGER.error("Failed to load raw OWW %s: %s", name, e)
+
+    _LOGGER.error("No wake word model found for: %s", name)
+    return None
+
+def _get_soundcard_mic(device_id: str):
+    """Return a soundcard microphone matching device_id (PA source name or description).
+    Falls back to default if not found or if device_id is a digital port."""
+    if not _SC_OK:
+        return None
+    if not device_id or device_id == "default":
+        return sc.default_microphone()
+    if re.search(r"iec958|iec60958|spdif|hdmi", device_id, re.I):
+        _LOGGER.warning("Device '%s' is a digital port — using default mic", device_id)
+        return sc.default_microphone()
+    dev_lower = device_id.lower()
+    for m in sc.all_microphones(include_loopback=False):
+        # m.id  = PulseAudio source name (exact match)
+        # m.name = human-readable description (substring match)
+        if getattr(m, "id", None) == device_id:
+            return m
+        if dev_lower in m.name.lower() or m.name.lower() in dev_lower:
+            return m
+    _LOGGER.warning("Mic '%s' not found in soundcard — using default", device_id)
+    return sc.default_microphone()
 
 def _enc_varuint(value: int) -> bytes:
     buf = bytearray()
@@ -170,24 +315,6 @@ def _dec_varuint(buf: bytes, pos: int) -> "tuple[int, int]":
         shift += 7
     return -1, pos
 
-# ── Wake word model helpers ────────────────────────────────────────────────────
-
-def _find_model(name: str) -> "Optional[str]":
-    """Locate an OWW .tflite / .onnx model file by wake-word name."""
-    try:
-        res = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
-    except Exception:
-        return None
-    # Also try the ok_nabu alias for okay_nabu
-    for candidate in (name, name.replace("okay_", "ok_")):
-        for ext in (".tflite", ".onnx"):
-            p = os.path.join(res, candidate + ext)
-            if os.path.exists(p):
-                return p
-            for p in sorted(glob.glob(os.path.join(res, candidate + "_v*" + ext)), reverse=True):
-                return p
-    return None
-
 # ── Voice satellite protocol ───────────────────────────────────────────────────
 
 class VoiceSatellite(asyncio.Protocol):
@@ -203,12 +330,10 @@ class VoiceSatellite(asyncio.Protocol):
         # Voice state (asyncio loop thread only)
         self._streaming       = False   # True → mic thread sends VoiceAssistantAudio
         self._pipeline_active = False   # True → ignore new wake words
-        self._tts_proc: Optional[subprocess.Popen] = None
+        self._tts_proc = None
 
         # Mic / wake word (background thread)
-        self._mic_proc:        Optional[subprocess.Popen]  = None
-        self._mic_thread:      Optional[threading.Thread]  = None
-        self._oww:             Optional[OWWModel]           = None
+        self._mic_thread: Optional[threading.Thread] = None
         self._wake_word_active = True
         self._active_wake_word = config.wake_word
 
@@ -236,12 +361,6 @@ class VoiceSatellite(asyncio.Protocol):
         self._streaming        = False
         self._pipeline_active  = False
         self._wake_word_active = False  # signals mic thread to exit
-        if self._mic_proc:
-            try:
-                self._mic_proc.kill()
-            except Exception:
-                pass
-            self._mic_proc = None
         if self._tts_proc:
             try:
                 self._tts_proc.kill()
@@ -417,7 +536,7 @@ class VoiceSatellite(asyncio.Protocol):
         threading.Thread(target=_play, daemon=True).start()
 
     def _ensure_mic_running(self) -> None:
-        """Restart the mic+OWW thread if it has exited (called from event loop thread)."""
+        """Restart the mic+wake-word thread if it has exited."""
         if self._mic_thread is None or not self._mic_thread.is_alive():
             _LOGGER.info("Restarting mic thread")
             self._mic_thread = threading.Thread(target=self._mic_loop, daemon=True, name="mic-oww")
@@ -426,85 +545,106 @@ class VoiceSatellite(asyncio.Protocol):
     # ── Mic + wake word (background thread) ────────────────────────────────────
 
     def _mic_loop(self) -> None:
-        """Mic capture + OWW inference running in a background thread."""
-        if not _OWW_OK:
-            _LOGGER.error("openwakeword not available — wake word detection disabled")
+        """Mic capture + wake word inference running in a background thread.
+
+        Uses soundcard library (PulseAudio/PipeWire native) for reliable audio
+        capture, matching the OHF-Voice/linux-voice-assistant reference approach.
+        Wake word detection priority: MicroWakeWord → pyopen_wakeword → raw OWW.
+        """
+        result = _load_wake_model(self.config.wake_word)
+        if not result:
+            _LOGGER.error("No wake word model available — voice detection disabled")
+            return
+        model_kind, model, features = result
+
+        if not _SC_OK:
+            _LOGGER.error("soundcard not installed — mic capture disabled. "
+                          "Run: pip install soundcard")
             return
 
-        # Load OWW model
-        model_path = _find_model(self.config.wake_word)
-        if not model_path:
-            _LOGGER.error("Wake word model not found: %s", self.config.wake_word)
-            return
+        mic_dev = _get_soundcard_mic(self.config.mic_device)
+        _LOGGER.info("Mic device: %s (id=%s)", mic_dev.name, getattr(mic_dev, "id", "?"))
+        _LOGGER.info("Listening for wake word: %s  [model=%s]",
+                     self.config.wake_word, model_kind)
 
-        framework = "tflite" if model_path.endswith(".tflite") else "onnx"
-        _LOGGER.info("Loading OWW model: %s (%s)", os.path.basename(model_path), framework)
+        chunk_count    = 0
+        silence_warned = False
+
         try:
-            oww = OWWModel(wakeword_models=[model_path], inference_framework=framework)
-            self._oww = oww
-        except Exception as e:
-            _LOGGER.error("Failed to load OWW: %s", e)
-            return
-
-        _LOGGER.info("OWW loaded — starting mic capture")
-
-        # Start mic subprocess
-        mic_cmd = self._mic_cmd()
-        _LOGGER.info("Mic: %s", " ".join(mic_cmd))
-        try:
-            mic = subprocess.Popen(mic_cmd, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, bufsize=0)
-            self._mic_proc = mic
-        except Exception as e:
-            _LOGGER.error("Failed to start mic: %s", e)
-            return
-
-        _LOGGER.info("Listening for wake word: %s", self.config.wake_word)
-
-        chunk_count = 0
-        silence_check_done = False
-        while mic.poll() is None and (self._wake_word_active or self._streaming):
-            raw = mic.stdout.read(_CHUNK_BYTES)
-            if not raw or len(raw) < _CHUNK_BYTES:
-                break
-
-            # After ~2 s of audio, check if mic is actually delivering signal
-            if not silence_check_done and chunk_count >= 25:
-                silence_check_done = True
-                amp = np.abs(np.frombuffer(raw, dtype=np.int16)).max()
-                if amp < 5:
-                    _LOGGER.error(
-                        "Mic '%s' appears silent (max_amp=%d). "
-                        "Check PulseAudio/PipeWire: run 'pactl list short sources' "
-                        "and select the correct analog-stereo source.",
-                        self.config.mic_device, amp
-                    )
-
-            # Stream audio to HA while in STT phase
-            if self._streaming:
-                self._send_from_thread(VoiceAssistantAudio(data=raw))
-
-            # Run OWW inference when waiting for wake word
-            if self._wake_word_active and not self._pipeline_active:
-                try:
-                    audio = np.frombuffer(raw, dtype=np.int16)
-                    preds = oww.predict(audio)
+            with mic_dev.recorder(samplerate=_SAMPLE_RATE, channels=_CHANNELS,
+                                   blocksize=_BLOCK_SAMPLES) as mic_in:
+                while self._wake_word_active or self._streaming:
+                    # Record one block — soundcard returns float32 in [-1, 1]
+                    audio_f32   = mic_in.record(_BLOCK_SAMPLES).reshape(-1)
+                    # Convert to S16LE bytes (same format HA expects)
+                    audio_bytes = (np.clip(audio_f32, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
                     chunk_count += 1
-                    # Periodic diagnostic: log best score every ~16 s (200 chunks)
-                    if chunk_count % 200 == 0:
-                        best = max(preds.values()) if preds else 0.0
-                        _LOGGER.info("OWW chunk=%d best_score=%.3f models=%s",
-                                     chunk_count, best, list(preds.keys()))
-                    for ww_name, score in preds.items():
-                        if score >= 0.35:
-                            _LOGGER.info("Wake word detected: %s (%.3f)", ww_name, score)
-                            oww.reset()
-                            self._on_wake_word(ww_name)
-                            break
-                except Exception as e:
-                    _LOGGER.warning("OWW predict error: %s", e)
 
-        _LOGGER.info("Mic loop exited (chunks=%d)", chunk_count)
+                    # Silence diagnostic after ~2 s
+                    if not silence_warned and chunk_count == 25:
+                        amp = np.abs(np.frombuffer(audio_bytes, dtype="<i2")).max()
+                        if amp < 5:
+                            _LOGGER.error(
+                                "Mic '%s' is silent (max_amp=%d). "
+                                "Check PulseAudio/PipeWire source and input volume.",
+                                mic_dev.name, amp
+                            )
+                            silence_warned = True
+
+                    # Stream to HA during STT phase
+                    if self._streaming:
+                        self._send_from_thread(VoiceAssistantAudio(data=audio_bytes))
+
+                    # Wake word detection
+                    if not (self._wake_word_active and not self._pipeline_active):
+                        continue
+
+                    activated = False
+                    try:
+                        if model_kind == "micro":
+                            micro_inputs = features.process_streaming(audio_bytes)
+                            for micro_input in micro_inputs:
+                                if model.process_streaming(micro_input):
+                                    _LOGGER.info("Wake word detected: %s (MicroWakeWord)",
+                                                 self.config.wake_word)
+                                    activated = True
+                                    break
+
+                        elif model_kind == "oww_streaming":
+                            oww_inputs = features.process_streaming(audio_bytes)
+                            for oww_input in oww_inputs:
+                                for prob in model.process_streaming(oww_input):
+                                    if prob >= 0.35:
+                                        _LOGGER.info("Wake word detected: %s (%.3f)",
+                                                     self.config.wake_word, prob)
+                                        activated = True
+                                        break
+
+                        else:  # oww_raw batch predict fallback
+                            audio_i16 = np.frombuffer(audio_bytes, dtype=np.int16)
+                            preds = model.predict(audio_i16)
+                            if chunk_count % 200 == 0:
+                                best = max(preds.values()) if preds else 0.0
+                                _LOGGER.info("OWW chunk=%d best_score=%.3f",
+                                             chunk_count, best)
+                            for ww_name, score in preds.items():
+                                if score >= 0.35:
+                                    _LOGGER.info("Wake word detected: %s (%.3f)",
+                                                 ww_name, score)
+                                    model.reset()
+                                    activated = True
+                                    break
+
+                    except Exception as e:
+                        _LOGGER.warning("Wake word inference error: %s", e)
+
+                    if activated:
+                        self._on_wake_word(self.config.wake_word)
+
+        except Exception as e:
+            _LOGGER.error("Mic loop error: %s", e, exc_info=True)
+        finally:
+            _LOGGER.info("Mic loop exited (chunks=%d)", chunk_count)
 
     def _on_wake_word(self, ww_name: str) -> None:
         """Called from mic thread — triggers the HA pipeline."""
@@ -516,10 +656,10 @@ class VoiceSatellite(asyncio.Protocol):
         # while call_soon_threadsafe delivers the send to the event loop.
         self._streaming = True
 
-        # Normalise: "ok_nabu_v0.1" → "okay nabu"
-        phrase = ww_name.split("_v")[0]               # strip version suffix
-        phrase = phrase.replace("ok_", "okay_")       # ok_ → okay_
-        phrase = phrase.replace("_", " ")             # underscores → spaces
+        # Normalise: "ok_nabu" / "okay_nabu" → "okay nabu"
+        phrase = re.sub(r"_v\d.*$", "", ww_name)      # strip version suffix
+        phrase = phrase.replace("ok_", "okay_")        # ok_ → okay_
+        phrase = phrase.replace("_", " ")              # underscores → spaces
 
         _LOGGER.info("Starting pipeline with phrase: '%s'", phrase)
 
@@ -529,23 +669,10 @@ class VoiceSatellite(asyncio.Protocol):
         if self._loop:
             self._loop.call_soon_threadsafe(_start)
 
-    def _mic_cmd(self) -> list:
-        dev = self.config.mic_device
-        # Reject known non-microphone sources (S/PDIF, HDMI) — they produce silence
-        if dev and re.search(r"iec958|iec60958|spdif|hdmi", dev, re.I):
-            _LOGGER.warning("Device '%s' is a digital output port (S/PDIF/HDMI) — "
-                            "it will produce silence. Falling back to 'default'.", dev)
-            dev = "default"
-        if dev.startswith("hw:") or dev.startswith("plughw:"):
-            return ["arecord", "-D", dev, "-f", "S16_LE", "-r", "16000", "-c", "1", "-"]
-        cmd = ["parec", "--format=s16le", "--rate=16000", "--channels=1"]
-        if dev and dev != "default":
-            cmd += ["--device", dev]
-        return cmd
-
     # ── TTS playback ───────────────────────────────────────────────────────────
 
     def _play_tts(self, url: str) -> None:
+        import subprocess as _sp
         vol = self.config.tts_volume
 
         def _play() -> None:
@@ -554,9 +681,9 @@ class VoiceSatellite(asyncio.Protocol):
                     self._tts_proc.kill()
                 except Exception:
                     pass
-            p = subprocess.Popen(
+            p = _sp.Popen(
                 ["mpv", "--no-video", "--really-quiet", f"--volume={vol}", url],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
             )
             self._tts_proc = p
             p.wait()

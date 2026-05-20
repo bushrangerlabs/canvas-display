@@ -19,6 +19,8 @@
 import { EventEmitter } from 'events';
 import { spawn, ChildProcess, exec } from 'child_process';
 import { promisify } from 'util';
+import { join } from 'path';
+import { homedir } from 'os';
 
 const execAsync = promisify(exec);
 
@@ -29,13 +31,34 @@ export interface MicrophoneDevice {
 
 /**
  * Lists available capture devices.
- * Prefers PulseAudio/PipeWire source names (via pactl) — these work even when
- * PipeWire holds ALSA devices exclusively.  Falls back to arecord -l.
+ * Uses soundcard (PulseAudio/PipeWire) to enumerate devices — these IDs are
+ * the same PulseAudio source names that soundcard.get_microphone() accepts.
+ * Falls back to pactl if the venv python isn't available.
  */
 export async function listMicrophones(): Promise<MicrophoneDevice[]> {
   const devices: MicrophoneDevice[] = [{ id: 'default', label: 'Default' }];
+  const python = join(homedir(), '.venv', 'oww', 'bin', 'python3');
 
-  // Try PipeWire/PulseAudio sources first
+  // Try soundcard (same library used by the satellite for capture)
+  try {
+    const script = [
+      'import json, soundcard as sc',
+      'mics = sc.all_microphones(include_loopback=False)',
+      'out = [{"id": getattr(m,"id",m.name), "label": m.name} for m in mics]',
+      'print(json.dumps(out))',
+    ].join('; ');
+    const { stdout } = await execAsync(`"${python}" -c "${script}"`);
+    const parsed: { id: string; label: string }[] = JSON.parse(stdout.trim());
+    for (const { id, label } of parsed) {
+      if (!id || /iec958|iec60958|spdif|hdmi/i.test(id)) continue;
+      devices.push({ id, label: label || id });
+    }
+    if (devices.length > 1) return devices;
+  } catch {
+    // python/soundcard not available — fall through to pactl
+  }
+
+  // Fallback: pactl list short sources
   try {
     const { stdout } = await execAsync('pactl list short sources');
     for (const line of stdout.trim().split('\n')) {
@@ -43,11 +66,9 @@ export async function listMicrophones(): Promise<MicrophoneDevice[]> {
       if (parts.length < 2) continue;
       const name = parts[1].trim();
       if (!name) continue;
-      // Exclude non-microphone sources
-      if (name.endsWith('.monitor')) continue;        // loopback monitors
-      if (name === 'auto_null') continue;             // null sink
-      if (/iec958|iec60958|spdif|hdmi/i.test(name)) continue; // S/PDIF & HDMI (digital, no mic signal)
-      // Human-readable label: strip alsa_input. prefix and codec suffixes
+      if (name.endsWith('.monitor')) continue;
+      if (name === 'auto_null') continue;
+      if (/iec958|iec60958|spdif|hdmi/i.test(name)) continue;
       const label = name
         .replace(/^alsa_input\./, '')
         .replace(/\.analog-stereo$|\.analog-mono$|\.stereo-fallback$|\.mono-fallback$/, '')
@@ -56,10 +77,10 @@ export async function listMicrophones(): Promise<MicrophoneDevice[]> {
     }
     if (devices.length > 1) return devices;
   } catch {
-    // pactl not available — fall through to arecord
+    // pactl not available either
   }
 
-  // Fall back to bare ALSA (systems without PipeWire/PulseAudio)
+  // Final fallback: bare ALSA (systems without PipeWire/PulseAudio)
   try {
     const { stdout } = await execAsync('arecord -l');
     const re = /^card (\d+):\s+\S+\s+\[([^\]]+)\],\s+device (\d+):/gm;
