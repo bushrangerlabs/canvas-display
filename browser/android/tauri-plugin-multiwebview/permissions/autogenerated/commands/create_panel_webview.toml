@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-create-panel-webview"
+description = "Enables the create_panel_webview command without any pre-configured scope."
+commands.allow = ["create_panel_webview"]
+
+[[permission]]
+identifier = "deny-create-panel-webview"
+description = "Denies the create_panel_webview command without any pre-configured scope."
+commands.deny = ["create_panel_webview"]

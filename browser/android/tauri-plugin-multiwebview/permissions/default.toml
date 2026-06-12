@@ -1,0 +1,15 @@
+[default]
+description = "Default permissions for the multiwebview plugin — allows all panel management and screen control commands."
+
+permissions = [
+  "allow-create-panel-webview",
+  "allow-navigate-webview",
+  "allow-close-webview",
+  "allow-show-webview",
+  "allow-hide-webview",
+  "allow-get-all-webview-labels",
+  "allow-screen-off",
+  "allow-screen-on",
+  "allow-set-brightness",
+  "allow-keep-screen-on",
+]

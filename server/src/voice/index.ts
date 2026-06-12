@@ -17,6 +17,36 @@
 import { VoiceSatelliteProcess, SatelliteSettings } from './satellite.js';
 import { getDb } from '../db/index.js';
 import { hostname } from 'os';
+import path from 'path';
+import { existsSync } from 'fs';
+import { config } from '../config.js';
+
+const BUILTIN_WAKE_ACK_SOUNDS = new Set([
+  'soft_chime',
+  'glass_ping',
+  'ready_up',
+  'wood_tap',
+  'digital_pop',
+  'confirm_tone',
+]);
+
+function resolveWakeAckSound(raw: string): string {
+  const value = (raw ?? '').trim();
+  if (!value.startsWith('builtin:')) return value;
+
+  const preset = value.slice('builtin:'.length).trim();
+  if (!BUILTIN_WAKE_ACK_SOUNDS.has(preset)) return '';
+
+  const fileName = `${preset}.wav`;
+  const packagedPath = path.join(config.staticDir, 'audio', 'wake-ack', fileName);
+  if (existsSync(packagedPath)) return packagedPath;
+
+  // Dev fallback when running server directly from the repo root.
+  const repoPublicPath = path.join(process.cwd(), '..', 'web', 'public', 'audio', 'wake-ack', fileName);
+  if (existsSync(repoPublicPath)) return repoPublicPath;
+
+  return packagedPath;
+}
 
 function dbGet(key: string, fallback: string): string {
   try {
@@ -38,6 +68,8 @@ export function loadSettingsFromDb(): SatelliteSettings {
     micDevice:    dbGet('voice_mic_device',    process.env.VOICE_MIC_DEVICE    ?? 'default'),
     wakeWord:     dbGet('voice_wake_word',     process.env.VOICE_WAKE_WORD     ?? 'okay_nabu'),
     ttsVolume:    parseInt(dbGet('voice_tts_volume', process.env.VOICE_TTS_VOLUME ?? '80')),
+    wakeAckEnabled: dbGet('voice_wake_ack_enabled', process.env.VOICE_WAKE_ACK_ENABLED ?? '0') === '1',
+    wakeAckSound: resolveWakeAckSound(dbGet('voice_wake_ack_sound', process.env.VOICE_WAKE_ACK_SOUND ?? '')),
   };
 }
 
@@ -67,6 +99,8 @@ let _settings: SatelliteSettings = {
   micDevice:    'default',
   wakeWord:     'okay_nabu',
   ttsVolume:    80,
+  wakeAckEnabled: false,
+  wakeAckSound: '',
 };
 
 export async function startVoiceServer(): Promise<void> {
@@ -115,9 +149,13 @@ export function getVoiceState(): VoiceState {
 
 /** Update settings at runtime (e.g. from settings API). Restart required. */
 export function updateVoiceSettings(settings: Partial<SatelliteSettings>): void {
-  Object.assign(_settings, settings);
+  const next = { ...settings };
+  if (typeof next.wakeAckSound === 'string') {
+    next.wakeAckSound = resolveWakeAckSound(next.wakeAckSound);
+  }
+  Object.assign(_settings, next);
   if (_satellite) {
-    _satellite.updateSettings(settings);
+    _satellite.updateSettings(next);
   }
 }
 

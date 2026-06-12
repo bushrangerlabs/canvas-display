@@ -30,6 +30,8 @@ export interface SatelliteSettings {
   micDevice: string;
   wakeWord: string;
   ttsVolume: number;
+    wakeAckEnabled: boolean;
+    wakeAckSound: string;
 }
 
 /** Prefer the canvas-display OWW venv if present, fall back to system python3. */
@@ -341,6 +343,7 @@ class VoiceSatellite(asyncio.Protocol):
         self._streaming       = False   # True → mic thread sends VoiceAssistantAudio
         self._pipeline_active = False   # True → ignore new wake words
         self._tts_proc = None
+        self._wake_ack_proc = None
 
         # Mic / wake word (background thread)
         self._mic_thread: Optional[threading.Thread] = None
@@ -377,6 +380,12 @@ class VoiceSatellite(asyncio.Protocol):
             except Exception:
                 pass
             self._tts_proc = None
+        if self._wake_ack_proc:
+            try:
+                self._wake_ack_proc.kill()
+            except Exception:
+                pass
+            self._wake_ack_proc = None
 
     # ── ESPHome framing ────────────────────────────────────────────────────────
 
@@ -674,10 +683,44 @@ class VoiceSatellite(asyncio.Protocol):
         _LOGGER.info("Starting pipeline with phrase: '%s'", phrase)
 
         def _start() -> None:
+            self._play_wake_ack()
             self._send(VoiceAssistantRequest(start=True, wake_word_phrase=phrase))
 
         if self._loop:
             self._loop.call_soon_threadsafe(_start)
+
+    def _play_wake_ack(self) -> None:
+        """Play a short acknowledgement sound when wake word is detected."""
+        import subprocess as _sp
+
+        if not bool(self.config.wake_ack_enabled):
+            return
+
+        sound = (self.config.wake_ack_sound or "").strip()
+        if not sound:
+            return
+
+        def _play() -> None:
+            if self._wake_ack_proc:
+                try:
+                    self._wake_ack_proc.kill()
+                except Exception:
+                    pass
+
+            try:
+                p = _sp.Popen(
+                    ["mpv", "--no-video", "--really-quiet", "--volume=100", sound],
+                    stdout=_sp.DEVNULL,
+                    stderr=_sp.DEVNULL,
+                )
+                self._wake_ack_proc = p
+                p.wait()
+            except Exception as e:
+                _LOGGER.warning("Wake ack sound playback failed: %s", e)
+            finally:
+                self._wake_ack_proc = None
+
+        threading.Thread(target=_play, daemon=True).start()
 
     # ── TTS playback ───────────────────────────────────────────────────────────
 
@@ -745,6 +788,8 @@ def main() -> None:
     ap.add_argument("--mic-device",    default="default")
     ap.add_argument("--wake-word",     default="okay_nabu")
     ap.add_argument("--tts-volume",    type=int, default=80)
+    ap.add_argument("--wake-ack-enabled", type=lambda v: str(v).lower() in ("1", "true", "yes", "on"), default=False)
+    ap.add_argument("--wake-ack-sound", default="")
     ap.add_argument("--log-level",     default="INFO")
     cfg = ap.parse_args()
 
@@ -839,6 +884,8 @@ export class VoiceSatelliteProcess extends EventEmitter {
       '--mic-device',    s.micDevice,
       '--wake-word',     s.wakeWord,
       '--tts-volume',    String(s.ttsVolume),
+            '--wake-ack-enabled', s.wakeAckEnabled ? '1' : '0',
+            '--wake-ack-sound', s.wakeAckSound,
       '--log-level',     'INFO',
     ];
 

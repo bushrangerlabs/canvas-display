@@ -33,6 +33,8 @@ interface ServerSettings {
   voice_mic_device: string;
   voice_wake_word: string;
   voice_tts_volume: string;
+  voice_wake_ack_enabled: string;
+  voice_wake_ack_sound: string;
   voice_port: string;
   voice_friendly_name: string;
 }
@@ -54,6 +56,17 @@ interface MicrophoneDevice {
   label: string;
 }
 
+const WAKE_ACK_PRESETS: Array<{ value: string; label: string }> = [
+  { value: 'builtin:soft_chime', label: 'Soft Chime' },
+  { value: 'builtin:glass_ping', label: 'Glass Ping' },
+  { value: 'builtin:ready_up', label: 'Ready Up' },
+  { value: 'builtin:wood_tap', label: 'Wood Tap' },
+  { value: 'builtin:digital_pop', label: 'Digital Pop' },
+  { value: 'builtin:confirm_tone', label: 'Confirm Tone' },
+];
+
+const CUSTOM_WAKE_ACK_SOUND = '__custom__';
+
 export default function SettingsPage() {
   const { snapEnabled, snapSize, toggleSnap } = useEditorStore();
   const [localSnapSize, setLocalSnapSize] = useState(snapSize);
@@ -61,7 +74,6 @@ export default function SettingsPage() {
   const [defaultHeight, setDefaultHeight] = useState(1080);
 
   // Server settings state
-  const [_settings, setSettings] = useState<ServerSettings | null>(null);
   const [deviceName, setDeviceName] = useState('');
   const [mqttEnabled, setMqttEnabled] = useState(false);
   const [mqttUrl, setMqttUrl] = useState('');
@@ -77,12 +89,22 @@ export default function SettingsPage() {
   const [voiceMicDevice, setVoiceMicDevice] = useState('default');
   const [voiceWakeWord, setVoiceWakeWord] = useState('okay_nabu');
   const [voiceTtsVolume, setVoiceTtsVolume] = useState('80');
+  const [voiceWakeAckEnabled, setVoiceWakeAckEnabled] = useState(false);
+  const [voiceWakeAckSound, setVoiceWakeAckSound] = useState('');
   const [voicePort, setVoicePort] = useState('6053');
   const [voiceFriendlyName, setVoiceFriendlyName] = useState('Canvas Display');
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [voiceRestarting, setVoiceRestarting] = useState(false);
   const [micDevices, setMicDevices] = useState<MicrophoneDevice[]>([{ id: 'default', label: 'Default' }]);
   const [micDevicesLoading, setMicDevicesLoading] = useState(false);
+  const wakeAckSoundMode = voiceWakeAckSound.startsWith('builtin:')
+    ? voiceWakeAckSound
+    : CUSTOM_WAKE_ACK_SOUND;
+
+  const getErrorMessage = (err: unknown, fallback: string): string => {
+    if (err instanceof Error && err.message) return err.message;
+    return fallback;
+  };
 
   const loadMicDevices = useCallback(async () => {
     setMicDevicesLoading(true);
@@ -102,7 +124,6 @@ export default function SettingsPage() {
         api.get<ServerSettings>('/api/settings'),
         api.get<MqttStatus>('/api/settings/mqtt'),
       ]);
-      setSettings(s);
       setDeviceName(s.device_name ?? '');
       setMqttEnabled(s.mqtt_enabled === '1');
       setMqttUrl(s.mqtt_broker_url ?? '');
@@ -113,6 +134,8 @@ export default function SettingsPage() {
       setVoiceMicDevice(s.voice_mic_device ?? 'default');
       setVoiceWakeWord(s.voice_wake_word ?? 'okay_nabu');
       setVoiceTtsVolume(s.voice_tts_volume ?? '80');
+      setVoiceWakeAckEnabled(s.voice_wake_ack_enabled === '1');
+      setVoiceWakeAckSound(s.voice_wake_ack_sound ?? '');
       setVoicePort(s.voice_port ?? '6053');
       setVoiceFriendlyName(s.voice_friendly_name ?? 'Canvas Display');
       // Fetch voice status separately (non-fatal)
@@ -123,8 +146,12 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    loadSettings();
-    loadMicDevices();
+    const timer = setTimeout(() => {
+      void loadSettings();
+      void loadMicDevices();
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [loadSettings, loadMicDevices]);
 
   async function saveSettings() {
@@ -140,6 +167,8 @@ export default function SettingsPage() {
         voice_mic_device:     voiceMicDevice,
         voice_wake_word:      voiceWakeWord,
         voice_tts_volume:     voiceTtsVolume,
+        voice_wake_ack_enabled: voiceWakeAckEnabled ? '1' : '0',
+        voice_wake_ack_sound: voiceWakeAckSound,
         voice_port:           voicePort,
         voice_friendly_name:  voiceFriendlyName,
       };
@@ -149,8 +178,8 @@ export default function SettingsPage() {
       await api.put('/api/settings', body);
       setSaveMsg({ type: 'success', text: 'Settings saved.' });
       await loadSettings();
-    } catch (e: any) {
-      setSaveMsg({ type: 'error', text: e.message ?? 'Save failed.' });
+    } catch (e: unknown) {
+      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Save failed.') });
     } finally {
       setSaving(false);
     }
@@ -167,8 +196,8 @@ export default function SettingsPage() {
       setTimeout(() => {
         api.get<MqttStatus>('/api/settings/mqtt').then(setMqttStatus).catch(() => {});
       }, 2000);
-    } catch (e: any) {
-      setSaveMsg({ type: 'error', text: e.message ?? 'Reconnect failed.' });
+    } catch (e: unknown) {
+      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Reconnect failed.') });
     } finally {
       setReconnecting(false);
     }
@@ -184,8 +213,8 @@ export default function SettingsPage() {
       setTimeout(() => {
         api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
       }, 1500);
-    } catch (e: any) {
-      setSaveMsg({ type: 'error', text: e.message ?? 'Voice restart failed.' });
+    } catch (e: unknown) {
+      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Voice restart failed.') });
     } finally {
       setVoiceRestarting(false);
     }
@@ -435,6 +464,54 @@ export default function SettingsPage() {
                   sx={{ width: '100%', maxWidth: 320 }}
                 />
               </Box>
+
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={voiceWakeAckEnabled}
+                    onChange={(e) => setVoiceWakeAckEnabled(e.target.checked)}
+                  />
+                }
+                label="Play wake acknowledgement sound"
+                sx={{ display: 'block' }}
+                disabled={!voiceEnabled}
+              />
+
+              <TextField
+                label="Wake acknowledgement sound"
+                size="small"
+                select
+                fullWidth
+                value={wakeAckSoundMode}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === CUSTOM_WAKE_ACK_SOUND) {
+                    if (voiceWakeAckSound.startsWith('builtin:')) setVoiceWakeAckSound('');
+                    return;
+                  }
+                  setVoiceWakeAckSound(next);
+                }}
+                disabled={!voiceEnabled || !voiceWakeAckEnabled}
+                helperText="Built-in sounds are bundled with the app and work offline."
+              >
+                {WAKE_ACK_PRESETS.map((preset) => (
+                  <MenuItem key={preset.value} value={preset.value}>{preset.label}</MenuItem>
+                ))}
+                <MenuItem value={CUSTOM_WAKE_ACK_SOUND}>Custom URL or file path</MenuItem>
+              </TextField>
+
+              {wakeAckSoundMode === CUSTOM_WAKE_ACK_SOUND && (
+                <TextField
+                  label="Custom wake acknowledgement URL or file path"
+                  size="small"
+                  fullWidth
+                  value={voiceWakeAckSound}
+                  onChange={(e) => setVoiceWakeAckSound(e.target.value)}
+                  disabled={!voiceEnabled || !voiceWakeAckEnabled}
+                  placeholder="https://example.com/chime.mp3"
+                  helperText="Played via mpv when wake word is detected. Supports HTTP(S) URLs and local file paths."
+                />
+              )}
             </Stack>
 
             <Stack direction="row" spacing={1.5} sx={{ mt: 2.5 }}>

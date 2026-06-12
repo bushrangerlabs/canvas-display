@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-navigate-webview"
+description = "Enables the navigate_webview command without any pre-configured scope."
+commands.allow = ["navigate_webview"]
+
+[[permission]]
+identifier = "deny-navigate-webview"
+description = "Denies the navigate_webview command without any pre-configured scope."
+commands.deny = ["navigate_webview"]

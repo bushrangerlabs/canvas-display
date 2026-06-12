@@ -25,6 +25,8 @@ const SETTING_DEFAULTS: Record<string, string> = {
   voice_mic_device:     'default',
   voice_wake_word:      'okay_nabu',
   voice_tts_volume:     '80',
+  voice_wake_ack_enabled: '0',
+  voice_wake_ack_sound:   '',
   voice_port:           '6053',
   voice_friendly_name:  'Canvas Display',
   voice_ha_url:         'http://homeassistant.local:8123',
@@ -128,6 +130,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       micDevice:    s.voice_mic_device,
       wakeWord:     s.voice_wake_word,
       ttsVolume:    parseInt(s.voice_tts_volume),
+      wakeAckEnabled: s.voice_wake_ack_enabled === '1',
+      wakeAckSound: s.voice_wake_ack_sound ?? '',
     });
     await stopVoiceServer();
     await startVoiceServer();
