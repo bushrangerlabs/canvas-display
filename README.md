@@ -86,6 +86,26 @@ Direct control endpoints — same actions as MQTT commands, useful when no broke
 | `POST` | `/settings/mqtt/reconnect` | Apply updated MQTT settings and reconnect |
 | `POST` | `/settings/mqtt/disconnect` | Disconnect from MQTT broker |
 
+### Voice Satellite Settings
+
+Voice satellite options are configured from the web app Settings page.
+
+Wake acknowledgement sounds:
+
+- Enable Play wake acknowledgement sound to play a short confirmation tone after wake word detection.
+- Choose one of the bundled offline presets:
+  - Soft Chime
+  - Glass Ping
+  - Ready Up
+  - Wood Tap
+  - Digital Pop
+  - Confirm Tone
+- Or select Custom URL or file path and provide your own HTTP(S) URL or local file path.
+
+Bundled presets are packaged in the app and available in Debian builds under:
+
+- binaries/public/audio/wake-ack/
+
 ### Devices
 
 | Method | Path | Description |
