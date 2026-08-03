@@ -322,9 +322,19 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
     error?: string;
     timings?: { asrMs: number; routingMs: number; planningMs: number; ttsMs: number; totalMs: number };
     intent?: { intent?: string };
+    knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; image_url?: string };
   };
   if (!response.ok) {
     throw new Error(result.detail ?? result.error ?? `Core voice returned HTTP ${response.status}`);
+  }
+  // If Core included a knowledge card, store it in the local display server
+  if (result.knowledge_card?.title && result.knowledge_card?.body) {
+    const localPort = process.env.PORT ?? '3100';
+    void fetch(`http://127.0.0.1:${localPort}/api/knowledge-card`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(result.knowledge_card),
+    }).catch(() => undefined);
   }
   return {
     transcript: result.transcript ?? '',

@@ -16,6 +16,7 @@ import { audioRoutes }   from './routes/audio';
 import { logRoutes }     from './routes/logs';
 import { mediaRoutes }   from './routes/media';
 import { sceneRoutes }   from './routes/scenes';
+import { knowledgeCardRoutes } from './routes/knowledge-card';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
 import { startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
@@ -47,6 +48,7 @@ async function main() {
   await app.register(audioRoutes,    { prefix: '/api' });
   await app.register(mediaRoutes,    { prefix: '/api' });
   await app.register(sceneRoutes,    { prefix: '/api' });
+  await app.register(knowledgeCardRoutes, { prefix: '/api' });
   await app.register(logRoutes,      { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────

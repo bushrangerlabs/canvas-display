@@ -147,6 +147,8 @@ export interface IntelligentPipelineResult {
   confirmationDigest?: string;
   /** Millisecond stage durations for operational latency analysis. */
   timings?: VoicePipelineTimings;
+  /** Knowledge card extracted from a web-search or wikipedia tool call, if any. */
+  knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string };
 }
 
 export interface VoicePipelineTimings {
@@ -351,7 +353,7 @@ export function createIntelligence(
   async function runToolAwareConversation(
     transcript: string,
     input: VoicePipelineInput,
-  ): Promise<{ reply: string; toolResult?: ToolResult; requiresConfirmation?: boolean; confirmationDigest?: string }> {
+  ): Promise<{ reply: string; toolResult?: ToolResult; requiresConfirmation?: boolean; confirmationDigest?: string; knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string } }> {
     const deviceKey = input.originDeviceId ?? 'unknown';
     const pending = pendingVoiceConfirmations.get(deviceKey);
     if (pending && pending.expiresAt <= Date.now()) pendingVoiceConfirmations.delete(deviceKey);
@@ -412,12 +414,13 @@ export function createIntelligence(
     let finalContent = '';
     const executedCalls:Array<{tool:string;args:Record<string,unknown>}>=[];
     let executionFailed=false;
+    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string } | undefined;
     for (let iteration = 0; iteration < 3; iteration++) {
       const response = await conversationLlm().chatWithTools(messages, definitions);
       if (response.content) finalContent = response.content;
       if (response.toolCalls.length === 0) {
         if(executedCalls.length&&!executionFailed)await toolContext.recordSuccessfulPlan?.(transcript,executedCalls,input.originDeviceId);
-        return { reply: finalContent };
+        return { reply: finalContent, ...(knowledgeCard ? { knowledge_card: knowledgeCard } : {}) };
       }
       messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls });
       for (const call of response.toolCalls) {
@@ -446,6 +449,28 @@ export function createIntelligence(
           mcp: providers.mcp,
         });
         if(result.ok)executedCalls.push({tool:tool.name,args:params});else executionFailed=true;
+        // Extract knowledge card from web-search or wikipedia tool calls
+        if (result.ok && !knowledgeCard && Array.isArray(result.data)) {
+          const toolBaseName = tool.name.split('.').pop() ?? '';
+          if (toolBaseName === 'web_search' || toolBaseName === 'wikipedia_lookup') {
+            const blocks = result.data as Array<Record<string, unknown>>;
+            const textBlock = blocks.find(b => b.type === 'text' && typeof b.text === 'string');
+            if (textBlock) {
+              const text = String(textBlock.text);
+              const titleArg = toolBaseName === 'wikipedia_lookup'
+                ? String(params.topic ?? params.query ?? 'Wikipedia')
+                : String(params.query ?? 'Web Search');
+              knowledgeCard = {
+                title: titleArg.charAt(0).toUpperCase() + titleArg.slice(1),
+                body: text.slice(0, 800),
+                source_url: toolBaseName === 'wikipedia_lookup'
+                  ? `https://en.wikipedia.org/wiki/${encodeURIComponent(String(params.topic ?? params.query ?? ''))}`
+                  : undefined,
+                source_label: toolBaseName === 'wikipedia_lookup' ? 'Wikipedia' : 'Web Search',
+              };
+            }
+          }
+        }
         if (tool.name.endsWith('.ha_get_camera_image') && result.ok) {
           const blocks = Array.isArray(result.data) ? result.data as Array<Record<string, unknown>> : [];
           const image = blocks.find(block => block.type === 'image' && typeof block.data === 'string');
@@ -464,7 +489,7 @@ export function createIntelligence(
         messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: call.id });
       }
     }
-    return { reply: finalContent || 'The MCP request did not complete.' };
+    return { reply: finalContent || 'The MCP request did not complete.', ...(knowledgeCard ? { knowledge_card: knowledgeCard } : {}) };
   }
 
   async function runVoicePipeline(input: VoicePipelineInput): Promise<VoicePipelineResult> {
@@ -653,6 +678,7 @@ export function createIntelligence(
     let requiresConfirmation = false;
     let confirmationDigest: string | undefined;
     let reply: string;
+    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string } | undefined;
 
     const homeAutomationIntents = new Set(['light_set', 'lock_set', 'climate_set', 'climate_query', 'device_query', 'weather_query']);
     if (skillMatch?.matched) {
@@ -678,6 +704,7 @@ export function createIntelligence(
       toolResult = conversational.toolResult;
       requiresConfirmation = conversational.requiresConfirmation ?? false;
       confirmationDigest = conversational.confirmationDigest;
+      if (conversational.knowledge_card) knowledgeCard = conversational.knowledge_card;
     } else {
       // Map intent to tool and execute
       const toolName = mapIntentToTool(intent.intent);
@@ -754,6 +781,7 @@ export function createIntelligence(
       toolResult,
       requiresConfirmation,
       confirmationDigest,
+      ...(knowledgeCard ? { knowledge_card: knowledgeCard } : {}),
       timings: {
         asrMs: Math.round(asrMs),
         routingMs: Math.round(routingMs),

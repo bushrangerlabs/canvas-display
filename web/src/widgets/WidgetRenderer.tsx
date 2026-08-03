@@ -34,4 +34,5 @@ export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.Com
   screensaver: lazy(() => import('./widgets/ScreensaverWidget')),
   scrollablecontainer: lazy(() => import('./widgets/ScrollableContainerWidget')),
   playlistresult: lazy(() => import('./widgets/PlaylistResultWidget')),
+  knowledgecard: lazy(() => import('./widgets/KnowledgeCardWidget')),
 };

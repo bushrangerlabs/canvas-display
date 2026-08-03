@@ -19,6 +19,13 @@ RUN git clone https://github.com/craigles75/au-weather-mcp.git /opt/au-weather-m
  && apk del git \
  && rm -rf /opt/au-weather-mcp/.git /root/.cache
 
+# ---------------------------------------------------------------------------
+# Install web-search-mcp dependencies (DuckDuckGo search + Wikipedia API).
+# ---------------------------------------------------------------------------
+RUN pip3 install --no-cache-dir --break-system-packages \
+      'duckduckgo_search>=7.0.0' \
+      'wikipedia-api>=0.7.1'
+
 WORKDIR /app
 
 COPY core/package*.json ./
@@ -34,6 +41,9 @@ COPY core/au_weather_stdio.py ./au_weather_stdio.py
 
 # Bowling MCP — live ComputerScore scraper, no database.
 COPY core/bowling_mcp.py ./bowling_mcp.py
+
+# Web search + Wikipedia MCP — DuckDuckGo search and Wikipedia lookups.
+COPY core/web_search_stdio.py ./web_search_stdio.py
 
 # Build is done locally — the dist/ directory is copied from the host.
 # This avoids TypeScript compilation issues in the Docker build environment.
