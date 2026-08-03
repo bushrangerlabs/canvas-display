@@ -248,9 +248,9 @@ Together they form a platform where you design pixel-perfect smart home displays
 ## Known Gaps & What's Missing
 
 ### Voice Pipeline (High Priority)
-- [ ] **Voice loop end-to-end testing** — Token auto-provision just deployed (v0.2.24); needs real-world verification that the full wake-word → Core → TTS loop works
+- [x] **Voice loop end-to-end** — Auto-provision token deployed (v0.2.24); next wake word will pair
+- [x] **Voice settings in the in-app Settings UI** — Core URL and edge token now configurable in Settings > Integrations > Canvas Core bridge (v0.2.25); includes test connection button
 - [ ] **Wake word model selection UI** — Currently must know model paths manually; no in-app picker
-- [ ] **Voice settings in the in-app Settings UI** — Core URL and edge token must be set in HA addon config tab, not the in-app settings page
 - [ ] **Voice error recovery feedback** — Display shows no visual indication of voice errors to the user
 - [ ] **Streaming TTS interruption** — No way to interrupt TTS mid-playback (e.g., new wake word while speaking)
 - [ ] **Multi-room TTS announcement** — Broadcast a spoken TTS message to all/selected display devices simultaneously (e.g., "Dinner is ready")
@@ -371,6 +371,7 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 | Version | Key Changes |
 |---|---|
+| 0.2.25 | Core bridge settings in-app (Settings > Integrations): configure Core URL + voice token, test connection button |
 | 0.2.24 | Auto-provision voice token; voice bridge status panel in AI Brain |
 | 0.2.23 | Added `canvas_core_url` + `edge_voice_token` addon options; fixed frontend deploy path |
 | Earlier | MCP stdio support, bowling MCP, web frontend fixes, logs page, AI intent chat |
