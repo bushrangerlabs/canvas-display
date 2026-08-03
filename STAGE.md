@@ -252,43 +252,102 @@ Together they form a platform where you design pixel-perfect smart home displays
 - [ ] **Wake word model selection UI** — Currently must know model paths manually; no in-app picker
 - [ ] **Voice settings in the in-app Settings UI** — Core URL and edge token must be set in HA addon config tab, not the in-app settings page
 - [ ] **Voice error recovery feedback** — Display shows no visual indication of voice errors to the user
+- [ ] **Streaming TTS interruption** — No way to interrupt TTS mid-playback (e.g., new wake word while speaking)
+- [ ] **Multi-room TTS announcement** — Broadcast a spoken TTS message to all/selected display devices simultaneously (e.g., "Dinner is ready")
+
+### AI Self-Learning & Skill Autonomy ⭐ New
+The AI should be able to observe interactions, identify patterns, and autonomously create, refine, and deploy new skills — similar to how the Hermes agent learns from its corpus.
+
+- [ ] **Interaction memory** — Core persists every voice turn (transcript, intent, tool calls, outcome) in a learnable log. Currently only metrics are stored; full turn context is not.
+- [ ] **Pattern recognition** — Identify frequently repeated requests that have no dedicated skill/routine, and surface them as skill candidates to the admin
+- [ ] **Auto-skill generation** — When the AI handles a novel request successfully via tool calls, it can auto-propose a new named skill that encodes that behaviour, ready for admin approval
+- [ ] **Skill versioning + rollback** — Skills currently have no version history; need to track changes and support reverting to a previous version
+- [ ] **Skill testing harness** — Ability to run a skill in sandbox mode against test transcripts before enabling it (extends shadow-mode)
+- [ ] **Contextual skill chaining** — Skills can call other skills, enabling complex multi-step behaviours composed from simpler primitives
+- [ ] **User feedback loop** — Display shows thumbs-up/down after voice responses; feedback is stored and used to weight intent routing and skill priority
+- [ ] **Corpus auto-growth** — Successful Hermes test runs are promoted to the corpus automatically rather than requiring manual curation
+- [ ] **Skill marketplace / sharing** — Export/import skill definitions as JSON so they can be shared between Canvas Core installations
+
+### Audio Broadcast Between Devices ⭐ New
+Canvas display devices should be able to broadcast audio to each other — enabling intercom, whole-home announcements, and audio zone control.
+
+- [ ] **Device-to-device audio streaming** — One display can stream its microphone/TTS output to one or more other display devices over the local network (WebRTC or RTP via Core broker)
+- [ ] **Whole-home TTS broadcast** — When Core generates a TTS response or announcement, it can push the audio simultaneously to all registered display devices that are online
+- [ ] **Intercom mode** — Two display devices can open a two-way audio channel (push-to-talk or open mic) — "Hey kitchen, dinner's ready"
+- [ ] **Audio zones** — Group devices into zones (e.g., upstairs, downstairs); target broadcasts to a zone
+- [ ] **Core audio broker** — Core acts as the relay/signalling server for device-to-device audio; handles session setup, auth, and teardown
+- [ ] **Wake-word broadcast trigger** — Saying "announce: ..." on any device broadcasts the message as TTS to all devices in the zone/home
+
+### HA Media Player Integration + Music Assistant ⭐ New
+Each Canvas display device should register and behave as a full HA media player entity, enabling native HA automations and Music Assistant integration.
+
+- [ ] **Register as HA media player** — Each display device auto-registers a `media_player` entity in HA via the integration (canvas-ui-hacs). Supports standard HA media player services: `play_media`, `media_play`, `media_pause`, `media_stop`, `media_next_track`, `media_previous_track`, `volume_set`, `volume_mute`
+- [ ] **Now-playing state** — Display pushes current playback state (title, artist, album art, position, duration) back to HA so it shows in dashboards and automations
+- [ ] **Music Assistant integration** — Connect Canvas displays as MA speakers/players. Voice command "play jazz in the kitchen" routes to Music Assistant, which queues tracks and pushes to the display's audio output
+- [ ] **Music Assistant widget** — A dedicated widget showing MA queue, now playing, album art, and playback controls
+- [ ] **Cast/stream receiver** — Display can receive an audio stream cast from HA (`media_player.play_media` with a stream URL) and play it via mpv
+- [ ] **Multi-room sync** — Synchronise playback across multiple Canvas displays (join/unjoin group via voice or UI)
+- [ ] **Voice music control** — "Play", "pause", "skip", "volume up" voice intents route to the correct MA/mpv player for the active room
+- [ ] **Album art on display** — When music is playing, album art and track info auto-populate a Now Playing widget or overlay
+
+### AI Web Lookup & On-Screen Display ⭐ New
+When the AI answers a general knowledge question, it should be able to fetch supporting web content and display it on the screen.
+
+- [ ] **Web search MCP tool** — A built-in MCP tool (or stdio server) that performs a web search (DuckDuckGo/Brave/Bing API) and returns structured results (title, snippet, URL) for the LLM to use in its answer
+- [ ] **Wikipedia lookup tool** — Dedicated MCP tool that fetches a Wikipedia article summary and key sections by topic; used when the LLM identifies an encyclopedic query
+- [ ] **Web result widget** — A display widget that renders a web page or article summary (title, body text, image, source URL) in a readable format on the canvas
+- [ ] **Voice-triggered page navigation** — When the AI invokes a web lookup, it automatically pushes a "knowledge card" page to the active display device showing the result alongside the TTS response
+- [ ] **"Show me" intent** — The AI recognises requests like "show me photos of the Eiffel Tower" or "look up the weather forecast for Sydney" and renders an appropriate widget or webpage
+- [ ] **Iframe widget auto-open** — For richer content, AI can command the display to open a specific URL in the IFrame widget (with safe-list of allowed domains)
+- [ ] **Knowledge card widget** — A new widget type purpose-built for AI-fetched content: heading, body, source, optional image, dismiss button
 
 ### Security / Enrollment
 - [ ] **Production PKI mode** — `CANVAS_CORE_ALLOW_OPEN_PAIRING=true` warning is always shown; proper enrollment gate (`P-003`) not enabled. Devices aren't verified before accepting commands.
 - [ ] **Token rotation** — No mechanism to rotate the voice bridge token without clearing the DB
 
 ### Display / UI
+- [ ] **Push notifications / alerts** — No way to push alerts to a display from an automation (e.g., doorbell, weather alert overlay)
+- [ ] **Doorbell integration** — When doorbell rings, display automatically shows camera feed and plays chime sound
 - [ ] **Multi-scene push** — Scene can be assigned to one device but no bulk push to all devices
-- [ ] **Display status on editor** — No way to see if a display device is currently online in the editor
-- [ ] **Scene preview** — No thumbnail/preview of scenes in the scenes list
-- [ ] **Screensaver widget integration** — Exists as a widget but screensaver state doesn't feed back to HA
+- [ ] **Display online status in editor** — No way to see if a display device is currently online in the editor
+- [ ] **Scene preview thumbnails** — No thumbnail/preview of scenes in the scenes list
+- [ ] **Screensaver state to HA** — Screensaver widget exists but screensaver on/off state doesn't feed back to HA
 - [ ] **Touch gesture support** — Swipe between pages not implemented
 - [ ] **Display orientation handling** — No automatic rotation/responsive layout switching
+- [ ] **Persistent display overlay** — A pinned overlay layer (e.g., clock + weather strip) that sits on top of any scene without being part of the scene definition
 
 ### Canvas Editor
 - [ ] **Widget grouping** — Can't group widgets to move/resize together
 - [ ] **Z-index control** — No UI to control widget layer order (bring forward/send backward)
 - [ ] **Background image/color per scene** — Not exposed in scene settings
-- [ ] **Grid/alignment guides** — Snap-to-grid exists but no visual alignment snapping between widgets
+- [ ] **Grid/alignment guides** — Visual snapping lines between widgets
 - [ ] **Widget templates/presets** — No saved widget configurations
+- [ ] **Scene transition animations** — Smooth fade/slide transitions when navigating between pages
 
 ### Core Intelligence
-- [ ] **Routine scheduling integration** — Routines can be created via AI chat but the schedule→routine trigger chain needs testing
-- [ ] **Skill runtime execution clarity** — Skills register as tools but the distinction between skills and MCP tools in practice is unclear
-- [ ] **Intent router coverage** — Some intent types (media control, display navigation) may route incorrectly depending on LLM
-- [ ] **Streaming TTS interruption** — No way to interrupt TTS mid-playback (e.g., new wake word while speaking)
+- [ ] **Routine scheduling integration** — Routines can be created via AI chat but the schedule→routine trigger chain needs testing end-to-end
+- [ ] **Intent router coverage** — Media control, display navigation, and "show me" intents need dedicated routing paths
+- [ ] **Conversational context memory** — Each voice turn is stateless; the AI doesn't remember what was said 2 turns ago in the same session
 
-### Missing Features (Product-level)
-- [ ] **Push notifications / alerts** — No way to push alerts to a display from an automation (e.g., doorbell, weather alert)
-- [ ] **Display screensaver / idle timeout** — Screensaver widget exists but no global idle timeout setting
-- [ ] **Multi-display sync** — No way to push the same command/scene change to all devices simultaneously
-- [ ] **Over-the-air updates** — Relies entirely on HA addon update mechanism; Core has no self-update
-- [ ] **Dashboard analytics** — No metrics on which scenes are used, how often voice is triggered, etc.
+### Additional Widgets Needed
+- [ ] **Now Playing widget** — Music Assistant / mpv now-playing card (art, title, artist, controls)
+- [ ] **Knowledge Card widget** — AI web-lookup result display (heading, body, source URL, dismiss)
+- [ ] **Announcement overlay widget** — Temporary full-screen message pushed from Core (doorbell, alert, TTS)
+- [ ] **Energy monitor widget** — Solar generation, grid import/export, battery SoC from HA energy entities
+- [ ] **Traffic / commute widget** — Google Maps travel time to a saved destination
+- [ ] **Shopping list widget** — HA shopping list integration with voice add/remove
+- [ ] **Countdown timer widget** — Visual timer, voice-set ("set a 10-minute timer")
+
+### Missing Features (Broader Product)
+- [ ] **Display screensaver / idle timeout** — Global idle timeout setting independent of the screensaver widget
+- [ ] **Multi-display sync** — Push the same command/scene change to all devices at once
+- [ ] **Over-the-air Core updates** — Core has no self-update; relies on manual docker pull
+- [ ] **Dashboard analytics** — No metrics on scene usage, voice trigger frequency, skill hit rate
 - [ ] **Custom wake word training** — Locked to openWakeWord pre-trained models
-- [ ] **Offline mode** — If Core is unreachable, display falls back to basic mode (no voice/AI); could be more graceful
-- [ ] **Mobile companion app** — No mobile interface for quick display control
-- [ ] **Template variables** — Can't parameterize scenes with variables (e.g., room name)
-- [ ] **Widget data binding editor** — Entity-to-widget bindings are per-widget config only; no global binding manager
+- [ ] **Offline mode graceful degradation** — When Core is unreachable, display shows a clear status and runs limited local mode
+- [ ] **Template variables** — Parameterise scenes with variables (e.g., room name, person name)
+- [ ] **Widget data binding manager** — Global manager to see/edit all entity→widget bindings across a scene
+- [ ] **Canvas display web remote** — Simple mobile-friendly page to control a specific display (volume, page, now playing) without the full editor
 
 ---
 
@@ -302,7 +361,9 @@ Together they form a platform where you design pixel-perfect smart home displays
 | Scene sync | Core manages scenes; display fetches via `/api/scenes/:id/published` — no bidirectional sync |
 | DB migrations | Append-only migration in single `migrate()` function — no versioned migration framework |
 | Error handling | Voice loop backs off after multiple 401s but user sees no feedback |
+| Voice turn storage | Full turn context (transcript + tool calls + outcome) not persisted; only timing metrics stored |
 | Tests | Only `youtube.test.ts` found; no integration tests for voice pipeline, intent routing, or scene push |
+| Audio routing | mpv is invoked as a subprocess; no proper audio session management for multi-device scenarios |
 
 ---
 
@@ -318,13 +379,35 @@ Together they form a platform where you design pixel-perfect smart home displays
 
 ## Recommended Next Steps (Priority Order)
 
-1. **Verify voice loop end-to-end** — Trigger wake word on display, confirm Core auto-provisions token, confirm TTS audio plays back
-2. **Voice settings in-app** — Add Core URL + voice token fields to the in-app Settings > Integrations tab (so users don't need the HA addon config UI)
-3. **Production PKI mode** — Gate device connections behind enrollment; disable open pairing
-4. **Push notification widget** — Allow HA automations to push alerts to display screens via Core
-5. **Scene preview thumbnails** — Render mini canvas previews in the scene list
-6. **Widget Z-index + grouping** — Complete the canvas editor feature set
-7. **Multi-display broadcast** — Push scene/command to all registered devices at once
-8. **Refactor `index.ts`** — Extract route groups into separate files
-9. **Integration test suite** — Cover voice pipeline, intent routing, scene push end-to-end
-10. **Offline graceful degradation** — Display shows useful fallback when Core is unreachable
+### Immediate (fix what's broken)
+1. **Verify voice loop end-to-end** — Trigger wake word, confirm auto-provision, confirm TTS plays back
+2. **Voice settings in-app** — Add Core URL + voice token to Settings > Integrations (remove need for HA addon config UI)
+
+### Short-term (complete the core experience)
+3. **Multi-room TTS broadcast** — Push spoken announcements to all display devices via Core
+4. **HA media player registration** — Register each display as a `media_player` entity in HA
+5. **Web search MCP tool** — Give the AI a built-in web search + Wikipedia lookup tool
+6. **Knowledge card / web result widget** — New widget to display AI-fetched web content on screen
+7. **Push notification / alert overlay** — Allow HA automations to push timed overlays to displays
+8. **Voice settings in-app** — Add Core URL + edge token configuration to the in-app Settings UI
+
+### Medium-term (self-learning AI)
+9. **Interaction log persistence** — Store full turn context for every voice turn
+10. **Pattern-based skill suggestions** — Identify repeated patterns and surface skill candidates
+11. **Auto-skill generation + approval flow** — AI proposes skills; admin approves before enabling
+12. **User feedback loop (thumbs up/down)** — Post-response feedback stored and fed back to routing
+
+### Medium-term (audio & media)
+13. **Audio broadcast / intercom** — Device-to-device and whole-home audio via Core broker
+14. **Music Assistant integration** — Connect displays as MA players; voice music control
+15. **Multi-room audio sync** — Join/unjoin display audio groups via voice or UI
+
+### Longer-term (polish & scale)
+16. **Production PKI mode** — Proper enrollment gate; disable open pairing
+17. **Widget Z-index + grouping** — Complete canvas editor feature set
+18. **Scene transition animations** — Smooth page navigation
+19. **Scene preview thumbnails** — Mini canvas previews in scene list
+20. **Refactor `index.ts`** — Extract route groups into separate files
+21. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
+22. **Offline graceful degradation** — Useful fallback when Core is unreachable
+23. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
