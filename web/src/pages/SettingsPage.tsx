@@ -15,6 +15,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box, Stack, Typography, Paper, Button, TextField, Switch, FormControlLabel,
   Divider, Alert, Chip, MenuItem, Select, InputLabel, FormControl, IconButton, Tabs, Tab,
+  CircularProgress, InputAdornment, Tooltip,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
@@ -22,6 +23,10 @@ import EditIcon from '@mui/icons-material/Edit';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import WifiIcon from '@mui/icons-material/Wifi';
+import WifiOffIcon from '@mui/icons-material/WifiOff';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 import RoutinesSettingsSection from './RoutinesSettingsSection';
@@ -52,6 +57,10 @@ export default function SettingsPage() {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [audio, setAudio] = useState<AudioState | null>(null);
   const [mqtt, setMqtt] = useState<MqttStatus | null>(null);
+  const [coreBridge, setCoreBridge] = useState<{ url: string; tokenSet: boolean; source: string } | null>(null);
+  const [bridgeTestResult, setBridgeTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [bridgeTesting, setBridgeTesting] = useState(false);
+  const [showToken, setShowToken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
@@ -60,7 +69,7 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [s, p, st, a, mq, pageRows, sceneRows] = await Promise.all([
+      const [s, p, st, a, mq, cb, pageRows, sceneRows] = await Promise.all([
         coreApi.settings().catch((e) => {
           if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
           throw e;
@@ -75,6 +84,7 @@ export default function SettingsPage() {
         }),
         coreApi.audioState().catch(() => null),
         coreApi.mqttStatus().catch(() => null),
+        coreApi.coreBridgeStatus().catch(() => null),
         coreApi.pages().catch(() => []),
         coreApi.scenes().then(result => result.scenes).catch(() => []),
       ]);
@@ -83,6 +93,7 @@ export default function SettingsPage() {
       setStorage(st);
       setAudio(a);
       setMqtt(mq);
+      setCoreBridge(cb);
       setPages(pageRows);
       setScenes(sceneRows);
     } catch (err) {
@@ -102,6 +113,26 @@ export default function SettingsPage() {
       setSaved('Settings saved.');
       load();
     } catch (e) { setError((e as Error).message); }
+  }
+
+  async function saveCoreBridge() {
+    if (!settings) return;
+    setSaved(null);
+    try {
+      await coreApi.updateSettings({ canvas_core_url: settings.canvas_core_url ?? '', edge_voice_token: settings.edge_voice_token ?? '' });
+      setSaved('Core bridge settings saved. Restart voice to apply.');
+      setBridgeTestResult(null);
+      load();
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function testBridgeConnection() {
+    setBridgeTesting(true); setBridgeTestResult(null);
+    try {
+      const result = await coreApi.testCoreBridge();
+      setBridgeTestResult(result);
+    } catch (e) { setBridgeTestResult({ ok: false, error: (e as Error).message }); }
+    finally { setBridgeTesting(false); }
   }
 
   async function savePrivacy(patch: Partial<PrivacySettings>) {
@@ -204,6 +235,73 @@ export default function SettingsPage() {
               </>}
 
               {activeTab === 'integrations' && <>
+              {/* Canvas Core Bridge */}
+              <Paper sx={{ p: 2.5 }}>
+                <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Canvas Core bridge</Typography>
+                  <Chip
+                    size="small" sx={{ ml: 'auto' }}
+                    icon={coreBridge?.tokenSet && coreBridge?.url ? <WifiIcon sx={{ fontSize: 14 }} /> : <WifiOffIcon sx={{ fontSize: 14 }} />}
+                    color={coreBridge?.tokenSet && coreBridge?.url ? 'success' : 'warning'}
+                    label={coreBridge?.tokenSet && coreBridge?.url ? `connected (${coreBridge.source})` : 'not configured'}
+                    variant="outlined"
+                  />
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  Configure the connection to Canvas Core for AI voice processing. The voice pipeline uses these settings at runtime — no restart required.
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                {settings && (
+                  <Stack spacing={2}>
+                    <TextField
+                      label="Canvas Core URL"
+                      size="small" fullWidth
+                      value={settings.canvas_core_url ?? ''}
+                      placeholder="http://192.168.1.108:3101"
+                      onChange={e => setSettings({ ...settings, canvas_core_url: e.target.value })}
+                    />
+                    <TextField
+                      label="Edge voice token"
+                      size="small" fullWidth
+                      type={showToken ? 'text' : 'password'}
+                      value={settings.edge_voice_token ?? ''}
+                      placeholder={coreBridge?.tokenSet ? '••••••••' : 'Enter token from Core → AI Brain → Voice bridge'}
+                      onChange={e => setSettings({ ...settings, edge_voice_token: e.target.value })}
+                      slotProps={{
+                        input: {
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <Tooltip title={showToken ? 'Hide token' : 'Show token'}>
+                                <IconButton size="small" onClick={() => setShowToken(v => !v)}>
+                                  {showToken ? <VisibilityOffIcon sx={{ fontSize: 16 }} /> : <VisibilityIcon sx={{ fontSize: 16 }} />}
+                                </IconButton>
+                              </Tooltip>
+                            </InputAdornment>
+                          ),
+                        },
+                      }}
+                    />
+                    {bridgeTestResult && (
+                      <Alert severity={bridgeTestResult.ok ? 'success' : 'error'} sx={{ fontSize: 12 }}>
+                        {bridgeTestResult.ok ? '✓ Core is reachable' : `Connection failed: ${bridgeTestResult.error}`}
+                      </Alert>
+                    )}
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="contained" startIcon={<SaveIcon fontSize="small" />} onClick={saveCoreBridge} sx={{ textTransform: 'none' }}>
+                        Save
+                      </Button>
+                      <Button size="small" variant="outlined" startIcon={bridgeTesting ? <CircularProgress size={12} /> : <WifiIcon fontSize="small" />} onClick={testBridgeConnection} disabled={bridgeTesting || !settings.canvas_core_url} sx={{ textTransform: 'none' }}>
+                        Test connection
+                      </Button>
+                    </Stack>
+                    {coreBridge?.source === 'env' && (
+                      <Alert severity="info" sx={{ fontSize: 12, bgcolor: 'rgba(100,181,246,0.1)' }}>
+                        Currently using env var values. Saving here will store them in the database and take precedence over env vars.
+                      </Alert>
+                    )}
+                  </Stack>
+                )}
+              </Paper>
               {/* Provider URLs (display-only — set via env / Core config) */}
               <Paper sx={{ p: 2.5 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Provider URLs</Typography>

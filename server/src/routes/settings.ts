@@ -36,6 +36,8 @@ const execFileAsync = promisify(execFile);
 const SETTING_DEFAULTS: Record<string, string> = {
   device_name:          'Canvas UI Device',
   server_port:          '3100',
+  canvas_core_url:      process.env.CANVAS_CORE_URL ?? '',
+  edge_voice_token:     process.env.CANVAS_EDGE_VOICE_TOKEN ?? '',
   mqtt_enabled:         '0',
   mqtt_broker_url:      'mqtt://localhost:1883',
   mqtt_username:        '',
@@ -66,7 +68,7 @@ const SETTING_DEFAULTS: Record<string, string> = {
   youtube_safe_search:  'strict',
 };
 
-const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token', 'youtube_api_key']);
+const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token', 'youtube_api_key', 'edge_voice_token']);
 
 function getAllSettings(): Record<string, string> {
   const db = getDb();
@@ -175,7 +177,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       noIntentSound: s.voice_no_intent_sound ?? '',
     });
     const directCoreVoice = process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
-      && Boolean(process.env.CANVAS_CORE_URL && process.env.CANVAS_EDGE_VOICE_TOKEN);
+      && Boolean((s.canvas_core_url || process.env.CANVAS_CORE_URL) && (s.edge_voice_token || process.env.CANVAS_EDGE_VOICE_TOKEN));
     await stopDirectWakeword();
     await stopVoiceServer();
     releaseVoiceOwnership();
@@ -199,6 +201,34 @@ export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/settings/voice/microphones — list available ALSA capture devices
   app.get('/settings/voice/microphones', async () => {
     return listMicrophones();
+  });
+
+  // GET /api/settings/core-bridge — Canvas Core connection status (unredacted URL, token masked)
+  app.get('/settings/core-bridge', async () => {
+    const db = getDb();
+    const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
+    const dbToken = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_voice_token') as { value: string } | undefined)?.value ?? '';
+    const url = dbUrl || process.env.CANVAS_CORE_URL || '';
+    const token = dbToken || process.env.CANVAS_EDGE_VOICE_TOKEN || '';
+    const source = dbUrl || dbToken ? 'db' : (process.env.CANVAS_CORE_URL || process.env.CANVAS_EDGE_VOICE_TOKEN ? 'env' : 'none');
+    return { url, tokenSet: Boolean(token), source };
+  });
+
+  // POST /api/settings/core-bridge/test — ping Core health endpoint
+  app.post('/settings/core-bridge/test', async (req, reply) => {
+    const db = getDb();
+    const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
+    const url = dbUrl || process.env.CANVAS_CORE_URL || '';
+    if (!url) { reply.code(400); return { ok: false, error: 'No Core URL configured' }; }
+    try {
+      const res = await fetch(`${url.replace(/\/+$/, '')}/health`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) { reply.code(502); return { ok: false, error: `Core returned ${res.status}` }; }
+      const body = await res.json() as Record<string, unknown>;
+      return { ok: true, status: body };
+    } catch (err) {
+      reply.code(502);
+      return { ok: false, error: (err as Error).message };
+    }
   });
 
   // Audio diagnostics run in the display user's session. This is intentional:

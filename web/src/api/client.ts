@@ -286,6 +286,8 @@ export interface LegacyPage {
 export interface LegacySettings {
   device_name: string;
   server_port: string;
+  canvas_core_url: string;
+  edge_voice_token: string;
   mqtt_enabled: string;
   mqtt_broker_url: string;
   mqtt_username: string;
@@ -620,6 +622,9 @@ export const coreApi = {
   mqttStatus: () => api.get<MqttStatus>('/api/settings/mqtt'),
   reconnectMqtt: () => api.post<{ ok: boolean } & MqttStatus>('/api/settings/mqtt/reconnect'),
   disconnectMqtt: () => api.post<{ ok: boolean }>('/api/settings/mqtt/disconnect'),
+  coreBridgeStatus: () => api.get<{ url: string; tokenSet: boolean; source: string }>('/api/settings/core-bridge'),
+  testCoreBridge: () => api.post<{ ok: boolean; status?: unknown; error?: string }>('/api/settings/core-bridge/test'),
+  restartVoice: () => api.post<{ ok: boolean; mode: string; status: string }>('/api/settings/voice/restart'),
   audioState: () => api.get<AudioState>('/api/audio/state'),
 
    // AI providers (multi-provider model registry)

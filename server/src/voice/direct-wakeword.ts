@@ -10,6 +10,24 @@ import { WakeWordDetector } from './wakeword-local';
 import { runVoiceTurn } from '../services/voice';
 import { EndOfSpeechDetector } from './end-of-speech';
 
+/** Read Core bridge URL + token from server_settings DB, falling back to env vars. */
+function getCoreBridgeConfig(): { baseUrl: string; token: string } {
+  try {
+    const db = getDb();
+    const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
+    const dbToken = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_voice_token') as { value: string } | undefined)?.value ?? '';
+    return {
+      baseUrl: (dbUrl || process.env.CANVAS_CORE_URL || '').replace(/\/+$/, ''),
+      token:   dbToken || process.env.CANVAS_EDGE_VOICE_TOKEN || '',
+    };
+  } catch {
+    return {
+      baseUrl: (process.env.CANVAS_CORE_URL || '').replace(/\/+$/, ''),
+      token:   process.env.CANVAS_EDGE_VOICE_TOKEN || '',
+    };
+  }
+}
+
 export interface DirectWakewordSettings {
   enabled: boolean;
   micDevice: string;
@@ -280,8 +298,7 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
   timings?: { asrMs: number; routingMs: number; planningMs: number; ttsMs: number; totalMs: number };
   intent?: { intent?: string };
 }> {
-  const baseUrl = (process.env.CANVAS_CORE_URL ?? '').replace(/\/+$/, '');
-  const token = process.env.CANVAS_EDGE_VOICE_TOKEN ?? '';
+  const { baseUrl, token } = getCoreBridgeConfig();
   if (!baseUrl || !token) {
     throw new Error('Core voice bridge is not configured');
   }
@@ -326,8 +343,7 @@ async function runCoreVoiceTurnStream(
   turnId: string,
   wakeStartedAt: number,
 ): Promise<CoreTurnResult & { streamed: StreamPlayback }> {
-  const baseUrl = (process.env.CANVAS_CORE_URL ?? '').replace(/\/+$/, '');
-  const token = process.env.CANVAS_EDGE_VOICE_TOKEN ?? '';
+  const { baseUrl, token } = getCoreBridgeConfig();
   const response = await fetch(`${baseUrl}/api/edge/voice/turn-stream`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -380,8 +396,7 @@ async function runCoreVoiceTurnStream(
 }
 
 async function reportVoiceMetrics(metrics: Record<string, unknown>): Promise<void> {
-  const baseUrl = (process.env.CANVAS_CORE_URL ?? '').replace(/\/+$/, '');
-  const token = process.env.CANVAS_EDGE_VOICE_TOKEN ?? '';
+  const { baseUrl, token } = getCoreBridgeConfig();
   if (!baseUrl || !token) return;
   try {
     await fetch(`${baseUrl}/api/edge/voice/metrics`, {
@@ -490,7 +505,7 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     const wav = pcm16ToWav(pcm);
     console.log('[wakeword:direct] Captured audio, running direct voice turn');
     const coreBridgeConfigured = Boolean(
-      process.env.CANVAS_CORE_URL && process.env.CANVAS_EDGE_VOICE_TOKEN,
+      (() => { const { baseUrl, token } = getCoreBridgeConfig(); return baseUrl && token; })(),
     );
     const coreRequestStartedAt = performance.now();
     const streamingEnabled = coreBridgeConfigured && process.env.CANVAS_CORE_STREAMING_TTS !== '0';
