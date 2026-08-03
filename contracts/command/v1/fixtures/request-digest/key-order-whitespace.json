@@ -1,0 +1,8 @@
+{
+  "preconditions": {},
+  "parameters": {
+    "message": "hello edge"
+  },
+  "semantic_version": 1,
+  "kind": "diagnostics.echo"
+}

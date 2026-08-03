@@ -1,0 +1,651 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.canvas-display.local/device/v1/control-message.schema.json",
+  "title": "DeviceV1ControlMessage",
+  "description": "Canvas Core to Canvas Edge control-plane message contract.",
+  "oneOf": [
+    { "$ref": "#/definitions/EdgeHello" },
+    { "$ref": "#/definitions/CoreWelcome" },
+    { "$ref": "#/definitions/EdgeHeartbeat" },
+    { "$ref": "#/definitions/CoreHeartbeat" },
+    { "$ref": "#/definitions/StreamAck" },
+    { "$ref": "#/definitions/StreamReset" },
+    { "$ref": "#/definitions/StateDesired" },
+    { "$ref": "#/definitions/StateReported" },
+    { "$ref": "#/definitions/DiagnosticsEchoCommandIssue" },
+    { "$ref": "#/definitions/CommandReceived" },
+    { "$ref": "#/definitions/CommandCompleted" },
+    { "$ref": "#/definitions/CommandRejected" },
+    { "$ref": "#/definitions/CommandFailed" },
+    { "$ref": "#/definitions/CommandCancelled" },
+    { "$ref": "#/definitions/CommandUnknownOutcome" },
+    { "$ref": "#/definitions/ProtocolError" }
+  ],
+  "definitions": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "Sha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ProtocolRange": {
+      "title": "ProtocolRange",
+      "type": "object",
+      "required": ["minimum", "maximum"],
+      "properties": {
+        "minimum": { "type": "integer", "minimum": 1 },
+        "maximum": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "AgentInfo": {
+      "title": "AgentInfo",
+      "type": "object",
+      "required": ["version", "platform", "architecture"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "platform": { "const": "linux" },
+        "architecture": { "enum": ["amd64", "arm64"] }
+      },
+      "additionalProperties": true
+    },
+    "ResumeCursor": {
+      "title": "ResumeCursor",
+      "type": "object",
+      "properties": {
+        "core_stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "edge_stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "last_core_sequence": { "type": "integer", "minimum": 0 },
+        "last_edge_sequence_acked": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "EdgeCapabilities": {
+      "title": "EdgeCapabilities",
+      "type": "object",
+      "required": ["renderer", "media", "voice", "hardware"],
+      "properties": {
+        "renderer": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "media": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "voice": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "hardware": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      },
+      "additionalProperties": true
+    },
+    "DesiredState": {
+      "title": "DesiredState",
+      "type": "object",
+      "properties": {
+        "scene": {
+          "type": "object",
+          "required": ["revision_id"],
+          "properties": {
+            "revision_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "page": {
+              "description": "Optional inline page document for renderers that do not share Core storage.",
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "display": {
+          "type": "object",
+          "properties": {
+            "power": { "enum": ["on", "off"] },
+            "brightness": { "type": "integer", "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": true
+        },
+        "audio": {
+          "type": "object",
+          "properties": {
+            "volume": { "type": "integer", "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": true
+        },
+        "voice": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "wake_word": { "type": "string", "minLength": 1, "maxLength": 128 }
+          },
+          "additionalProperties": true
+        },
+        "update": {
+          "type": "object",
+          "properties": {
+            "channel": { "type": "string", "minLength": 1, "maxLength": 64 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "ReportedState": {
+      "title": "ReportedState",
+      "type": "object",
+      "properties": {
+        "scene": {
+          "type": "object",
+          "properties": {
+            "revision_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "status": { "enum": ["staging", "active", "failed", "rolled_back"] }
+          },
+          "additionalProperties": true
+        },
+        "display": {
+          "type": "object",
+          "properties": {
+            "power": { "enum": ["on", "off"] },
+            "brightness": { "type": "integer", "minimum": 0, "maximum": 100 }
+          },
+          "additionalProperties": true
+        },
+        "connectivity": {
+          "type": "object",
+          "properties": {
+            "core": { "enum": ["online", "degraded", "offline"] }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "DomainApplication": {
+      "title": "DomainApplication",
+      "type": "object",
+      "required": ["desired_revision", "status"],
+      "properties": {
+        "desired_revision": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["pending", "applied", "diverged", "failed", "unsupported"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": true
+    },
+    "Divergence": {
+      "title": "Divergence",
+      "type": "object",
+      "required": ["path", "desired", "actual", "reason"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^/" },
+        "desired": {},
+        "actual": {},
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": true
+    },
+    "EdgeHello": {
+      "title": "EdgeHello",
+      "type": "object",
+      "required": ["type", "message_id", "sent_at", "protocol", "agent", "resume", "capabilities"],
+      "properties": {
+        "type": { "const": "edge.hello" },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "protocol": { "$ref": "#/definitions/ProtocolRange" },
+        "agent": { "$ref": "#/definitions/AgentInfo" },
+        "resume": { "$ref": "#/definitions/ResumeCursor" },
+        "capabilities": { "$ref": "#/definitions/EdgeCapabilities" },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Optional, NON-AUTHORITATIVE device identifier supplied for bootstrap/diagnostics only (plan doc §12.4). In the production protocol Core derives device identity from the authenticated mTLS connection and MUST treat any payload `device_id` as untrusted; it is ignored for authorization. The bootstrap Device Gateway may record it as a convenience key when no stronger identity exists yet."
+        },
+        "installation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "P-003 enrollment gate: optional stable Edge installation identifier. When open pairing is OFF, Core's gateway matches this against the paired `device_credentials` registry to authorize the hello without requiring the full credential block be re-presented on every reconnect."
+        },
+        "public_key_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "P-003 enrollment gate: optional SHA-256 hex of the device's raw 32-byte Ed25519 public key (matches `EdgeIdentity::public_key_fingerprint()`). Core recomputes this from the enrolled public key and never trusts it as a self-reported claim; presenting it here lets the gateway match the hello to a paired registry row by fingerprint."
+        },
+        "invitation_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "description": "Optional one-time invitation token (P-003 bootstrap). If present and valid, the bootstrap Device Gateway may mark the device paired/known. A plain hello (no token) continues to work exactly as before when open pairing is ON."
+        },
+        "credential": {
+          "$ref": "#/definitions/DeviceCredentialEnvelope",
+          "description": "P-003 enrollment gate: optional Phase 0 signed credential issued by Core's enrollment endpoint. When open pairing is OFF, the gateway verifies the Core signature over the canonical credential JSON and matches it to the paired registry. Present on every reconnect after a successful enrollment so the device does not need to re-enroll."
+        }
+      },
+      "additionalProperties": true
+    },
+    "DeviceCredentialEnvelope": {
+      "title": "DeviceCredentialEnvelope",
+      "type": "object",
+      "required": ["credential", "signature"],
+      "properties": {
+        "credential": { "$ref": "#/definitions/DeviceCredential" },
+        "signature": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Base64 Ed25519 signature over the canonical (sorted-key) JSON of the embedded `credential` object, produced by Core's enrollment signing key."
+        },
+        "signer_public_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Base64 raw 32-byte Ed25519 public key that produced `signature`. Optional on the wire (Core has its own record of the signing key); included so the Edge can log/verify it without a separate channel."
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceCredential": {
+      "title": "DeviceCredential",
+      "type": "object",
+      "required": [
+        "format",
+        "serial",
+        "device_id",
+        "installation_id",
+        "public_key_fingerprint",
+        "issued_at_unix_ms",
+        "expires_at_unix_ms",
+        "issuer_id",
+        "security_epoch"
+      ],
+      "properties": {
+        "format": { "const": "canvas-phase0-device-credential-v1" },
+        "serial": { "type": "integer", "minimum": 1 },
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "installation_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "public_key_fingerprint": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "issued_at_unix_ms": { "type": "integer", "minimum": 0 },
+        "expires_at_unix_ms": { "type": "integer", "minimum": 0 },
+        "issuer_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "security_epoch": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "CoreWelcome": {
+      "title": "CoreWelcome",
+      "type": "object",
+      "required": ["type", "message_id", "sent_at", "protocol", "session_id", "heartbeat_seconds", "core_time", "resume", "desired_revision"],
+      "properties": {
+        "type": { "const": "core.welcome" },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "protocol": { "const": 1 },
+        "session_id": { "$ref": "#/definitions/Uuid" },
+        "heartbeat_seconds": { "type": "integer", "minimum": 5, "maximum": 300 },
+        "core_time": { "$ref": "#/definitions/Timestamp" },
+        "resume": {
+          "type": "object",
+          "required": ["accepted", "core_stream_epoch", "edge_stream_epoch", "next_core_sequence"],
+          "properties": {
+            "accepted": { "type": "boolean" },
+            "core_stream_epoch": { "$ref": "#/definitions/Uuid" },
+            "edge_stream_epoch": { "$ref": "#/definitions/Uuid" },
+            "next_core_sequence": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": true
+        },
+        "desired_revision": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "EdgeHeartbeat": {
+      "title": "EdgeHeartbeat",
+      "type": "object",
+      "required": ["type", "protocol", "sent_at", "stream_epoch", "last_received_sequence"],
+      "properties": {
+        "type": { "const": "edge.heartbeat" },
+        "protocol": { "const": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "last_received_sequence": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "CoreHeartbeat": {
+      "title": "CoreHeartbeat",
+      "type": "object",
+      "required": ["type", "protocol", "sent_at", "stream_epoch", "last_received_sequence"],
+      "properties": {
+        "type": { "const": "core.heartbeat" },
+        "protocol": { "const": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "last_received_sequence": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "StreamAck": {
+      "title": "StreamAck",
+      "type": "object",
+      "required": ["type", "protocol", "sent_at", "stream_epoch", "acknowledged_sequence"],
+      "properties": {
+        "type": { "const": "stream.ack" },
+        "protocol": { "const": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "acknowledged_sequence": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "StreamReset": {
+      "title": "StreamReset",
+      "type": "object",
+      "required": ["type", "protocol", "message_id", "sent_at", "previous_stream_epoch", "new_stream_epoch", "reason", "desired_revision"],
+      "properties": {
+        "type": { "const": "stream.reset" },
+        "protocol": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "previous_stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "new_stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "reason": { "enum": ["history_truncated", "restore", "cursor_invalid", "operator_reset"] },
+        "desired_revision": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "StateDesired": {
+      "title": "StateDesired",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "payload"],
+      "properties": {
+        "type": { "const": "state.desired" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "type": "object",
+          "required": ["authority_epoch", "revision", "desired_digest", "state"],
+          "properties": {
+            "authority_epoch": { "$ref": "#/definitions/Uuid" },
+            "revision": { "type": "integer", "minimum": 1 },
+            "desired_digest": { "$ref": "#/definitions/Sha256Digest" },
+            "state": { "$ref": "#/definitions/DesiredState" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "StateReported": {
+      "title": "StateReported",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "payload"],
+      "properties": {
+        "type": { "const": "state.reported" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "type": "object",
+          "required": ["authority_epoch", "desired_revision", "processed_desired_revision", "applied_revision", "reported_revision", "status", "state", "application", "divergences"],
+          "properties": {
+            "authority_epoch": { "$ref": "#/definitions/Uuid" },
+            "desired_revision": { "type": "integer", "minimum": 0 },
+            "processed_desired_revision": { "type": "integer", "minimum": 0 },
+            "applied_revision": { "type": "integer", "minimum": 0 },
+            "reported_revision": { "type": "integer", "minimum": 1 },
+            "status": { "enum": ["pending", "applied", "partially_applied", "diverged", "failed"] },
+            "state": { "$ref": "#/definitions/ReportedState" },
+            "application": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/definitions/DomainApplication" }
+            },
+            "divergences": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/Divergence" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "DiagnosticsEchoCommandIssue": {
+      "title": "DiagnosticsEchoCommandIssue",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "expires_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.issue" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "expires_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "type": "object",
+          "required": ["command_id", "idempotency_key", "request_digest", "kind", "execution_class", "parameters", "created_at", "not_before", "max_clock_uncertainty_ms"],
+          "properties": {
+            "command_id": { "$ref": "#/definitions/Uuid" },
+            "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "request_digest": { "$ref": "#/definitions/Sha256Digest" },
+            "kind": { "const": "diagnostics.echo" },
+            "execution_class": { "const": "replay_safe" },
+            "parameters": {
+              "type": "object",
+              "required": ["message"],
+              "properties": {
+                "message": { "type": "string", "maxLength": 1024 }
+              },
+              "additionalProperties": false
+            },
+            "created_at": { "$ref": "#/definitions/Timestamp" },
+            "not_before": { "$ref": "#/definitions/Timestamp" },
+            "max_clock_uncertainty_ms": { "type": "integer", "minimum": 0, "maximum": 300000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "CommandReceiptPayload": {
+      "title": "CommandReceiptPayload",
+      "type": "object",
+      "required": ["command_id", "idempotency_key", "request_digest"],
+      "properties": {
+        "command_id": { "$ref": "#/definitions/Uuid" },
+        "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "request_digest": { "$ref": "#/definitions/Sha256Digest" }
+      },
+      "additionalProperties": true
+    },
+    "CommandReceived": {
+      "title": "CommandReceived",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.received" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/definitions/CommandReceiptPayload" },
+            {
+              "type": "object",
+              "required": ["duplicate"],
+              "properties": { "duplicate": { "type": "boolean" } }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "CommandCompleted": {
+      "title": "CommandCompleted",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.completed" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/definitions/CommandReceiptPayload" },
+            {
+              "type": "object",
+              "required": ["replayed", "result"],
+              "properties": {
+                "replayed": { "type": "boolean" },
+                "result": {
+                  "type": "object",
+                  "required": ["echoed"],
+                  "properties": { "echoed": { "type": "string" } },
+                  "additionalProperties": true
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "CommandRejected": {
+      "title": "CommandRejected",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.rejected" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/definitions/CommandReceiptPayload" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["idempotency_conflict", "expired", "clock_untrusted", "unsupported", "precondition_failed"] },
+                "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "CommandFailed": {
+      "title": "CommandFailed",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.failed" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/definitions/CommandReceiptPayload" },
+            {
+              "type": "object",
+              "required": ["code", "message", "retryable"],
+              "properties": {
+                "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+                "retryable": { "type": "boolean" }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "CommandCancelled": {
+      "title": "CommandCancelled",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.cancelled" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": { "$ref": "#/definitions/CommandReceiptPayload" }
+      },
+      "additionalProperties": true
+    },
+    "CommandUnknownOutcome": {
+      "title": "CommandUnknownOutcome",
+      "type": "object",
+      "required": ["type", "protocol", "payload_version", "message_id", "stream_epoch", "sequence", "sent_at", "correlation_id", "payload"],
+      "properties": {
+        "type": { "const": "command.unknown_outcome" },
+        "protocol": { "const": 1 },
+        "payload_version": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "stream_epoch": { "$ref": "#/definitions/Uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "payload": {
+          "allOf": [
+            { "$ref": "#/definitions/CommandReceiptPayload" },
+            {
+              "type": "object",
+              "required": ["message"],
+              "properties": {
+                "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "ProtocolError": {
+      "title": "ProtocolError",
+      "type": "object",
+      "required": ["type", "protocol", "message_id", "sent_at", "code", "message"],
+      "properties": {
+        "type": { "const": "protocol.error" },
+        "protocol": { "const": 1 },
+        "message_id": { "$ref": "#/definitions/Uuid" },
+        "sent_at": { "$ref": "#/definitions/Timestamp" },
+        "correlation_id": { "$ref": "#/definitions/Uuid" },
+        "code": { "enum": ["invalid_message", "unsupported_protocol", "unknown_message", "idempotency_conflict", "stale_revision", "clock_untrusted", "stream_reset_required"] },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,10 @@
+name: canvas-display
+version: 1.0.0
+description: Canvas Display navigation and URL resolution tools for Hermes
+provides_tools:
+  - web_search_to_url
+  - youtube_search_to_url
+  - canvas_set_page
+  - canvas_navigate_panel
+  - canvas_media_play
+  - canvas_media_control

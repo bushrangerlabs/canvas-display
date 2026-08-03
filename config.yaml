@@ -1,5 +1,5 @@
 name: Canvas UI Platform
-version: "0.2.22"
+version: "0.2.23"
 slug: canvas_ui_platform
 description: >-
   Standalone display management platform — drag-and-drop canvas editor,
@@ -16,9 +16,13 @@ ports_description:
 options:
   jwt_secret: ""
   log_level: warn
+  canvas_core_url: ""
+  edge_voice_token: ""
 schema:
   jwt_secret: str?
   log_level: list(trace|debug|info|warn|error)
+  canvas_core_url: str?
+  edge_voice_token: str?
 map:
   - data
 startup: application

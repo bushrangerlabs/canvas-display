@@ -6,10 +6,16 @@ import { publishDeviceState } from '../mqtt/index';
 export type ClientType = 'browser' | 'editor' | 'api';
 
 // ─── HA state broadcaster ────────────────────────────────────────────────────
+// Phase 4 (D-012): Core is the primary HA integration point. The sidecar's HA
+// state poller is a legacy feature not started by the current composition root.
+// Set CANVAS_SIDECAR_HA_STATE_POLLER_ENABLED=false to opt out explicitly.
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const HA_API = 'http://supervisor/core/api';
 const HA_POLL_MS = 10_000;
 let _prevStates: Record<string, string> = {};
+
+const haStatePollerEnabled =
+  (process.env.CANVAS_SIDECAR_HA_STATE_POLLER_ENABLED ?? 'true').toLowerCase() !== 'false';
 
 async function pollAndBroadcastHAStates() {
   if (!SUPERVISOR_TOKEN) return;
@@ -39,7 +45,14 @@ async function pollAndBroadcastHAStates() {
 
 /** Start the periodic HA state poller. Call once after initWss(). */
 export function startHAStatePoller() {
-  if (!SUPERVISOR_TOKEN) return; // skip when running outside an add-on
+  if (!SUPERVISOR_TOKEN) {
+    console.log('[ws] HA state poller disabled — no SUPERVISOR_TOKEN (running outside add-on)');
+    return;
+  }
+  if (!haStatePollerEnabled) {
+    console.log('[ws] HA state poller disabled (CANVAS_SIDECAR_HA_STATE_POLLER_ENABLED=false)');
+    return;
+  }
   pollAndBroadcastHAStates(); // immediate first fetch
   setInterval(pollAndBroadcastHAStates, HA_POLL_MS);
 }

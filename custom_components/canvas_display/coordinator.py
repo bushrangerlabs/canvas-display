@@ -19,8 +19,9 @@ SCAN_INTERVAL = timedelta(seconds=30)
 class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls the Canvas Display server for settings and pages."""
 
-    def __init__(self, hass: HomeAssistant, api_url: str) -> None:
+    def __init__(self, hass: HomeAssistant, api_url: str, api_token: str = "") -> None:
         self.api_url = api_url.rstrip("/")
+        self.api_token = api_token
         self._session: aiohttp.ClientSession | None = None
         super().__init__(
             hass,
@@ -31,7 +32,9 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            self._session = aiohttp.ClientSession(
+                headers={"Authorization": f"Bearer {self.api_token}"}
+            )
         return self._session
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -90,6 +93,55 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if resp.status not in (200, 204):
                 raise Exception(f"Failed to push page: HTTP {resp.status}")
 
+    async def async_load_device_page(self, device_id: str, page_id: str) -> None:
+        """Activate a page on one Core-managed device."""
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/pages/{page_id}/display",
+            json={"device_id": device_id},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"load_device_page failed: HTTP {resp.status} — {await resp.text()}")
+
+    async def async_device_page_back(self, device_id: str) -> None:
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/devices/{device_id}/page/back",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"page_back failed: HTTP {resp.status} — {await resp.text()}")
+
+    async def async_patch_device_panel(
+        self,
+        device_id: str,
+        panel_id: str,
+        *,
+        content_type: str | None = None,
+        url: str | None = None,
+        scene_id: str | None = None,
+        visible: bool | None = None,
+    ) -> None:
+        body = {
+            key: value for key, value in {
+                "device_id": device_id,
+                "panel": panel_id,
+                "content_type": content_type,
+                "url": url,
+                "scene_id": scene_id,
+                "visible": visible,
+            }.items() if value is not None
+        }
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/commands/panel",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"patch_device_panel failed: HTTP {resp.status} — {await resp.text()}")
+
     async def async_set_page(self, page: str) -> None:
         """POST /api/commands/page — set active page by name or ID."""
         session = self._get_session()
@@ -137,6 +189,51 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if resp.status not in (200, 204):
                 text = await resp.text()
                 raise Exception(f"navigate_panel failed: HTTP {resp.status} — {text}")
+
+    async def async_media_play(
+        self,
+        *,
+        source: str,
+        url: str,
+        title: str | None = None,
+    ) -> None:
+        """Play media through the display's unified media API."""
+        session = self._get_session()
+        body = {"source": source, "url": url}
+        if title:
+            body["title"] = title
+        async with session.post(
+            f"{self.api_url}/api/media/play",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=25),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"media play failed: HTTP {resp.status} — {await resp.text()}")
+        await self.async_request_refresh()
+
+    async def async_media_control(
+        self,
+        action: str,
+        *,
+        source: str = "youtube",
+        level: int | None = None,
+        muted: bool | None = None,
+    ) -> None:
+        """Pause, resume, stop, skip, or adjust media through one API."""
+        body: dict[str, Any] = {"source": source, "action": action}
+        if level is not None:
+            body["level"] = level
+        if muted is not None:
+            body["muted"] = muted
+        session = self._get_session()
+        async with session.post(
+            f"{self.api_url}/api/media/control",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"media control failed: HTTP {resp.status} — {await resp.text()}")
+        await self.async_request_refresh()
 
     async def async_reload(self) -> None:
         """POST /api/commands/reload — reload the browser display."""

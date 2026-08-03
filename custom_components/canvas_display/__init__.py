@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_API_URL, DOMAIN
+from .const import CONF_API_TOKEN, CONF_API_URL, DOMAIN
 from .coordinator import CanvasDisplayCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,6 +19,11 @@ SERVICE_SET_PAGE = "set_page"
 SERVICE_NAVIGATE_PANEL = "navigate_panel"
 SERVICE_RELOAD = "reload"
 SERVICE_QUIT = "quit"
+SERVICE_LOAD_DEVICE_PAGE = "load_device_page"
+SERVICE_PAGE_BACK = "page_back"
+SERVICE_LOAD_PANEL_URL = "load_panel_url"
+SERVICE_LOAD_PANEL_SCENE = "load_panel_scene"
+SERVICE_SET_PANEL_VISIBILITY = "set_panel_visibility"
 
 
 def _get_coordinators(hass: HomeAssistant, device_name: str | None) -> list[CanvasDisplayCoordinator]:
@@ -70,6 +75,32 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             except Exception as err:
                 _LOGGER.error("quit failed for %s: %s", coordinator.api_url, err)
 
+    async def handle_load_device_page(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators(hass, call.data.get("device_name")):
+            await coordinator.async_load_device_page(call.data["device_id"], call.data["page"])
+
+    async def handle_page_back(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators(hass, call.data.get("device_name")):
+            await coordinator.async_device_page_back(call.data["device_id"])
+
+    async def handle_load_panel_url(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators(hass, call.data.get("device_name")):
+            await coordinator.async_patch_device_panel(
+                call.data["device_id"], call.data["panel"], content_type="url", url=call.data["url"]
+            )
+
+    async def handle_load_panel_scene(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators(hass, call.data.get("device_name")):
+            await coordinator.async_patch_device_panel(
+                call.data["device_id"], call.data["panel"], content_type="scene", scene_id=call.data["scene"]
+            )
+
+    async def handle_set_panel_visibility(call: ServiceCall) -> None:
+        for coordinator in _get_coordinators(hass, call.data.get("device_name")):
+            await coordinator.async_patch_device_panel(
+                call.data["device_id"], call.data["panel"], visible=call.data["visible"]
+            )
+
     hass.services.async_register(
         DOMAIN, SERVICE_SET_PAGE, handle_set_page,
         schema=vol.Schema({
@@ -94,6 +125,36 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN, SERVICE_QUIT, handle_quit,
         schema=vol.Schema({vol.Optional("device_name"): cv.string}),
     )
+    target_schema = {
+        vol.Required("device_id"): cv.string,
+        vol.Optional("device_name"): cv.string,
+    }
+    hass.services.async_register(
+        DOMAIN, SERVICE_LOAD_DEVICE_PAGE, handle_load_device_page,
+        schema=vol.Schema({**target_schema, vol.Required("page"): cv.string}),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_PAGE_BACK, handle_page_back,
+        schema=vol.Schema(target_schema),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_LOAD_PANEL_URL, handle_load_panel_url,
+        schema=vol.Schema({
+            **target_schema, vol.Required("panel"): cv.string, vol.Required("url"): cv.url,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_LOAD_PANEL_SCENE, handle_load_panel_scene,
+        schema=vol.Schema({
+            **target_schema, vol.Required("panel"): cv.string, vol.Required("scene"): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_PANEL_VISIBILITY, handle_set_panel_visibility,
+        schema=vol.Schema({
+            **target_schema, vol.Required("panel"): cv.string, vol.Required("visible"): cv.boolean,
+        }),
+    )
 
     return True
 
@@ -103,7 +164,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     api_url = entry.data.get(CONF_API_URL) or entry.options.get(CONF_API_URL)
-    coordinator = CanvasDisplayCoordinator(hass, api_url)
+    api_token = entry.data.get(CONF_API_TOKEN) or entry.options.get(CONF_API_TOKEN, "")
+    coordinator = CanvasDisplayCoordinator(hass, api_url, api_token)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}

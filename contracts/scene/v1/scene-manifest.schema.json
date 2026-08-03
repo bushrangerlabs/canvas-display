@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.canvas-display.local/scene/v1/scene-manifest.schema.json",
+  "$comment": "manifest_digest is sha256 over RFC 8785 JCS bytes after omitting only the top-level manifest_digest field.",
+  "title": "SceneManifestV1",
+  "description": "Immutable, credential-free Canvas scene revision manifest delivered by Core and staged by Edge.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scene_id",
+    "revision_id",
+    "revision_number",
+    "published_at",
+    "manifest_digest",
+    "requirements",
+    "canvas",
+    "document",
+    "assets",
+    "entity_subscriptions",
+    "security",
+    "offline"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "scene_id": { "$ref": "#/definitions/SceneUuid" },
+    "revision_id": { "$ref": "#/definitions/SceneUuid" },
+    "revision_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "published_at": { "$ref": "#/definitions/SceneTimestamp" },
+    "manifest_digest": { "$ref": "#/definitions/SceneSha256Digest" },
+    "requirements": { "$ref": "#/definitions/RendererRequirements" },
+    "canvas": { "$ref": "#/definitions/CanvasDescription" },
+    "document": { "$ref": "#/definitions/SceneDocumentReference" },
+    "assets": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": { "$ref": "#/definitions/AssetReference" },
+      "uniqueItems": true
+    },
+    "entity_subscriptions": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": { "$ref": "#/definitions/EntitySubscription" },
+      "uniqueItems": true
+    },
+    "security": { "$ref": "#/definitions/SceneSecurityPolicy" },
+    "offline": { "$ref": "#/definitions/OfflinePolicy" }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "SceneUuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "SceneTimestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "SceneSha256Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "RendererRequirements": {
+      "title": "RendererRequirements",
+      "type": "object",
+      "required": ["minimum_version", "capabilities"],
+      "properties": {
+        "minimum_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "CanvasDescription": {
+      "title": "CanvasDescription",
+      "type": "object",
+      "required": ["width", "height", "background"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "background": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "SceneDocumentReference": {
+      "title": "SceneDocumentReference",
+      "type": "object",
+      "required": ["hash", "size", "media_type", "logical_path"],
+      "properties": {
+        "hash": { "$ref": "#/definitions/SceneSha256Digest" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+        "media_type": { "const": "application/vnd.canvas.scene+json" },
+        "logical_path": { "const": "scene.json" }
+      },
+      "additionalProperties": false
+    },
+    "AssetReference": {
+      "title": "AssetReference",
+      "type": "object",
+      "required": ["hash", "size", "media_type", "logical_path"],
+      "properties": {
+        "hash": { "$ref": "#/definitions/SceneSha256Digest" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$",
+          "maxLength": 128
+        },
+        "logical_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9_-])?(?:/[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9_-])?)*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EntitySubscription": {
+      "title": "EntitySubscription",
+      "type": "object",
+      "required": ["entity_id", "fields"],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+\\.[a-z0-9_]+$",
+          "maxLength": 255
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneSecurityPolicy": {
+      "title": "SceneSecurityPolicy",
+      "type": "object",
+      "required": ["allowed_origins", "allow_raw_html", "allow_iframes"],
+      "properties": {
+        "allowed_origins": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://[^/@?#]+$",
+            "maxLength": 512
+          },
+          "uniqueItems": true
+        },
+        "allow_raw_html": { "type": "boolean" },
+        "allow_iframes": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "OfflinePolicy": {
+      "title": "OfflinePolicy",
+      "type": "object",
+      "required": ["eligible", "schedule_eligible", "max_stale_seconds"],
+      "properties": {
+        "eligible": { "type": "boolean" },
+        "schedule_eligible": { "type": "boolean" },
+        "max_stale_seconds": { "type": "integer", "minimum": 0, "maximum": 31536000 },
+        "expires_at": { "$ref": "#/definitions/SceneTimestamp" },
+        "fallback_revision_id": { "$ref": "#/definitions/SceneUuid" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

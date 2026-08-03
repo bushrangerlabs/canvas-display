@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { getDb } from '../db/index';
 import { broadcast, sendCommand, getConnectedDeviceIds } from '../ws/index';
 import { publishDeviceState } from '../mqtt/index';
+import { guardAdmin } from './admin-gate';
 
 export async function deviceRoutes(app: FastifyInstance) {
 
@@ -70,6 +71,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
   // PATCH /api/devices/:id  { name?, description?, assigned_page_id?, slug? }
   app.patch<{ Params: { id: string }; Body: any }>('/devices/:id', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const body = req.body as any;
     if (!db.prepare('SELECT id FROM devices WHERE id = ?').get(req.params.id))
@@ -100,6 +102,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
   // DELETE /api/devices/:id
   app.delete<{ Params: { id: string } }>('/devices/:id', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     if (!db.prepare('SELECT id FROM devices WHERE id = ?').get(req.params.id))
       return reply.code(404).send({ error: 'Device not found' });
@@ -109,6 +112,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
   // POST /api/devices/:id/command  (single device)
   app.post<{ Params: { id: string }; Body: any }>('/devices/:id/command', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const body = req.body as any;
     if (req.params.id !== '*' && !db.prepare('SELECT id FROM devices WHERE id = ?').get(req.params.id))
@@ -127,6 +131,7 @@ export async function deviceRoutes(app: FastifyInstance) {
 
   // POST /api/devices/command  (broadcast to all)
   app.post<{ Body: any }>('/devices/command', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const body = req.body as any;
     const now = new Date().toISOString();

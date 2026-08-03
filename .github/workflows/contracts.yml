@@ -1,0 +1,75 @@
+name: Phase 0 Contracts
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "packages/protocol-ts/**"
+      - "edge/agent/**"
+      - "edge/simulator/**"
+      - "edge/content-bridge-prototype/**"
+      - "edge/Cargo.toml"
+      - "edge/Cargo.lock"
+      - "tools/contracts-codegen/**"
+      - "tests/**"
+      - "scripts/**"
+      - "docs/PHASE_0_*"
+      - "docs/CANVAS_CORE_EDGE_ARCHITECTURE_PLAN.md"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.contracts.json"
+      - ".github/workflows/contracts.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "contracts/**"
+      - "packages/protocol-ts/**"
+      - "edge/agent/**"
+      - "edge/simulator/**"
+      - "edge/content-bridge-prototype/**"
+      - "edge/Cargo.toml"
+      - "edge/Cargo.lock"
+      - "tools/contracts-codegen/**"
+      - "tests/**"
+      - "scripts/**"
+      - "docs/PHASE_0_*"
+      - "docs/CANVAS_CORE_EDGE_ARCHITECTURE_PLAN.md"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.contracts.json"
+      - ".github/workflows/contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-0-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Validate Phase 0 contracts and executable models
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Install contract tooling
+        run: npm ci
+
+      - name: Validate contracts, generated code, and Phase 0 models
+        run: npm run ci:contracts

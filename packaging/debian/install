@@ -1,0 +1,9 @@
+# Binary installation: source → destination
+# Binaries are built by the release script and placed in artifacts/deb-<arch>/
+# before dpkg-deb is invoked.
+usr/lib/canvas-edge/canvas-edge-agentd usr/lib/canvas-edge/
+usr/lib/canvas-edge/canvas-edge-updaterd usr/lib/canvas-edge/
+
+# systemd service units
+packaging/systemd/canvas-edge-agent.service etc/systemd/system/
+packaging/systemd/canvas-edge-updater.service etc/systemd/system/

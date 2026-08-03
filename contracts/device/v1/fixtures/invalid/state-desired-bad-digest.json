@@ -1,0 +1,15 @@
+{
+  "type": "state.desired",
+  "protocol": 1,
+  "payload_version": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000020",
+  "stream_epoch": "0190efff-0000-7000-8000-000000000010",
+  "sequence": 1,
+  "sent_at": "2026-07-18T10:00:02.000Z",
+  "payload": {
+    "authority_epoch": "0190efff-0000-7000-8000-000000000001",
+    "revision": 1,
+    "desired_digest": "not-a-sha256-digest",
+    "state": {}
+  }
+}

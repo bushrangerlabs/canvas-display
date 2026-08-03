@@ -1,0 +1,21 @@
+{
+  "id": "006-set-timer",
+  "transcript": "set a timer for 10 minutes",
+  "expected_intent": "timer_set",
+  "expected_tool_calls": [
+    {
+      "tool": "canvas.timer.create",
+      "arguments": {
+        "duration_minutes": 10,
+        "label": null
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": [],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": []
+}

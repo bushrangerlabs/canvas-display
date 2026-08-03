@@ -1,0 +1,7 @@
+{
+  "schema": "contracts/routine/v1/routine.schema.json",
+  "fixtures": [
+    { "path": "contracts/routine/v1/fixtures/valid-minimal.json", "valid": true },
+    { "path": "contracts/routine/v1/fixtures/invalid-unknown-step.json", "valid": false }
+  ]
+}

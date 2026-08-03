@@ -1,0 +1,31 @@
+{
+  "schema": "contracts/scene/v1/scene-manifest.schema.json",
+  "fixtures": [
+    { "path": "contracts/scene/v1/fixtures/valid/basic-scene.json", "valid": true },
+    { "path": "contracts/scene/v1/fixtures/invalid/missing-document.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/bad-asset-hash.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/absolute-asset-path.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/parent-segment-logical-path.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/origin-with-path.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/origin-with-userinfo.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/origin-with-query.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/document-wrong-media-type.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/asset-over-individual-limit.json", "valid": false },
+    { "path": "contracts/scene/v1/fixtures/invalid/credential-field.json", "valid": false },
+    {
+      "path": "contracts/scene/v1/fixtures/invalid/duplicate-logical-path.json",
+      "valid": false,
+      "schema_valid": true
+    },
+    {
+      "path": "contracts/scene/v1/fixtures/invalid/scene-over-total-size.json",
+      "valid": false,
+      "schema_valid": true
+    },
+    {
+      "path": "contracts/scene/v1/fixtures/invalid/conflicting-hash-size.json",
+      "valid": false,
+      "schema_valid": true
+    }
+  ]
+}

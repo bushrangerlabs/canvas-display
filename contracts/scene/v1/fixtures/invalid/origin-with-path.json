@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "scene_id": "0190f400-0000-7000-8000-000000000001",
+  "revision_id": "0190f400-0000-7000-8000-000000000002",
+  "revision_number": 1,
+  "published_at": "2026-07-18T12:00:00.000Z",
+  "manifest_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "requirements": { "minimum_version": "0.3.0", "capabilities": [] },
+  "canvas": { "width": 1920, "height": 1080, "background": "#000000" },
+  "document": { "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "size": 10, "media_type": "application/json", "logical_path": "scene.json" },
+  "assets": [],
+  "entity_subscriptions": [],
+  "security": { "allowed_origins": ["https://example.com/not-an-origin"], "allow_raw_html": false, "allow_iframes": false },
+  "offline": { "eligible": true, "schedule_eligible": false, "max_stale_seconds": 0 }
+}

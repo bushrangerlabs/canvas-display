@@ -1,0 +1,16 @@
+{
+  "type": "music",
+  "domain": "listnr_provider",
+  "name": "LiSTNR Radio",
+  "description": "Unofficial LiSTNR radio provider for Music Assistant.",
+  "codeowners": [
+    "@spetchal"
+  ],
+  "documentation": "https://docs.api.listnr.com/",
+  "multi_instance": false,
+  "builtin": false,
+  "requirements": [
+    "requests>=2.31.0"
+  ],
+  "icon": "radio"
+}

@@ -27,6 +27,7 @@ export interface AudioState {
   url:      string;
   volume:   number; // 0–100
   muted:    boolean;
+  artwork?: string;
 }
 
 let _state: AudioState = {
@@ -135,6 +136,58 @@ function setSystemMute(muted: boolean): void {
   } catch (err: any) {
     console.warn('[audio] pactl set-mute failed:', err.message);
   }
+}
+
+export async function playAudio(input: { url: string; title?: string; volume?: number }): Promise<AudioState> {
+  const volume = Math.max(0, Math.min(100, input.volume ?? _state.volume));
+  setSystemVolume(volume);
+  spawnMpv(input.url, volume);
+  _state = {
+    ..._state,
+    state: 'playing',
+    url: input.url,
+    title: input.title ?? input.url,
+    volume,
+    muted: false,
+  };
+  return getAudioState();
+}
+
+export async function pauseAudio(): Promise<AudioState> {
+  if (_state.state !== 'playing') throw new Error('Not playing');
+  await mpvIpc({ command: ['set_property', 'pause', true] });
+  _state.state = 'paused';
+  return getAudioState();
+}
+
+export async function resumeAudio(): Promise<AudioState> {
+  if (_state.state !== 'paused') throw new Error('Not paused');
+  await mpvIpc({ command: ['set_property', 'pause', false] });
+  _state.state = 'playing';
+  return getAudioState();
+}
+
+export async function stopAudio(): Promise<AudioState> {
+  killMpv();
+  _state.state = 'idle';
+  _state.url = '';
+  _state.title = '';
+  return getAudioState();
+}
+
+export async function setAudioVolume(level: number): Promise<AudioState> {
+  const clamped = Math.max(0, Math.min(100, Number(level)));
+  setSystemVolume(clamped);
+  _state.volume = clamped;
+  _state.muted = false;
+  await mpvIpc({ command: ['set_property', 'volume', clamped] }).catch(() => undefined);
+  return getAudioState();
+}
+
+export async function setAudioMute(muted: boolean): Promise<AudioState> {
+  setSystemMute(muted);
+  _state.muted = muted;
+  return getAudioState();
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "profile": "canvas.command.request/v1",
+  "valid": [
+    { "name": "diagnostics-echo", "file": "diagnostics-echo.json", "expected_digest": "sha256:14936abe504f227d7748780024d679125eadb53c069397bcd5f61fca698c1c4f" },
+    { "name": "key-order-and-whitespace-invariance", "file": "key-order-whitespace.json", "expected_digest": "sha256:14936abe504f227d7748780024d679125eadb53c069397bcd5f61fca698c1c4f" },
+    { "name": "parameter-mutation", "file": "parameter-mutation.json", "expected_digest": "sha256:28bede070c136713d1410189d7ce119fbc8f4a63cdab872894f5f6dd9b4eb52b" },
+    { "name": "semantic-version-mutation", "file": "semantic-version-mutation.json", "expected_digest": "sha256:e267d31816b7b6c51f80d3a802ce3584e3374f7074a2dbe3ca9a55240acea9d8" },
+    { "name": "precondition-mutation", "file": "precondition-mutation.json", "expected_digest": "sha256:175242ff22b4b47ad8fbb73cb8bdd93c7c479a46c7ee7e15dcba6cd1c917536c" },
+    { "name": "array-order-a-b", "file": "array-order-a-b.json", "expected_digest": "sha256:d1870c5d49a08c3d9b54fd67a43a697202a620e0d7922db6570f684337e67891" },
+    { "name": "array-order-b-a", "file": "array-order-b-a.json", "expected_digest": "sha256:ecb9191e4e14e11528030e614e97d141178abe582e05cc90c58740beeaec6fc2" },
+    { "name": "unicode", "file": "unicode.json", "expected_digest": "sha256:ee93d77fa47e85325ab457126120b5912c94bb5690e4903774ff16f67c089aa5" }
+  ],
+  "invalid": [
+    { "name": "duplicate-key", "file": "invalid-duplicate-key.json", "expected_error": "duplicate_key" },
+    { "name": "fractional-version", "file": "invalid-float.json", "expected_error": "invalid_number" },
+    { "name": "unsafe-version", "file": "invalid-unsafe-integer.json", "expected_error": "invalid_number" },
+    { "name": "extra-top-level-field", "file": "invalid-extra-field.json", "expected_error": "invalid_request" },
+    { "name": "missing-preconditions", "file": "invalid-missing-field.json", "expected_error": "invalid_request" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "product": "canvas-edge",
+  "version": "0.1.0-dev",
+  "architecture": "amd64",
+  "protocol_min": 1,
+  "protocol_max": 1,
+  "artifact_url": "https://releases.canvas-display.example.com/edge/v0.1.0-dev/canvas-edge_0.1.0-dev_amd64.deb",
+  "artifact_size_bytes": 4422,
+  "artifact_sha256": "c9031a40238e97c073abbed8a1502a6e151acfd8bda774bf97463172fe060c8b",
+  "required_disk_bytes": 268435456,
+  "rollback_compatible_versions": ["canvas-edge_0.1.0-dev"],
+  "channel": "stable",
+  "health_check_timeout_secs": 30,
+  "security_counter": 0,
+  "schema_min": 1,
+  "schema_max": 1
+}

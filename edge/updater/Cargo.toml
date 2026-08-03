@@ -1,0 +1,34 @@
+[package]
+name = "canvas-edge-updater"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "canvas_edge_updater"
+path = "src/lib.rs"
+
+[dependencies]
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+libc.workspace = true
+# `reqwest` with `rustls-tls` (NOT `native-tls`) so the updater cross-compiles for
+# `aarch64-unknown-linux-gnu` without a cross-compiled system OpenSSL, mirroring the TLS choice
+# already made in `edge/agent/src/transport/` (`tokio-tungstenite` with `rustls-tls-webpki-roots`).
+# The blocking client is used so this crate stays synchronous (no `tokio` runtime), matching the
+# rest of `canvas_edge_updater` and confining async to `edge/agent`'s transport thread per ADR 0009.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+# Test-only: the updater integration test drives the same `LocalIpcBroker` the Agent daemon uses
+# to prove the updater client reaches it over a real socket. This is a dev-dependency only -- the
+# production updater crate must NOT depend on the Agent (ADR 0008: the updater must recover the
+# Agent even when the Agent cannot start, so it cannot share the Agent's failure modes).
+canvas-edge-agent = { path = "../agent" }

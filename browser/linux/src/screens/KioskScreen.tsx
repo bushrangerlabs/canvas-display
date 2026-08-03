@@ -23,11 +23,12 @@ import { nanoid } from 'nanoid';
 import { clearConfig, saveDeviceId, type AppConfig } from '../store/config';
 import { useServerSocket } from '../hooks/useServerSocket';
 import SettingsScreen from './SettingsScreen';
+import { cachePage, loadActiveCachedPage } from '../store/pageLibrary';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PagePanel {
-  id: number;
+  id: string;
   name: string;
   x: number;   // 0-100 %
   y: number;
@@ -36,6 +37,11 @@ interface PagePanel {
   view_id: string | null;
   url: string | null;
   position: number;
+  content_type?: 'url' | 'scene';
+  scene_id?: string | null;
+  z_index?: number;
+  visible?: boolean;
+  opacity?: number;
 }
 
 interface FloatingConfig {
@@ -47,7 +53,7 @@ interface FloatingConfig {
 }
 
 interface LoadedPage {
-  page_id: number;
+  page_id: string;
   panels: PagePanel[];
   floating_config: FloatingConfig | null;
 }
@@ -153,6 +159,9 @@ async function closeAllPanelWindows() {
 }
 
 function resolvePanelUrl(panel: PagePanel, config: AppConfig, _deviceId: string): string {
+  if (panel.content_type === 'scene' && panel.scene_id) {
+    return `${config.serverUrl.replace(/\/$/, '')}/display/scenes/${encodeURIComponent(panel.scene_id)}`;
+  }
   if (panel.url) return panel.url;
   // view_id is a canvas-ui-hacs view slug — load via the kiosk panel
   if (panel.view_id) return `${config.haUrl}/canvas-ui-static/kiosk.html#${encodeURIComponent(panel.view_id)}`;
@@ -171,6 +180,23 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   const [showQuitDialog, setShowQuitDialog] = useState(false);
   const retryTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deviceId, setDeviceId]     = useState(config.deviceId ?? '');
+  const [controlChannel, setControlChannel] = useState({
+    serverUrl: config.serverUrl,
+    deviceId: config.deviceId ?? '',
+  });
+
+  useEffect(() => {
+    invoke<{ serverUrl?: string | null; deviceId?: string | null }>('core_control_config')
+      .then(remote => {
+        if (remote.serverUrl) {
+          setControlChannel({
+            serverUrl: remote.serverUrl.replace(/\/$/, ''),
+            deviceId: remote.deviceId || config.deviceId || '',
+          });
+        }
+      })
+      .catch(() => { /* browser/dev mode keeps the local channel */ });
+  }, [config.serverUrl, config.deviceId]);
   const [loadedPage, setLoadedPage] = useState<LoadedPage | null>(null);
 
   // HA ingress session for Lovelace cards in panel windows
@@ -256,35 +282,56 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   // ── Wait for server ready with automatic retry ───────────────────────
   // Polls /health until the server responds — handles the kiosk starting
   // before the server (sidecar) is ready.
+  // Also tries to resolve the device identity from the Edge Agent IPC socket.
   useEffect(() => {
     let cancelled = false;
 
-    // Ensure we have a stable local device ID (no server round-trip needed)
-    const localId = config.deviceId || nanoid(10);
-    if (!config.deviceId) {
-      saveDeviceId(localId);
-      setDeviceId(localId);
-    }
-
-    async function attempt(n: number) {
+    async function resolveDeviceId(): Promise<string> {
+      // Try the Edge Agent IPC socket first
       try {
-        const res = await fetch(`${config.serverUrl}/health`);
-        if (!res.ok) throw new Error(`Server not ready: ${res.status}`);
-        if (cancelled) return;
-        setRetryCount(0);
-        setAppState('ready');
+        const { invoke } = await import('@tauri-apps/api/core');
+        const identityJson: string = await invoke('get_device_identity');
+        const identity = JSON.parse(identityJson);
+        if (identity.device_id) {
+          console.log('[KioskScreen] resolved device identity from Edge Agent:', identity.device_id);
+          return identity.device_id;
+        }
       } catch (e) {
-        if (cancelled) return;
-        const delay = Math.min(2000 * Math.pow(1.5, n), 30000); // 2s→30s cap
-        setRetryCount(n + 1);
-        setErrorMsg(String(e));
-        retryTimerRef.current = setTimeout(() => {
-          if (!cancelled) attempt(n + 1);
-        }, delay);
+        console.warn('[KioskScreen] Edge Agent IPC not available, using fallback ID:', e);
       }
+      // Fallback to stored or generated ID
+      const localId = config.deviceId || nanoid(10);
+      if (!config.deviceId) {
+        saveDeviceId(localId);
+      }
+      return localId;
     }
 
-    attempt(0);
+    resolveDeviceId().then(id => {
+      if (cancelled) return;
+      setDeviceId(id);
+
+      async function attempt(n: number) {
+        try {
+          const res = await fetch(`${config.serverUrl}/health`);
+          if (!res.ok) throw new Error(`Server not ready: ${res.status}`);
+          if (cancelled) return;
+          setRetryCount(0);
+          setAppState('ready');
+        } catch (e) {
+          if (cancelled) return;
+          const delay = Math.min(2000 * Math.pow(1.5, n), 30000);
+          setRetryCount(n + 1);
+          setErrorMsg(String(e));
+          retryTimerRef.current = setTimeout(() => {
+            if (!cancelled) attempt(n + 1);
+          }, delay);
+        }
+      }
+
+      attempt(0);
+    });
+
     return () => {
       cancelled = true;
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
@@ -301,7 +348,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     const ox = window.screenX ?? 0;
     const oy = window.screenY ?? 0;
 
-    for (const panel of panels) {
+    for (const panel of [...panels].sort((a, b) => (a.z_index ?? a.position) - (b.z_index ?? b.position))) {
       const label = `panel-${panel.id}`;
       const directUrl = resolvePanelUrl(panel, config, deviceId);
 
@@ -316,7 +363,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         width:         pct(panel.w, sw),
         height:        pct(panel.h, sh),
         title:         panel.name,
-        visible:       true,
+        visible:       panel.visible !== false,
         ingressSession: null,
         initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
       }).catch(e => console.error(`[${label}] create_panel_webview error:`, e));
@@ -343,10 +390,133 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     }
   }, [config, deviceId]);
 
+  // Offline boot: restore the last fully received page definition immediately.
+  // A subsequent Core load_page command replaces it and refreshes the cache.
+  useEffect(() => {
+    let cancelled = false;
+    void loadActiveCachedPage<PagePanel, FloatingConfig>().then(async cached => {
+      if (!cached || cancelled) return;
+      const page: LoadedPage = {
+        page_id: cached.page_id,
+        panels: cached.panels,
+        floating_config: cached.floating_config,
+      };
+      setLoadedPage(page);
+      await openPanelWindows(page.panels, page.floating_config);
+    });
+    return () => { cancelled = true; };
+  }, [openPanelWindows]);
+
+  const openFloatingUrl = useCallback(async (url: string, fullscreen = false) => {
+    const existing = await WebviewWindow.getByLabel('floating');
+    if (existing) {
+      if (fullscreen) {
+        await existing.close().catch(() => {});
+      } else {
+        await invoke('navigate_webview', { label: 'floating', url }).catch(console.error);
+        await existing.show().catch(() => {});
+        return;
+      }
+    }
+    const fc = loadedPage?.floating_config;
+    const sw = window.screen.width;
+    const sh = window.screen.height;
+    await invoke('create_panel_webview', {
+      label:         'floating',
+      url,
+      x:             fullscreen ? (window.screenX ?? 0) : (window.screenX ?? 0) + pct(fc?.x ?? 10, sw),
+      y:             fullscreen ? (window.screenY ?? 0) : (window.screenY ?? 0) + pct(fc?.y ?? 10, sh),
+      width:         fullscreen ? sw : pct(fc?.w ?? 80, sw),
+      height:        fullscreen ? sh : pct(fc?.h ?? 80, sh),
+      title:         'Floating',
+      visible:       true,
+      ingressSession: null,
+      initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+    }).catch(e => console.error('[floating] create_panel_webview error:', e));
+  }, [config.haToken, config.haUrl, loadedPage]);
+
   // ── WS command handler ───────────────────────────────────────────────────
-  const handleCommand = useCallback(async (cmd: Record<string, any>) => {
+  const handleCommand = useCallback(async (
+    cmd: Record<string, any>,
+    respond: (message: Record<string, unknown>) => void = () => {},
+  ) => {
     console.log('[KioskScreen] command:', cmd);
     switch (cmd.type) {
+      case 'device_request': {
+        const requestId = String(cmd.request_id ?? '');
+        try {
+          let result: unknown;
+          if (cmd.action === 'edge_ipc') {
+            const method = String(cmd.payload?.method ?? '');
+            if (!method.startsWith('audio.')) throw new Error(`Device IPC method is not allowed: ${method}`);
+            const raw: string = await invoke('edge_ipc', {
+              method,
+              arguments: cmd.payload?.arguments ?? {},
+            });
+            result = raw;
+            try { result = JSON.parse(raw); } catch { /* opaque string result */ }
+          } else if (cmd.action === 'device_http') {
+            const path = String(cmd.payload?.path ?? '');
+            const allowed = new Set([
+              '/api/settings',
+              '/api/settings/voice/restart',
+              '/api/settings/voice/wakewords',
+              '/api/settings/audio/devices',
+              '/api/audio/test-mic',
+              '/api/audio/test-speaker',
+              '/api/audio/test-cue',
+              '/api/settings/voice/cue-upload',
+              '/api/voice/wakeword-test',
+              '/api/media/play',
+              '/api/media/control',
+            ]);
+            if (!allowed.has(path)) throw new Error(`Device HTTP path is not allowed: ${path}`);
+            const response = await fetch(`http://127.0.0.1:3100${path}`, {
+              method: String(cmd.payload?.http_method ?? 'POST'),
+              headers: { 'content-type': 'application/json' },
+              body: cmd.payload?.body === undefined ? undefined : JSON.stringify(cmd.payload.body),
+            });
+            result = await response.json();
+            if (!response.ok) {
+              const detail = result && typeof result === 'object' && 'error' in result
+                ? String((result as { error?: unknown }).error)
+                : `HTTP ${response.status}`;
+              throw new Error(detail);
+            }
+            if (path === '/api/media/play') {
+              const playerUrl = result && typeof result === 'object' && 'url' in result
+                ? String((result as { url?: unknown }).url ?? '')
+                : '';
+              if (!playerUrl) throw new Error('Device media response did not include a player URL');
+              const fullscreen = Boolean(result && typeof result === 'object'
+                && 'backend' in result
+                && String((result as { backend?: unknown }).backend) === 'youtube_iframe_api');
+              await openFloatingUrl(playerUrl, fullscreen);
+            }
+            if (path === '/api/media/control') {
+              const action = String(cmd.payload?.body?.action ?? '');
+              if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
+                throw new Error(`Unsupported YouTube control: ${action}`);
+              }
+              await invoke('control_youtube_webview', { label: 'floating', action });
+              if (action === 'stop') {
+                await invoke('close_webview', { label: 'floating' }).catch(console.error);
+              }
+            }
+          } else {
+            throw new Error(`Unsupported device action: ${cmd.action}`);
+          }
+          respond({ type: 'device_response', request_id: requestId, ok: true, result });
+        } catch (error) {
+          respond({
+            type: 'device_response',
+            request_id: requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
 
       case 'load_view': {
         // New architecture: server assigns a page with a canvas_view_id.
@@ -381,17 +551,18 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       case 'load_page': {
         const pageData = cmd.page_data as { panels: PagePanel[]; floating_config: FloatingConfig | null };
         const page: LoadedPage = {
-          page_id:        cmd.page_id as number,
+          page_id:        String(cmd.page_id),
           panels:         pageData?.panels ?? [],
           floating_config: pageData?.floating_config ?? null,
         };
         setLoadedPage(page);
+        await cachePage(page);
         await openPanelWindows(page.panels, page.floating_config);
         break;
       }
 
       case 'navigate_panel': {
-        const panelId = cmd.panel_id as number;
+        const panelId = cmd.panel_id as string;
         const url     = cmd.url as string;
         if (panelId != null && url) {
           await invoke('navigate_webview', { label: `panel-${panelId}`, url }).catch(console.error);
@@ -399,32 +570,53 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         break;
       }
 
+      case 'panel.patch': {
+        const panelId = cmd.panel_id as string;
+        const content = cmd.content as { type?: string; url?: string; scene_id?: string } | undefined;
+        const panel = loadedPage?.panels.find(item => item.id === panelId);
+        if (panel && content) {
+          panel.content_type = content.type === 'scene' ? 'scene' : 'url';
+          panel.url = content.url ?? null;
+          panel.scene_id = content.scene_id ?? null;
+          await invoke('navigate_webview', {
+            label: `panel-${panelId}`,
+            url: resolvePanelUrl(panel, config, deviceId),
+          }).catch(console.error);
+        }
+        const window = await WebviewWindow.getByLabel(`panel-${panelId}`);
+        if (typeof cmd.visible === 'boolean') {
+          await (cmd.visible ? window?.show() : window?.hide())?.catch(() => {});
+        }
+        break;
+      }
+
+      case 'panel.reload': {
+        const panelId = cmd.panel_id as string;
+        const panel = loadedPage?.panels.find(item => item.id === panelId);
+        if (panel) {
+          await invoke('navigate_webview', {
+            label: `panel-${panelId}`,
+            url: resolvePanelUrl(panel, config, deviceId),
+          }).catch(console.error);
+        }
+        break;
+      }
+
       case 'show_floating': {
         const url = cmd.url as string | undefined;
-        const existing = await WebviewWindow.getByLabel('floating');
-        if (url && existing) {
-          await invoke('navigate_webview', { label: 'floating', url }).catch(console.error);
-        } else if (url && !existing) {
-          const fc = loadedPage?.floating_config;
-          const sw = window.screen.width;
-          const sh = window.screen.height;
-          const ox = window.screenX ?? 0;
-          const oy = window.screenY ?? 0;
-          await invoke('create_panel_webview', {
-            label:         'floating',
-            url,
-            x:             ox + pct(fc?.x ?? 10, sw),
-            y:             oy + pct(fc?.y ?? 10, sh),
-            width:         pct(fc?.w ?? 80, sw),
-            height:        pct(fc?.h ?? 80, sh),
-            title:         'Floating',
-            visible:       true,
-            ingressSession: null,
-            initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-          }).catch(e => console.error('[floating] create_panel_webview error:', e));
-          return;
+        if (url) await openFloatingUrl(url);
+        break;
+      }
+
+      case 'youtube_pause':
+      case 'youtube_resume':
+      case 'youtube_stop':
+      case 'youtube_next': {
+        const action = cmd.type.replace('youtube_', '');
+        await invoke('control_youtube_webview', { label: 'floating', action }).catch(console.error);
+        if (action === 'stop') {
+          await invoke('close_webview', { label: 'floating' }).catch(console.error);
         }
-        WebviewWindow.getByLabel('floating').then(w => w?.show().catch(() => {}));
         break;
       }
 
@@ -460,11 +652,11 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         break;
       }
     }
-  }, [openPanelWindows, loadedPage]);
+  }, [openPanelWindows, openFloatingUrl, loadedPage]);
 
   useServerSocket({
-    serverUrl: config.serverUrl,
-    deviceId,
+    serverUrl: controlChannel.serverUrl,
+    deviceId: controlChannel.deviceId || deviceId,
     enabled:   appState === 'ready' && !!deviceId,
     onCommand: handleCommand,
   });

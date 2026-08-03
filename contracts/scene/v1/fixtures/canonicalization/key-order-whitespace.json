@@ -1,0 +1,50 @@
+ {
+    "offline" : {
+      "max_stale_seconds" : 86400,
+      "schedule_eligible" : true,
+      "eligible" : true
+    },
+    "security" : {
+      "allow_iframes" : false,
+      "allow_raw_html" : false,
+      "allowed_origins" : [
+        "https://homeassistant.local",
+        "http://127.0.0.1:43121"
+      ]
+    },
+    "entity_subscriptions" : [
+      {
+        "fields" : [ "state", "attributes.unit_of_measurement" ],
+        "entity_id" : "sensor.living_room_temperature"
+      }
+    ],
+    "assets" : [
+      {
+        "logical_path" : "assets/background.png",
+        "media_type" : "image/png",
+        "size" : 8192,
+        "hash" : "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    ],
+    "document" : {
+      "logical_path" : "scene.json",
+      "media_type" : "application/vnd.canvas.scene+json",
+      "size" : 4096,
+      "hash" : "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "canvas" : {
+      "background" : "#000000",
+      "height" : 1080,
+      "width" : 1920
+    },
+    "requirements" : {
+      "capabilities" : [ "canvas-scene-v1", "entity-state-v1" ],
+      "minimum_version" : "0.3.0"
+    },
+    "manifest_digest" : "sha256:b55c6f69f62c6116bfb9e70fc13304162ef8aca655fa94bbfe88fb13527bd390",
+    "published_at" : "2026-07-18T12:00:00.000Z",
+    "revision_number" : 1,
+    "revision_id" : "0190f400-0000-7000-8000-000000000002",
+    "scene_id" : "0190f400-0000-7000-8000-000000000001",
+    "schema_version" : 1
+ }

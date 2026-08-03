@@ -1,0 +1,22 @@
+{
+  "schema": "contracts/device/v1/control-message.schema.json",
+  "fixtures": [
+    { "path": "contracts/device/v1/fixtures/valid/edge-hello.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/core-welcome.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/stream-ack.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/stream-reset.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/state-desired.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/state-reported.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/command-issue.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/command-received.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/command-completed.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/command-rejected.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/valid/protocol-error.json", "valid": true },
+    { "path": "contracts/device/v1/fixtures/invalid/edge-hello-missing-protocol.json", "valid": false },
+    { "path": "contracts/device/v1/fixtures/invalid/stream-ack-zero-sequence.json", "valid": false },
+    { "path": "contracts/device/v1/fixtures/invalid/state-desired-bad-digest.json", "valid": false },
+    { "path": "contracts/device/v1/fixtures/invalid/state-reported-invalid-status.json", "valid": false },
+    { "path": "contracts/device/v1/fixtures/invalid/command-issue-wrong-class.json", "valid": false },
+    { "path": "contracts/device/v1/fixtures/invalid/command-issue-bad-expiry.json", "valid": false }
+  ]
+}

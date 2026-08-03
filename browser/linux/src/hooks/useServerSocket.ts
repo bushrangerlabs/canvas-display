@@ -11,7 +11,7 @@ interface Options {
   serverUrl: string;
   deviceId: string;
   enabled: boolean;
-  onCommand: (cmd: ServerCommand) => void;
+  onCommand: (cmd: ServerCommand, respond: (message: Record<string, unknown>) => void) => void;
 }
 
 /**
@@ -52,7 +52,9 @@ export function useServerSocket({ serverUrl, deviceId, enabled, onCommand }: Opt
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
-          onCommandRef.current(msg);
+          onCommandRef.current(msg, response => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(response));
+          });
         } catch { /* ignore malformed */ }
       };
 

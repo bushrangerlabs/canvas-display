@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "manifest_digest": "sha256:6b5b979bed41b32f3e39593a9ec9c2958902e457bcce7bd6e7cce981e9755ea6",
+  "nested": {
+    "note": "the nested member remains digest-significant",
+    "manifest_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }
+}

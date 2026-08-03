@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "valid": [
+    {
+      "name": "key-order-and-whitespace-invariance",
+      "file": "key-order-whitespace.json",
+      "expected_digest": "sha256:b55c6f69f62c6116bfb9e70fc13304162ef8aca655fa94bbfe88fb13527bd390"
+    },
+    {
+      "name": "unicode-string-handling",
+      "file": "unicode-string.json",
+      "expected_digest": "sha256:ae97951f6f914d42732b603b249bc1a41a4210d15f85b908f0fd776a58517235"
+    },
+    {
+      "name": "omit-only-top-level-manifest-digest",
+      "file": "nested-manifest-digest.json",
+      "expected_digest": "sha256:6b5b979bed41b32f3e39593a9ec9c2958902e457bcce7bd6e7cce981e9755ea6",
+      "expected_canonical": "{\"nested\":{\"manifest_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"note\":\"the nested member remains digest-significant\"},\"schema_version\":1}"
+    }
+  ],
+  "mismatch": [
+    {
+      "name": "array-order-significance",
+      "file": "array-order.json",
+      "expected_digest": "sha256:a1b4e28e4b265baecd45607f4d7ec983f6dd6a056bd3c2c42fd711f431582067",
+      "expected_error": "digest_mismatch"
+    },
+    {
+      "name": "field-mutation",
+      "file": "field-mutation.json",
+      "expected_digest": "sha256:ec096efca818098d487b1eb98e4ff2694f3d2e0337b58d01cbea641c2e324166",
+      "expected_error": "digest_mismatch"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "fractional-number",
+      "file": "invalid-float.json",
+      "expected_error": "invalid_number"
+    },
+    {
+      "name": "non-safe-integer",
+      "file": "invalid-unsafe-integer.json",
+      "expected_error": "invalid_number"
+    },
+    {
+      "name": "integer-outside-scene-schema-bound",
+      "file": "invalid-schema-bound-integer.json",
+      "expected_error": "invalid_number"
+    },
+    {
+      "name": "duplicate-object-member",
+      "file": "invalid-duplicate-key.json",
+      "expected_error": "duplicate_key"
+    },
+    {
+      "name": "unpaired-unicode-surrogate",
+      "file": "invalid-unicode.json",
+      "expected_error": "invalid_unicode"
+    }
+  ]
+}

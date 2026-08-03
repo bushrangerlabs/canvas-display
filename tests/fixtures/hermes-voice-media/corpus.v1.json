@@ -1,0 +1,326 @@
+{
+  "schema_version": "canvas.hermes-voice-media.corpus/v1",
+  "description": "Sanitized Phase 0 intent, action, safety, transport, and playback expectations derived from Canvas Display Hermes voice/media behavior and accepted Core/Intelligence/Edge gates.",
+  "cases": [
+    {
+      "id": "youtube-title-i-should-be-so-lucky",
+      "title": "YouTube title playback resolves I Should Be So Lucky as search text",
+      "tags": ["youtube-title", "media-playback", "edge-playing"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play I Should Be So Lucky on YouTube"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_query", "value": "I Should Be So Lucky" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-title-radioactive-is-search-text",
+      "title": "An all-letter eleven-character title remains a title rather than a video id",
+      "tags": ["youtube-title", "media-playback", "youtube-id-ambiguity"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play Radioactive on YouTube"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_query", "value": "Radioactive" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-url-direct-short",
+      "title": "A direct youtu.be URL preserves its video id",
+      "tags": ["youtube-url-direct", "media-playback"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play https://youtu.be/qK6IGnNeHn4"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_video", "value": "qK6IGnNeHn4" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-url-malformed-watch-path",
+      "title": "A recoverable malformed watch path preserves its video id",
+      "tags": ["youtube-url-malformed", "youtube-url-direct", "media-playback"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play https://www.youtube.com/watch/qK6IGnNeHn4"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_video", "value": "qK6IGnNeHn4" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-url-search-results",
+      "title": "An explicit YouTube search request remains navigation/search rather than playback",
+      "tags": ["youtube-url-search", "navigation", "youtube-search"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Search YouTube for I Should Be So Lucky"
+      },
+      "expected": {
+        "intent": "media.search.youtube",
+        "actions": [
+          {
+            "kind": "media.search",
+            "disposition": "execute",
+            "target": { "kind": "youtube_query", "value": "I Should Be So Lucky" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-url-nested-malformed-search-play",
+      "title": "A nested malformed results URL is unwrapped to a playable title query",
+      "tags": ["youtube-url-malformed", "youtube-url-search", "youtube-title", "media-playback"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play https://www.youtube.com/results?search_query=https%3A%2F%2Fwww..com%2Fresults%3Fsearch_query%3DI%2BShould%2BBe%2BSo%2BLucky"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_query", "value": "I Should Be So Lucky" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "youtube-url-embed",
+      "title": "A YouTube embed URL preserves its video id",
+      "tags": ["youtube-url-embed", "media-playback"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play https://www.youtube.com/embed/qK6IGnNeHn4?autoplay=1"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_video", "value": "qK6IGnNeHn4" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "clarification-ambiguous-website",
+      "title": "An ambiguous website request asks for clarification and performs no action",
+      "tags": ["clarification", "no-action", "navigation"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Open the Mercury site",
+        "context": { "known_targets": ["Mercury News", "Mercury weather portal"] }
+      },
+      "expected": {
+        "intent": "conversation.clarify",
+        "actions": [],
+        "safety": { "decision": "no_action", "risk": "none" },
+        "result": { "state": "clarification" }
+      }
+    },
+    {
+      "id": "clarification-cancel-no-action",
+      "title": "Cancelling an outstanding clarification resets the turn without action",
+      "tags": ["clarification", "no-action", "conversation-reset"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Never mind",
+        "context": { "awaiting_clarification": true }
+      },
+      "expected": {
+        "intent": "conversation.cancel",
+        "actions": [],
+        "safety": { "decision": "no_action", "risk": "none" },
+        "result": { "state": "no_action" }
+      }
+    },
+    {
+      "id": "general-answer-no-action",
+      "title": "A general knowledge answer does not invent a Canvas or HA action",
+      "tags": ["no-action", "general-answer"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "What is the capital of Australia?"
+      },
+      "expected": {
+        "intent": "answer.general",
+        "actions": [],
+        "safety": { "decision": "no_action", "risk": "none" },
+        "result": { "state": "no_action" }
+      }
+    },
+    {
+      "id": "navigation-explicit-url",
+      "title": "An explicit public URL navigates the requested panel",
+      "tags": ["navigation", "explicit-url"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Open https://example.com/status in the main panel"
+      },
+      "expected": {
+        "intent": "display.navigate",
+        "actions": [
+          {
+            "kind": "display.navigate",
+            "disposition": "execute",
+            "target": { "kind": "url", "value": "https://example.com/status", "panel": "main" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "home-assistant-harmless-light-on",
+      "title": "A harmless allowlisted HA light command may execute",
+      "tags": ["home-assistant-harmless", "ha-control", "typed-tool"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Turn on the reading lamp",
+        "context": { "voice_principal": "room_device" }
+      },
+      "expected": {
+        "intent": "home_assistant.control",
+        "actions": [
+          {
+            "kind": "home_assistant.call_service",
+            "disposition": "execute",
+            "target": {
+              "kind": "home_assistant_service",
+              "entity_id": "light.reading_lamp",
+              "service": "turn_on"
+            }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "succeeded" }
+      }
+    },
+    {
+      "id": "home-assistant-sensitive-unlock-confirmation",
+      "title": "A sensitive HA unlock request is held for explicit confirmation",
+      "tags": ["home-assistant-sensitive", "ha-control", "confirmation", "safety-critical"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Unlock the front door",
+        "context": { "voice_principal": "room_device", "authenticated_human": false }
+      },
+      "expected": {
+        "intent": "home_assistant.control",
+        "actions": [
+          {
+            "kind": "home_assistant.call_service",
+            "disposition": "propose",
+            "target": {
+              "kind": "home_assistant_service",
+              "entity_id": "lock.front_door",
+              "service": "unlock"
+            }
+          }
+        ],
+        "safety": { "decision": "require_confirmation", "risk": "high" },
+        "result": { "state": "awaiting_confirmation" }
+      }
+    },
+    {
+      "id": "voice-asr-timeout",
+      "title": "ASR timeout returns a bounded recoverable no-action result and restores audio focus",
+      "tags": ["asr-timeout", "no-action", "audio-focus", "degraded-response"],
+      "stimulus": {
+        "kind": "audio",
+        "audio_fixture": "synthetic:asr-timeout",
+        "context": { "media_was_playing": true }
+      },
+      "expected": {
+        "intent": "voice.asr_timeout",
+        "actions": [],
+        "safety": { "decision": "no_action", "risk": "none" },
+        "result": { "state": "recoverable_error", "code": "asr_timeout" }
+      }
+    },
+    {
+      "id": "hermes-transport-websocket-http-fallback",
+      "title": "Hermes falls back from WebSocket transport to its HTTP API without changing turn semantics",
+      "tags": ["hermes-transport-fallback", "no-action", "general-answer"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "What time is it?"
+      },
+      "expected": {
+        "intent": "answer.general",
+        "actions": [],
+        "safety": { "decision": "no_action", "risk": "none" },
+        "result": { "state": "no_action" },
+        "transport": { "fallback": "used", "selected": "http" }
+      }
+    },
+    {
+      "id": "youtube-webview-open-is-not-playing",
+      "title": "Opening the YouTube WebView without Edge playing evidence remains pending",
+      "tags": ["media-playback", "webview-not-playing", "youtube-url-direct"],
+      "stimulus": {
+        "kind": "text",
+        "utterance": "Play https://www.youtube.com/watch?v=abc123DEF45"
+      },
+      "expected": {
+        "intent": "media.play.youtube",
+        "actions": [
+          {
+            "kind": "media.play",
+            "disposition": "execute",
+            "target": { "kind": "youtube_video", "value": "abc123DEF45" }
+          }
+        ],
+        "safety": { "decision": "allow", "risk": "low" },
+        "result": { "state": "pending" }
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "014-pause-media",
+  "transcript": "pause the music in the living room",
+  "expected_intent": "media_pause",
+  "expected_tool_calls": [
+    {
+      "tool": "media.pause",
+      "arguments": {
+        "device": "living_room_speaker"
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["media_player.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["media_player.living_room_speaker"]
+}

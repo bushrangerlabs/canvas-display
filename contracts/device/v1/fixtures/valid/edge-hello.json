@@ -1,0 +1,27 @@
+{
+  "type": "edge.hello",
+  "message_id": "0190f000-0000-7000-8000-000000000001",
+  "sent_at": "2026-07-18T10:00:00.000Z",
+  "protocol": {
+    "minimum": 1,
+    "maximum": 1
+  },
+  "agent": {
+    "version": "0.3.0",
+    "platform": "linux",
+    "architecture": "arm64"
+  },
+  "resume": {
+    "core_stream_epoch": "0190efff-0000-7000-8000-000000000010",
+    "edge_stream_epoch": "0190efff-0000-7000-8000-000000000011",
+    "last_core_sequence": 0,
+    "last_edge_sequence_acked": 0
+  },
+  "device_id": "0190f000-0000-7000-8000-0000000000aa",
+  "capabilities": {
+    "renderer": ["canvas-scene-v1", "webview"],
+    "media": ["youtube-iframe", "mpv", "hls"],
+    "voice": ["wakeword-local", "opus-wss"],
+    "hardware": ["brightness", "dpms"]
+  }
+}

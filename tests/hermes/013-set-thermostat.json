@@ -1,0 +1,26 @@
+{
+  "id": "013-set-thermostat",
+  "transcript": "set the thermostat to 72 degrees",
+  "expected_intent": "climate_set",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "climate",
+        "service": "set_temperature",
+        "service_data": {
+          "entity_id": "climate.thermostat",
+          "temperature": 72
+        }
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["climate.*"],
+    "max_intensity": null,
+    "temperature_range": [60, 90]
+  },
+  "expects_clarification": false,
+  "expected_entities": ["climate.thermostat"]
+}

@@ -1,192 +1,171 @@
 /**
- * LogsPage — live server log viewer via SSE.
+ * LogsPage — live log viewer.
  *
- * Connects to GET /api/logs/stream and displays lines as they arrive,
- * auto-scrolling to the bottom. Supports filtering by keyword and
- * pausing the auto-scroll so you can inspect a specific line.
+ * Loads Core's bounded in-memory history and follows its authenticated SSE
+ * stream. This shows actual application/request logs rather than browser
+ * command traffic.
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  Box, Typography, TextField, IconButton, Tooltip, Chip, Stack,
-  ToggleButton, ToggleButtonGroup,
+  Box, Typography, IconButton, Tooltip, Chip, Stack, TextField, Alert,
 } from '@mui/material';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DownloadIcon from '@mui/icons-material/Download';
+import { getApiBase } from '../api/client';
+import { PageHeader } from '../components/ui';
 
 const MAX_DISPLAY = 2000;
 
-type Level = 'all' | 'err' | 'wrn';
-
-function lineLevel(line: string): 'err' | 'wrn' | 'info' {
-  if (line.includes('[ERR]')) return 'err';
-  if (line.includes('[WRN]')) return 'wrn';
-  return 'info';
-}
-
-function levelColor(lvl: 'err' | 'wrn' | 'info'): string {
-  if (lvl === 'err') return '#f28b82';
-  if (lvl === 'wrn') return '#fdd663';
-  return '#c3c9d4';
+interface LogLine {
+  ts: number;
+  text: string;
 }
 
 export default function LogsPage() {
-  const [lines, setLines] = useState<string[]>([]);
-  const [filter, setFilter] = useState('');
-  const [level, setLevel] = useState<Level>('all');
+  const [lines, setLines] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [filter, setFilter] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-  // SSE connection
   useEffect(() => {
-    const es = new EventSource('/api/logs/stream');
+    let closed = false;
+    let reconnectTimer: number | undefined;
 
-    es.onopen = () => setConnected(true);
-
-    es.onmessage = (e) => {
-      if (pausedRef.current) return;
+    async function connect() {
+      if (closed) return;
       try {
-        const line: string = JSON.parse(e.data);
+        const historyResponse = await fetch(`${getApiBase()}/api/admin/logs/history`, {
+          credentials: 'include',
+        });
+        if (!historyResponse.ok) throw new Error(`Log history returned HTTP ${historyResponse.status}`);
+        const history = await historyResponse.json() as { lines?: string[] };
+        if (!pausedRef.current) {
+          const now = Date.now();
+          setLines((history.lines ?? []).slice(-MAX_DISPLAY).map((text, index, values) => ({
+            ts: now - (values.length - index),
+            text,
+          })));
+        }
+      } catch {
+        setConnected(false);
+        reconnectTimer = window.setTimeout(connect, 3000);
+        return;
+      }
+
+      const stream = new EventSource(`${getApiBase()}/api/admin/logs/stream`, { withCredentials: true });
+      eventSourceRef.current = stream;
+      stream.onopen = () => setConnected(true);
+      stream.onerror = () => {
+        setConnected(false);
+        stream.close();
+        if (!closed) reconnectTimer = window.setTimeout(connect, 3000);
+      };
+      stream.onmessage = event => {
+        if (pausedRef.current) return;
+        let text = event.data;
+        try { text = JSON.parse(event.data) as string; } catch { /* use raw SSE data */ }
         setLines(prev => {
-          const next = [...prev, line];
+          const next = [...prev, { ts: Date.now(), text }];
           return next.length > MAX_DISPLAY ? next.slice(next.length - MAX_DISPLAY) : next;
         });
-      } catch { /* ignore malformed */ }
-    };
+      };
+    }
 
-    es.onerror = () => {
-      setConnected(false);
-      // EventSource auto-reconnects
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSourceRef.current?.close();
     };
-
-    return () => es.close();
   }, []);
 
-  // Auto-scroll
   useEffect(() => {
-    if (!paused) {
-      bottomRef.current?.scrollIntoView({ behavior: 'instant' });
-    }
+    if (!paused) bottomRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [lines, paused]);
 
   const handleClear = useCallback(() => setLines([]), []);
-
   const handleDownload = useCallback(() => {
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    // Core log lines already contain their authoritative timestamp. Do not prepend
+    // the browser receipt time (history is delivered in a burst during page load).
+    const blob = new Blob([lines.map(l => l.text).join('\n')], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `canvas-server-${new Date().toISOString().slice(0, 19)}.log`;
+    a.download = `canvas-core-${new Date().toISOString().slice(0, 19)}.log`;
     a.click();
     URL.revokeObjectURL(url);
   }, [lines]);
 
-  const lowerFilter = filter.toLowerCase();
-  const displayed = lines.filter(line => {
-    if (level === 'err' && lineLevel(line) !== 'err') return false;
-    if (level === 'wrn' && lineLevel(line) === 'info') return false;
-    if (lowerFilter && !line.toLowerCase().includes(lowerFilter)) return false;
-    return true;
-  });
+  const lower = filter.toLowerCase();
+  const displayed = lines.filter(l => !lower || l.text.toLowerCase().includes(lower));
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', p: 2, gap: 1.5 }}>
-      {/* Header */}
-      <Stack direction="row" sx={{ alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, flex: 1 }}>Server Logs</Typography>
-        <Chip
-          size="small"
-          label={connected ? 'Live' : 'Reconnecting…'}
-          color={connected ? 'success' : 'warning'}
-          variant="outlined"
-          sx={{ fontSize: 11 }}
-        />
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {displayed.length} / {lines.length} lines
-        </Typography>
-      </Stack>
-
-      {/* Toolbar */}
-      <Stack direction="row" sx={{ alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-        <TextField
-          size="small"
-          placeholder="Filter…"
-          value={filter}
-          onChange={e => setFilter(e.target.value)}
-          sx={{ flex: 1, minWidth: 160, maxWidth: 340 }}
-          slotProps={{ htmlInput: { sx: { fontFamily: 'monospace', fontSize: 12 } } }}
-        />
-
-        <ToggleButtonGroup
-          size="small"
-          exclusive
-          value={level}
-          onChange={(_e, v) => { if (v) setLevel(v); }}
-        >
-          <ToggleButton value="all" sx={{ fontSize: 11, px: 1 }}>All</ToggleButton>
-          <ToggleButton value="wrn" sx={{ fontSize: 11, px: 1, color: '#fdd663' }}>Warn+</ToggleButton>
-          <ToggleButton value="err" sx={{ fontSize: 11, px: 1, color: '#f28b82' }}>Errors</ToggleButton>
-        </ToggleButtonGroup>
-
-        <Tooltip title={paused ? 'Resume auto-scroll' : 'Pause auto-scroll'}>
-          <IconButton size="small" onClick={() => setPaused(p => !p)} color={paused ? 'warning' : 'default'}>
-            {paused ? <PlayArrowIcon fontSize="small" /> : <PauseIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip title="Download log">
-          <IconButton size="small" onClick={handleDownload}>
-            <DownloadIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip title="Clear display">
-          <IconButton size="small" onClick={handleClear}>
-            <ClearAllIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Stack>
-
-      {/* Log output */}
-      <Box sx={{
-        flex: 1,
-        overflow: 'auto',
-        bgcolor: '#0a0a12',
-        borderRadius: 1,
-        border: '1px solid',
-        borderColor: 'divider',
-        p: 1.5,
-        fontFamily: '"JetBrains Mono", "Fira Code", "Consolas", monospace',
-        fontSize: 12,
-        lineHeight: 1.6,
-      }}>
-        {displayed.length === 0 && (
-          <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-            {lines.length === 0 ? 'Waiting for log lines…' : 'No lines match the filter.'}
-          </Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <PageHeader title="Logs" subtitle="Live application and request logs from Canvas Core" />
+      <Box sx={{ flex: 1, p: 2, display: 'flex', flexDirection: 'column', gap: 1.5, overflow: 'hidden' }}>
+        {!connected && (
+          <Alert severity="info" sx={{ bgcolor: 'rgba(108,99,255,0.1)' }}>
+            Connecting to the Core log stream…
+          </Alert>
         )}
-        {displayed.map((line, i) => {
-          const lvl = lineLevel(line);
-          return (
-            <Box
-              key={i}
-              component="div"
-              sx={{
-                color: levelColor(lvl),
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all',
-                py: '1px',
-              }}
-            >
-              {line}
+        <Stack direction="row" sx={{ alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Chip
+            size="small"
+            label={connected ? 'Live' : 'Reconnecting…'}
+            color={connected ? 'success' : 'warning'}
+            variant="outlined"
+            sx={{ fontSize: 11 }}
+          />
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            {displayed.length} / {lines.length} lines
+          </Typography>
+          <Box sx={{ flex: 1 }} />
+          <TextField
+            size="small"
+            placeholder="Filter…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            sx={{ minWidth: 160, maxWidth: 260 }}
+            slotProps={{ htmlInput: { sx: { fontFamily: 'monospace', fontSize: 12 } } }}
+          />
+          <Tooltip title={paused ? 'Resume' : 'Pause'}>
+            <IconButton size="small" onClick={() => setPaused(p => !p)} color={paused ? 'warning' : 'default'}>
+              {paused ? <PlayArrowIcon fontSize="small" /> : <PauseIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Download">
+            <IconButton size="small" onClick={handleDownload}><DownloadIcon fontSize="small" /></IconButton>
+          </Tooltip>
+          <Tooltip title="Clear">
+            <IconButton size="small" onClick={handleClear}><ClearAllIcon fontSize="small" /></IconButton>
+          </Tooltip>
+        </Stack>
+
+        <Box sx={{
+          flex: 1, overflow: 'auto', bgcolor: '#0a0a12', borderRadius: 1,
+          border: '1px solid', borderColor: 'divider', p: 1.5,
+          fontFamily: '"JetBrains Mono", "Fira Code", "Consolas", monospace',
+          fontSize: 12, lineHeight: 1.6,
+        }}>
+          {displayed.length === 0 && (
+            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+              {lines.length === 0 ? 'Waiting for messages…' : 'No lines match the filter.'}
+            </Typography>
+          )}
+          {displayed.map((l, i) => (
+            <Box key={i} component="div" sx={{ color: '#c3c9d4', whiteSpace: 'pre-wrap', wordBreak: 'break-all', py: '1px' }}>
+              <span style={{ color: '#6b6375' }}>[{new Date(l.ts).toLocaleTimeString()}]</span>{' '}
+              {l.text}
             </Box>
-          );
-        })}
-        <div ref={bottomRef} />
+          ))}
+          <div ref={bottomRef} />
+        </Box>
       </Box>
     </Box>
   );

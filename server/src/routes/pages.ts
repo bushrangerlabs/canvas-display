@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
 import { getDb } from '../db/index';
 import { broadcast } from '../ws/index';
+import { guardAdmin } from './admin-gate';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
   // POST /api/pages  { name, panels?: [...] }
   app.post<{ Body: any }>('/pages', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const { name = 'New Page', panels = [] } = req.body as any;
     const id = nanoid(10);
@@ -82,6 +84,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
   // PATCH /api/pages/:id  { name? }
   app.patch<{ Params: { id: string }; Body: any }>('/pages/:id', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const { id } = req.params;
     if (!db.prepare('SELECT id FROM pages WHERE id = ?').get(id))
@@ -105,6 +108,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
   // DELETE /api/pages/:id
   app.delete<{ Params: { id: string } }>('/pages/:id', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     if (!db.prepare('SELECT id FROM pages WHERE id = ?').get(req.params.id))
       return reply.code(404).send({ error: 'Page not found' });
@@ -113,7 +117,10 @@ export async function pageRoutes(app: FastifyInstance) {
   });
 
   // POST /api/pages/:id/push  — push load_page to all connected browser clients
+  // Gated as admin: this is an editor-initiated dispatch. The canonical
+  // command path remains POST /api/commands/page (not gated here).
   app.post<{ Params: { id: string } }>('/pages/:id/push', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     const page = getPageWithPanels(db, req.params.id);
     if (!page) return reply.code(404).send({ error: 'Page not found' });
@@ -127,6 +134,7 @@ export async function pageRoutes(app: FastifyInstance) {
 
   // POST /api/pages/:id/panels  { name, x, y, w, h, canvas_view_id?, url? }
   app.post<{ Params: { id: string }; Body: any }>('/pages/:id/panels', async (req, reply) => {
+    if (!guardAdmin(reply)) return;
     const db = getDb();
     if (!db.prepare('SELECT id FROM pages WHERE id = ?').get(req.params.id))
       return reply.code(404).send({ error: 'Page not found' });
@@ -156,6 +164,7 @@ export async function pageRoutes(app: FastifyInstance) {
   // PATCH /api/pages/:id/panels/:panelId
   app.patch<{ Params: { id: string; panelId: string }; Body: any }>(
     '/pages/:id/panels/:panelId', async (req, reply) => {
+      if (!guardAdmin(reply)) return;
       const db = getDb();
       if (!db.prepare('SELECT id FROM page_panels WHERE id=? AND page_id=?').get(req.params.panelId, req.params.id))
         return reply.code(404).send({ error: 'Panel not found' });
@@ -178,6 +187,7 @@ export async function pageRoutes(app: FastifyInstance) {
   // DELETE /api/pages/:id/panels/:panelId
   app.delete<{ Params: { id: string; panelId: string } }>(
     '/pages/:id/panels/:panelId', async (req, reply) => {
+      if (!guardAdmin(reply)) return;
       const db = getDb();
       if (!db.prepare('SELECT id FROM page_panels WHERE id=? AND page_id=?').get(req.params.panelId, req.params.id))
         return reply.code(404).send({ error: 'Panel not found' });

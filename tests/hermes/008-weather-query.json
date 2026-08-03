@@ -1,0 +1,20 @@
+{
+  "id": "008-weather-query",
+  "transcript": "what is the weather forecast for today",
+  "expected_intent": "weather_query",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.get_state",
+      "arguments": {
+        "entity_id": "weather.home"
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": true,
+    "entity_allowlist": ["weather.*", "sensor.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["weather.home"]
+}

@@ -1,0 +1,10 @@
+{
+  "type": "stream.reset",
+  "protocol": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000004",
+  "sent_at": "2026-07-18T10:00:01.100Z",
+  "previous_stream_epoch": "0190efff-0000-7000-8000-000000000010",
+  "new_stream_epoch": "0190efff-0000-7000-8000-000000000012",
+  "reason": "history_truncated",
+  "desired_revision": 1
+}

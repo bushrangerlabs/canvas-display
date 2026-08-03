@@ -1,0 +1,1 @@
+import{t as e}from"./react-BM-TEJNH.js";var t=e(e=>({config:null,currentViewId:null,setConfig:t=>e({config:t}),setCurrentView:t=>e({currentViewId:t}),updateWidget:(t,n,r)=>e(e=>e.config?{config:{...e.config,views:e.config.views.map(e=>e.id===t?{...e,widgets:e.widgets.map(e=>e.id===n?{...e,...r,config:r.config?{...e.config,...r.config}:e.config}:e)}:e)}}:e)}));export{t};

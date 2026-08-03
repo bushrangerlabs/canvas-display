@@ -1,0 +1,22 @@
+{
+  "type": "command.issue",
+  "protocol": 1,
+  "payload_version": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000030",
+  "stream_epoch": "0190efff-0000-7000-8000-000000000010",
+  "sequence": 2,
+  "sent_at": "2026-07-18T10:00:03.000Z",
+  "expires_at": "2026-07-18T10:05:03.000Z",
+  "correlation_id": "0190f000-0000-7000-8000-000000000031",
+  "payload": {
+    "command_id": "0190f000-0000-7000-8000-000000000032",
+    "idempotency_key": "diagnostics-echo-1",
+    "request_digest": "sha256:14936abe504f227d7748780024d679125eadb53c069397bcd5f61fca698c1c4f",
+    "kind": "diagnostics.echo",
+    "execution_class": "non_repeatable",
+    "parameters": { "message": "hello edge" },
+    "created_at": "2026-07-18T10:00:02.900Z",
+    "not_before": "2026-07-18T10:00:03.000Z",
+    "max_clock_uncertainty_ms": 1000
+  }
+}

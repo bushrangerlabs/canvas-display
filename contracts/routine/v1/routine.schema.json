@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://canvas-display.local/contracts/routine/v1/routine.schema.json",
+  "title": "Canvas Routine v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "owner", "triggers", "inputs", "steps", "result", "limits"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "maxLength": 1000 },
+    "owner": { "enum": ["canvas_core", "home_assistant", "hybrid", "clarification_required"] },
+    "triggers": { "type": "array", "maxItems": 20, "items": { "type": "object", "additionalProperties": true, "required": ["type"], "properties": { "type": { "enum": ["manual", "voice", "schedule", "mqtt", "ha_event", "webhook", "canvas_button"] } } } },
+    "inputs": { "type": "object", "additionalProperties": true },
+    "steps": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/step" } },
+    "result": { "type": "object", "additionalProperties": true },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["timeoutMs", "maxSteps", "maxRoutineDepth"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 },
+        "maxSteps": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxRoutineDepth": { "type": "integer", "minimum": 1, "maximum": 5 }
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "config"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+        "kind": { "enum": ["tool", "condition", "delay", "routine", "result"] },
+        "config": { "type": "object", "additionalProperties": true },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 },
+        "onFailure": { "enum": ["stop", "continue"] }
+      }
+    }
+  }
+}

@@ -1,611 +1,997 @@
 /**
- * SettingsPage — global application settings.
+ * SettingsPage — Canvas Core configuration.
  *
- * Sections:
- *   • Device settings (name)
- *   • MQTT broker configuration
- *   • Canvas defaults (snap size, default resolution)
- *   • About / version
+ * Three sections:
+ *  1. Global Core settings (admin credentials, HA URL/token, LLM/Whisper/Piper/
+ *     MCP provider URLs) — backed by the legacy /api/settings store.
+ *  2. Privacy controls (retain transcripts/audio, retention days, providers
+ *     allowed, transcript log level) — /api/admin/privacy.
+ *  3. Storage status + GC + audio focus state.
+ *
+ * Per-device settings will land with the desired/reported state model; for now
+ * the device list links to /devices.
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  Box, Typography, Paper, Divider, Slider, Switch, FormControlLabel,
-  TextField, Button, Stack, Alert, CircularProgress,
-  Chip, Select, MenuItem, InputLabel, FormControl, IconButton, Tooltip,
+  Box, Stack, Typography, Paper, Button, TextField, Switch, FormControlLabel,
+  Divider, Alert, Chip, MenuItem, Select, InputLabel, FormControl, IconButton, Tabs, Tab,
 } from '@mui/material';
-
-import WifiIcon from '@mui/icons-material/Wifi';
-import WifiOffIcon from '@mui/icons-material/WifiOff';
-import MicIcon from '@mui/icons-material/Mic';
-import MicOffIcon from '@mui/icons-material/MicOff';
+import SaveIcon from '@mui/icons-material/Save';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import EditIcon from '@mui/icons-material/Edit';
+import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
+import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { api } from '../api/client';
-import { useEditorStore } from '../store';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification } from '../api/client';
+import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
+import RoutinesSettingsSection from './RoutinesSettingsSection';
+import SkillsSettingsSection from './SkillsSettingsSection';
 
-interface ServerSettings {
-  device_name: string;
-  server_port: string;
-  mqtt_enabled: string;
-  mqtt_broker_url: string;
-  mqtt_username: string;
-  mqtt_password: string;
-  voice_enabled: string;
-  voice_mic_device: string;
-  voice_wake_word: string;
-  voice_tts_volume: string;
-  voice_wake_ack_enabled: string;
-  voice_wake_ack_sound: string;
-  voice_port: string;
-  voice_friendly_name: string;
-}
-
-interface MqttStatus {
-  enabled: boolean;
-  url: string;
-  connected: boolean;
-}
-
-interface VoiceStatus {
-  status: 'disabled' | 'starting' | 'running' | 'stopped' | 'error';
-  micDevice: string;
-  port: number;
-}
-
-interface MicrophoneDevice {
-  id: string;
-  label: string;
-}
-
-const WAKE_ACK_PRESETS: Array<{ value: string; label: string }> = [
-  { value: 'builtin:soft_chime', label: 'Soft Chime' },
-  { value: 'builtin:glass_ping', label: 'Glass Ping' },
-  { value: 'builtin:ready_up', label: 'Ready Up' },
-  { value: 'builtin:wood_tap', label: 'Wood Tap' },
-  { value: 'builtin:digital_pop', label: 'Digital Pop' },
-  { value: 'builtin:confirm_tone', label: 'Confirm Tone' },
+const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
+  { key: 'voice_ha_url', label: 'Home Assistant URL', placeholder: 'http://homeassistant.local:8123' },
+  { key: 'voice_ha_token', label: 'Home Assistant long-lived token', placeholder: '••••••••' },
+  { key: 'voice_pipeline_id', label: 'HA voice pipeline ID', placeholder: '' },
 ];
 
-const CUSTOM_WAKE_ACK_SOUND = '__custom__';
+// These keys are not in the legacy SETTING_DEFAULTS, so we keep them as
+// display-only fields backed by localStorage until a dedicated Core config
+// endpoint exists. They document the expected provider URLs.
+const CORE_PROVIDER_FIELDS: { key: string; label: string; placeholder: string; env: string }[] = [
+  { key: 'llm_base_url', label: 'LLM base URL', placeholder: 'http://llm:8080/v1', env: 'CANVAS_CORE_LLM_BASE_URL' },
+  { key: 'whisper_url', label: 'Whisper (ASR) URL', placeholder: 'http://asr:8000', env: 'CANVAS_CORE_WHISPER_URL' },
+  { key: 'piper_url', label: 'Piper (TTS) URL', placeholder: 'http://tts:5000', env: 'CANVAS_CORE_PIPER_URL' },
+  { key: 'mcp_url', label: 'MCP server URL', placeholder: 'http://mcp:9000', env: 'CANVAS_CORE_MCP_URL' },
+];
 
 export default function SettingsPage() {
-  const { snapEnabled, snapSize, toggleSnap } = useEditorStore();
-  const [localSnapSize, setLocalSnapSize] = useState(snapSize);
-  const [defaultWidth, setDefaultWidth] = useState(1920);
-  const [defaultHeight, setDefaultHeight] = useState(1080);
+  const [activeTab, setActiveTab] = useState('general');
+  const [settings, setSettings] = useState<LegacySettings | null>(null);
+  const [pages, setPages] = useState<LegacyPage[]>([]);
+  const [scenes, setScenes] = useState<SceneRecord[]>([]);
+  const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [audio, setAudio] = useState<AudioState | null>(null);
+  const [mqtt, setMqtt] = useState<MqttStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
 
-  // Server settings state
-  const [deviceName, setDeviceName] = useState('');
-  const [mqttEnabled, setMqttEnabled] = useState(false);
-  const [mqttUrl, setMqttUrl] = useState('');
-  const [mqttUsername, setMqttUsername] = useState('');
-  const [mqttPassword, setMqttPassword] = useState('');
-  const [mqttStatus, setMqttStatus] = useState<MqttStatus | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Voice settings state
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [voiceMicDevice, setVoiceMicDevice] = useState('default');
-  const [voiceWakeWord, setVoiceWakeWord] = useState('okay_nabu');
-  const [voiceTtsVolume, setVoiceTtsVolume] = useState('80');
-  const [voiceWakeAckEnabled, setVoiceWakeAckEnabled] = useState(false);
-  const [voiceWakeAckSound, setVoiceWakeAckSound] = useState('');
-  const [voicePort, setVoicePort] = useState('6053');
-  const [voiceFriendlyName, setVoiceFriendlyName] = useState('Canvas Display');
-  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
-  const [voiceRestarting, setVoiceRestarting] = useState(false);
-  const [micDevices, setMicDevices] = useState<MicrophoneDevice[]>([{ id: 'default', label: 'Default' }]);
-  const [micDevicesLoading, setMicDevicesLoading] = useState(false);
-  const wakeAckSoundMode = voiceWakeAckSound.startsWith('builtin:')
-    ? voiceWakeAckSound
-    : CUSTOM_WAKE_ACK_SOUND;
-
-  const getErrorMessage = (err: unknown, fallback: string): string => {
-    if (err instanceof Error && err.message) return err.message;
-    return fallback;
-  };
-
-  const loadMicDevices = useCallback(async () => {
-    setMicDevicesLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
     try {
-      const devices = await api.get<MicrophoneDevice[]>('/api/settings/voice/microphones');
-      if (devices.length > 0) setMicDevices(devices);
-    } catch {
-      // non-fatal — keep existing list
-    } finally {
-      setMicDevicesLoading(false);
-    }
-  }, []);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const [s, m] = await Promise.all([
-        api.get<ServerSettings>('/api/settings'),
-        api.get<MqttStatus>('/api/settings/mqtt'),
+      const [s, p, st, a, mq, pageRows, sceneRows] = await Promise.all([
+        coreApi.settings().catch((e) => {
+          if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
+          throw e;
+        }),
+        coreApi.privacy().then(r => r.settings).catch((e) => {
+          if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
+          return null;
+        }),
+        coreApi.storageStatus().catch((e) => {
+          if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
+          return null;
+        }),
+        coreApi.audioState().catch(() => null),
+        coreApi.mqttStatus().catch(() => null),
+        coreApi.pages().catch(() => []),
+        coreApi.scenes().then(result => result.scenes).catch(() => []),
       ]);
-      setDeviceName(s.device_name ?? '');
-      setMqttEnabled(s.mqtt_enabled === '1');
-      setMqttUrl(s.mqtt_broker_url ?? '');
-      setMqttUsername(s.mqtt_username ?? '');
-      setMqttPassword(''); // never pre-fill password
-      setMqttStatus(m);
-      setVoiceEnabled(s.voice_enabled === '1');
-      setVoiceMicDevice(s.voice_mic_device ?? 'default');
-      setVoiceWakeWord(s.voice_wake_word ?? 'okay_nabu');
-      setVoiceTtsVolume(s.voice_tts_volume ?? '80');
-      setVoiceWakeAckEnabled(s.voice_wake_ack_enabled === '1');
-      setVoiceWakeAckSound(s.voice_wake_ack_sound ?? '');
-      setVoicePort(s.voice_port ?? '6053');
-      setVoiceFriendlyName(s.voice_friendly_name ?? 'Canvas Display');
-      // Fetch voice status separately (non-fatal)
-      api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
-    } catch (e) {
-      console.error('Failed to load settings', e);
+      setSettings(s);
+      setPrivacy(p);
+      setStorage(st);
+      setAudio(a);
+      setMqtt(mq);
+      setPages(pageRows);
+      setScenes(sceneRows);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
     }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function saveSettings(patch: Partial<LegacySettings>) {
+    if (!settings) return;
+    setSaved(null);
+    try {
+      await coreApi.updateSettings(patch as Record<string, string>);
+      setSaved('Settings saved.');
+      load();
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function savePrivacy(patch: Partial<PrivacySettings>) {
+    if (!privacy) return;
+    setSaved(null);
+    try {
+      const r = await coreApi.updatePrivacy(patch);
+      setPrivacy(r.settings);
+      setSaved('Privacy settings saved.');
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function reconnectMqtt() {
+    try {
+      setMqtt(await coreApi.reconnectMqtt());
+      setSaved('MQTT connection restarted.');
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function disconnectMqtt() {
+    try {
+      await coreApi.disconnectMqtt();
+      setMqtt(current => current ? { ...current, connected: false, connectedAt: null } : current);
+      setSaved('MQTT disconnected. Disable MQTT and save to keep it off after restart.');
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function purge() {
+    if (!confirm('Purge ALL stored transcripts and audio? This cannot be undone.')) return;
+    try {
+      const r = await coreApi.purgePrivacy();
+      setSaved(`Purged ${r.purgedTranscripts} transcripts, ${r.purgedAudio} audio.`);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function runGc() {
+    if (!confirm('Run garbage collection now?')) return;
+    try {
+      await coreApi.runGc();
+      setSaved('Garbage collection complete.');
+      load();
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <PageHeader title="Settings" subtitle="Canvas Core configuration" onRefresh={load} loading={loading} />
+      <PageBody>
+        <Stack spacing={3} sx={{ maxWidth: 900, mx: 'auto' }}>
+          {authRequired && (
+            <Alert severity="warning" sx={{ bgcolor: 'rgba(253,214,99,0.1)' }}>
+              Admin login required to view/edit Core settings.
+            </Alert>
+          )}
+          {error && <ErrorBanner error={error} onRetry={load} />}
+          {saved && <Alert severity="success" sx={{ bgcolor: 'rgba(74,222,128,0.1)' }} onClose={() => setSaved(null)}>{saved}</Alert>}
+          <Paper sx={{ overflowX: 'auto' }}>
+            <Tabs value={activeTab} onChange={(_, value: string) => setActiveTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Settings sections">
+              <Tab value="general" label="General" />
+              <Tab value="integrations" label="Integrations" />
+              <Tab value="default-pages" label="Default pages" />
+              <Tab value="request-routing" label="Request routing" />
+              <Tab value="routines" label="Routines" />
+              <Tab value="skills" label="Skills" />
+              <Tab value="privacy-storage" label="Privacy & storage" />
+              <Tab value="ai" label="AI providers" />
+            </Tabs>
+          </Paper>
+          {loading ? <LoadingBox /> : (
+            <>
+              {activeTab === 'general' && <>
+              {/* Core identity */}
+              <Paper sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Core identity</Typography>
+                <Divider sx={{ mb: 2 }} />
+                {settings && (
+                  <Stack spacing={2}>
+                    <TextField
+                      label="Device name"
+                      value={settings.device_name ?? ''}
+                      onChange={e => setSettings({ ...settings, device_name: e.target.value })}
+                      size="small" fullWidth
+                    />
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="contained" startIcon={<SaveIcon fontSize="small" />} onClick={() => saveSettings({ device_name: settings.device_name })} sx={{ textTransform: 'none' }}>
+                        Save identity
+                      </Button>
+                    </Stack>
+                  </Stack>
+                )}
+              </Paper>
+
+              {/* Log level */}
+              <Paper sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Logging</Typography>
+                <Divider sx={{ mb: 2 }} />
+                <LogLevelControl />
+              </Paper>
+
+              </>}
+
+              {activeTab === 'integrations' && <>
+              {/* Provider URLs (display-only — set via env / Core config) */}
+              <Paper sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Provider URLs</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  These are set via environment variables in the Core container. Listed here for visibility.
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <Stack spacing={1.5}>
+                  {CORE_PROVIDER_FIELDS.map(f => (
+                    <Stack key={f.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                      <Typography variant="body2" sx={{ minWidth: 160 }}>{f.label}</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ flex: 1, fontFamily: 'monospace' }}>{f.placeholder}</Typography>
+                      <Chip size="small" label={f.env} variant="outlined" sx={{ fontSize: 10 }} />
+                    </Stack>
+                  ))}
+                </Stack>
+              </Paper>
+
+              {/* Home Assistant */}
+              <Paper sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Home Assistant</Typography>
+                <Divider sx={{ mb: 2 }} />
+                {settings && (
+                  <Stack spacing={2}>
+                    {PROVIDER_FIELDS.map(f => (
+                      <TextField
+                        key={f.key}
+                        label={f.label}
+                        value={settings[f.key] ?? ''}
+                        placeholder={f.placeholder}
+                        onChange={e => setSettings({ ...settings, [f.key]: e.target.value })}
+                        size="small" fullWidth
+                        type={f.key.includes('token') ? 'password' : 'text'}
+                      />
+                    ))}
+                    <Button size="small" variant="contained" startIcon={<SaveIcon fontSize="small" />} onClick={() => saveSettings({ voice_ha_url: settings.voice_ha_url, voice_ha_token: settings.voice_ha_token, voice_pipeline_id: settings.voice_pipeline_id })} sx={{ textTransform: 'none' }}>
+                      Save HA settings
+                    </Button>
+                  </Stack>
+                )}
+              </Paper>
+
+              {/* MQTT navigation */}
+              <Paper sx={{ p: 2.5 }}>
+                <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>MQTT navigation</Typography>
+                  <Chip
+                    size="small"
+                    sx={{ ml: 'auto' }}
+                    color={mqtt?.connected ? 'success' : mqtt?.enabled ? 'warning' : 'default'}
+                    label={mqtt?.connected ? 'CONNECTED' : mqtt?.enabled ? 'DISCONNECTED' : 'DISABLED'}
+                  />
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  Core subscribes to device page and panel command topics and delivers every change through the authenticated Edge channel.
+                </Typography>
+                <Divider sx={{ my: 2 }} />
+                {settings && (
+                  <Stack spacing={2}>
+                    <FormControlLabel
+                      control={<Switch checked={settings.mqtt_enabled === '1'} onChange={e => setSettings({ ...settings, mqtt_enabled: e.target.checked ? '1' : '0' })} />}
+                      label="Enable MQTT in Core"
+                    />
+                    <TextField label="Broker URL" size="small" value={settings.mqtt_broker_url ?? ''} placeholder="mqtt://192.168.1.10:1883" onChange={e => setSettings({ ...settings, mqtt_broker_url: e.target.value })} />
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                      <TextField label="Username" size="small" value={settings.mqtt_username ?? ''} onChange={e => setSettings({ ...settings, mqtt_username: e.target.value })} sx={{ flex: 1 }} />
+                      <TextField label="Password" type="password" size="small" value={settings.mqtt_password ?? ''} onChange={e => setSettings({ ...settings, mqtt_password: e.target.value })} sx={{ flex: 1 }} />
+                    </Stack>
+                    {mqtt?.lastError && <Alert severity="warning">{mqtt.lastError}</Alert>}
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" variant="contained" startIcon={<SaveIcon fontSize="small" />} onClick={() => saveSettings({
+                        mqtt_enabled: settings.mqtt_enabled,
+                        mqtt_broker_url: settings.mqtt_broker_url,
+                        mqtt_username: settings.mqtt_username,
+                        mqtt_password: settings.mqtt_password,
+                      })} sx={{ textTransform: 'none' }}>Save & apply</Button>
+                      <Button size="small" variant="outlined" startIcon={<RefreshIcon fontSize="small" />} onClick={reconnectMqtt} sx={{ textTransform: 'none' }}>Reconnect</Button>
+                      <Button size="small" variant="outlined" color="warning" onClick={disconnectMqtt} sx={{ textTransform: 'none' }}>Disconnect</Button>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      Page: canvas/devices/&lt;deviceId&gt;/commands/page · Panel: canvas/devices/&lt;deviceId&gt;/panels/&lt;panelId&gt;/commands
+                    </Typography>
+                  </Stack>
+                )}
+              </Paper>
+
+              </>}
+
+              {activeTab === 'default-pages' && settings && (
+                <DefaultPagesSection settings={settings} pages={pages} scenes={scenes} onChange={setSettings} onSave={saveSettings} />
+              )}
+
+              {activeTab === 'request-routing' && settings && (
+                <RequestRoutingSection settings={settings} onChange={setSettings} onSave={saveSettings} />
+              )}
+
+              {activeTab === 'privacy-storage' && <>
+              {/* Privacy */}
+              {privacy && (
+                <Paper sx={{ p: 2.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Privacy</Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <Stack spacing={2}>
+                    <FormControlLabel
+                      control={<Switch checked={privacy.retain_transcripts} onChange={e => savePrivacy({ retain_transcripts: e.target.checked })} />}
+                      label="Retain transcripts"
+                    />
+                    <FormControlLabel
+                      control={<Switch checked={privacy.retain_audio} onChange={e => savePrivacy({ retain_audio: e.target.checked })} />}
+                      label="Retain audio"
+                    />
+                    <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+                      <TextField
+                        label="Retention (days, 0 = none)"
+                        type="number"
+                        size="small"
+                        value={privacy.retention_days}
+                        onChange={e => savePrivacy({ retention_days: Number(e.target.value) })}
+                        slotProps={{ htmlInput: { min: 0 } }}
+                      />
+                      <FormControl size="small" sx={{ minWidth: 200 }}>
+                        <InputLabel>Transcript log level</InputLabel>
+                        <Select
+                          label="Transcript log level"
+                          value={privacy.transcript_log_level}
+                          onChange={e => savePrivacy({ transcript_log_level: e.target.value as PrivacySettings['transcript_log_level'] })}
+                        >
+                          <MenuItem value="none">none</MenuItem>
+                          <MenuItem value="anonymized">anonymized</MenuItem>
+                          <MenuItem value="full">full</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Stack>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" color="error" variant="outlined" startIcon={<DeleteForeverIcon fontSize="small" />} onClick={purge} sx={{ textTransform: 'none' }}>
+                        Purge all transcripts & audio
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              )}
+
+              {/* Storage */}
+              {storage && (
+                <Paper sx={{ p: 2.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Storage</Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <Stack spacing={0.5}>
+                    <Row label="Assets" value={`${storage.assetCount} (${fmtBytes(storage.assetTotalBytes)})`} />
+                    <Row label="Unreferenced assets" value={String(storage.unreferencedAssetCount)} />
+                    <Row label="Scenes" value={String(storage.sceneCount)} />
+                    <Row label="Schedules" value={String(storage.scheduleCount)} />
+                  </Stack>
+                  <Button size="small" variant="outlined" startIcon={<CleaningServicesIcon fontSize="small" />} onClick={runGc} sx={{ textTransform: 'none', mt: 2 }}>
+                    Run garbage collection
+                  </Button>
+                </Paper>
+              )}
+
+              {/* Audio focus */}
+              {audio && (
+                <Paper sx={{ p: 2.5 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Audio focus</Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <Stack spacing={0.5}>
+                    <Row label="State" value={audio.state} />
+                    <Row label="Title" value={audio.title || '—'} />
+                    <Row label="Volume" value={String(audio.volume)} />
+                    <Row label="Muted" value={audio.muted ? 'yes' : 'no'} />
+                  </Stack>
+                </Paper>
+              )}
+
+              </>}
+
+              {/* AI Providers */}
+              {activeTab === 'ai' && <AiProvidersSection />}
+              {activeTab === 'routines' && <RoutinesSettingsSection />}
+              {activeTab === 'skills' && <SkillsSettingsSection />}
+            </>
+          )}
+        </Stack>
+      </PageBody>
+    </Box>
+  );
+}
+
+const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
+
+function LogLevelControl() {
+  const [level, setLevelState] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadSettings();
-      void loadMicDevices();
-    }, 0);
+    coreApi.logLevel()
+      .then(r => setLevelState(r.level))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [loadSettings, loadMicDevices]);
-
-  async function saveSettings() {
+  async function handleChange(newLevel: string) {
     setSaving(true);
-    setSaveMsg(null);
     try {
-      const body: Record<string, string> = {
-        device_name:         deviceName,
-        mqtt_enabled:        mqttEnabled ? '1' : '0',
-        mqtt_broker_url:     mqttUrl,
-        mqtt_username:       mqttUsername,
-        voice_enabled:        voiceEnabled ? '1' : '0',
-        voice_mic_device:     voiceMicDevice,
-        voice_wake_word:      voiceWakeWord,
-        voice_tts_volume:     voiceTtsVolume,
-        voice_wake_ack_enabled: voiceWakeAckEnabled ? '1' : '0',
-        voice_wake_ack_sound: voiceWakeAckSound,
-        voice_port:           voicePort,
-        voice_friendly_name:  voiceFriendlyName,
-      };
-      if (mqttPassword && mqttPassword !== '••••••••') {
-        body.mqtt_password = mqttPassword;
-      }
-      await api.put('/api/settings', body);
-      setSaveMsg({ type: 'success', text: 'Settings saved.' });
-      await loadSettings();
-    } catch (e: unknown) {
-      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Save failed.') });
+      const r = await coreApi.setLogLevel(newLevel);
+      setLevelState(r.level);
+    } catch {
+      // revert on failure
+      setLevelState(level);
     } finally {
       setSaving(false);
     }
   }
 
-  async function reconnectMqtt() {
-    setReconnecting(true);
-    setSaveMsg(null);
-    try {
-      await saveSettings();
-      await api.post('/api/settings/mqtt/reconnect');
-      setSaveMsg({ type: 'success', text: 'MQTT reconnecting…' });
-      // Refresh status after a short delay
-      setTimeout(() => {
-        api.get<MqttStatus>('/api/settings/mqtt').then(setMqttStatus).catch(() => {});
-      }, 2000);
-    } catch (e: unknown) {
-      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Reconnect failed.') });
-    } finally {
-      setReconnecting(false);
-    }
-  }
-
-  async function restartVoice() {
-    setVoiceRestarting(true);
-    setSaveMsg(null);
-    try {
-      await saveSettings();
-      const result = await api.post<{ ok: boolean; status: string }>('/api/settings/voice/restart');
-      setSaveMsg({ type: 'success', text: `Voice assistant ${result.status}.` });
-      setTimeout(() => {
-        api.get<VoiceStatus>('/api/settings/voice').then(setVoiceStatus).catch(() => {});
-      }, 1500);
-    } catch (e: unknown) {
-      setSaveMsg({ type: 'error', text: getErrorMessage(e, 'Voice restart failed.') });
-    } finally {
-      setVoiceRestarting(false);
-    }
-  }
-
-  function applyCanvasDefaults() {
-    useEditorStore.setState({ snapSize: localSnapSize });
-  }
+  if (loading) return <Typography variant="body2" color="text.secondary">Loading…</Typography>;
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header */}
-      <Box sx={{ px: 2.5, py: 1.5, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>Settings</Typography>
-      </Box>
-
-      {/* Content */}
-      <Box sx={{ flex: 1, overflowY: 'auto', p: 3, maxWidth: 640, mx: 'auto', width: '100%' }}>
-        <Stack spacing={3}>
-
-          {saveMsg && (
-            <Alert severity={saveMsg.type} onClose={() => setSaveMsg(null)}>
-              {saveMsg.text}
-            </Alert>
-          )}
-
-          {/* ── Device Settings ─────────────────────────────────────────── */}
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
-              Device
-            </Typography>
-            <TextField
-              label="Device Name"
-              size="small"
-              fullWidth
-              value={deviceName}
-              onChange={(e) => setDeviceName(e.target.value)}
-              helperText="Displayed in the devices list and used as the MQTT client identifier."
-              sx={{ mb: 2 }}
-            />
-            <Button
-              variant="contained"
-              size="small"
-              onClick={saveSettings}
-              disabled={saving}
-              startIcon={saving ? <CircularProgress size={14} /> : null}
-            >
-              Save
-            </Button>
-          </Paper>
-
-          {/* ── MQTT Settings ───────────────────────────────────────────── */}
-          <Paper sx={{ p: 3 }}>
-            <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                MQTT
-              </Typography>
-              {mqttStatus && (
-                <Chip
-                  size="small"
-                  icon={mqttStatus.connected ? <WifiIcon /> : <WifiOffIcon />}
-                  label={mqttStatus.connected ? 'Connected' : 'Disconnected'}
-                  color={mqttStatus.connected ? 'success' : 'default'}
-                />
-              )}
-            </Stack>
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={mqttEnabled}
-                  onChange={(e) => setMqttEnabled(e.target.checked)}
-                />
-              }
-              label="Enable MQTT"
-              sx={{ mb: 2, display: 'block' }}
-            />
-
-            <Stack spacing={2}>
-              <TextField
-                label="Broker URL"
+    <FormControl size="small" sx={{ minWidth: 200 }}>
+      <InputLabel>Log level</InputLabel>
+      <Select
+        label="Log level"
+        value={level ?? 'warn'}
+        onChange={e => handleChange(e.target.value)}
+        disabled={saving}
+      >
+        {LOG_LEVELS.map(l => (
+          <MenuItem key={l} value={l}>
+            <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+              <Chip
                 size="small"
-                fullWidth
-                value={mqttUrl}
-                onChange={(e) => setMqttUrl(e.target.value)}
-                disabled={!mqttEnabled}
-                placeholder="mqtt://192.168.1.x:1883"
-                helperText="e.g. mqtt://192.168.1.10:1883 or mqtt://homeassistant.local:1883"
-              />
-              <Stack direction="row" spacing={2}>
-                <TextField
-                  label="Username"
-                  size="small"
-                  value={mqttUsername}
-                  onChange={(e) => setMqttUsername(e.target.value)}
-                  disabled={!mqttEnabled}
-                  sx={{ flex: 1 }}
-                />
-                <TextField
-                  label="Password"
-                  size="small"
-                  type="password"
-                  value={mqttPassword}
-                  onChange={(e) => setMqttPassword(e.target.value)}
-                  disabled={!mqttEnabled}
-                  placeholder="Leave blank to keep existing"
-                  sx={{ flex: 1 }}
-                />
-              </Stack>
-            </Stack>
-
-            <Stack direction="row" spacing={1.5} sx={{ mt: 2.5 }}>
-              <Button
-                variant="contained"
-                size="small"
-                onClick={saveSettings}
-                disabled={saving}
-                startIcon={saving ? <CircularProgress size={14} /> : null}
-              >
-                Save
-              </Button>
-              <Button
+                label={l}
                 variant="outlined"
-                size="small"
-                onClick={reconnectMqtt}
-                disabled={reconnecting || !mqttEnabled}
-                startIcon={reconnecting ? <CircularProgress size={14} /> : null}
-              >
-                Save & Reconnect
-              </Button>
-            </Stack>
-
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-              MQTT topics: <code>canvas_display/{'<device_id>'}/state</code>, <code>canvas_display/{'<device_id>'}/cmd/page</code>, <code>canvas_display/{'<device_id>'}/cmd/navigate</code>
-            </Typography>
-          </Paper>
-
-          {/* ── Voice Satellite ──────────────────────────────────────────── */}
-          <Paper sx={{ p: 3 }}>
-            <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                Voice Satellite
-              </Typography>
-              {voiceStatus && (
-                <Chip
-                  size="small"
-                  icon={voiceStatus.status === 'running' ? <MicIcon /> : <MicOffIcon />}
-                  label={voiceStatus.status}
-                  color={voiceStatus.status === 'running' ? 'success' : voiceStatus.status === 'error' ? 'error' : 'default'}
-                />
-              )}
-            </Stack>
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                />
-              }
-              label="Enable voice satellite"
-              sx={{ mb: 2, display: 'block' }}
-            />
-
-            <Stack spacing={2}>
-              <Stack direction="row" spacing={2}>
-                <TextField
-                  label="Satellite Name"
-                  size="small"
-                  sx={{ flex: 2 }}
-                  value={voiceFriendlyName}
-                  onChange={(e) => setVoiceFriendlyName(e.target.value)}
-                  disabled={!voiceEnabled}
-                  placeholder="Canvas Display"
-                  helperText="Name shown in HA Devices"
-                />
-                <TextField
-                  label="Port"
-                  size="small"
-                  sx={{ flex: 1 }}
-                  type="number"
-                  value={voicePort}
-                  onChange={(e) => setVoicePort(e.target.value)}
-                  disabled={!voiceEnabled}
-                  placeholder="6053"
-                  helperText="ESPHome API port"
-                  slotProps={{ htmlInput: { min: 1024, max: 65535 } }}
-                />
-              </Stack>
-              <Stack direction="row" spacing={2}>
-                <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
-                  <InputLabel>Mic Device</InputLabel>
-                  <Select
-                    label="Mic Device"
-                    value={micDevices.some(d => d.id === voiceMicDevice) ? voiceMicDevice : 'default'}
-                    onChange={(e) => setVoiceMicDevice(e.target.value)}
-                    endAdornment={
-                      <Tooltip title="Refresh microphone list">
-                        <span>
-                          <IconButton
-                            size="small"
-                            onClick={(e) => { e.stopPropagation(); loadMicDevices(); }}
-                            disabled={micDevicesLoading}
-                            sx={{ mr: 2 }}
-                          >
-                            {micDevicesLoading
-                              ? <CircularProgress size={14} />
-                              : <RefreshIcon fontSize="small" />}
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    }
-                  >
-                    {micDevices.map(d => (
-                      <MenuItem key={d.id} value={d.id}>{d.label}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl size="small" sx={{ flex: 1 }} disabled={!voiceEnabled}>
-                  <InputLabel>Wake Word</InputLabel>
-                  <Select
-                    label="Wake Word"
-                    value={voiceWakeWord}
-                    onChange={(e) => setVoiceWakeWord(e.target.value)}
-                  >
-                    <MenuItem value="okay_nabu">Okay Nabu</MenuItem>
-                    <MenuItem value="hey_jarvis">Hey Jarvis</MenuItem>
-                    <MenuItem value="hey_mycroft">Hey Mycroft</MenuItem>
-                    <MenuItem value="hey_luna">Hey Luna</MenuItem>
-                    <MenuItem value="hey_home_assistant">Hey Home Assistant</MenuItem>
-                    <MenuItem value="okay_computer">Okay Computer</MenuItem>
-                    <MenuItem value="alexa">Alexa</MenuItem>
-                    <MenuItem value="choo_choo_homie">Choo Choo Homie</MenuItem>
-                  </Select>
-                </FormControl>
-              </Stack>
-              <Box>
-                <Typography variant="body2" gutterBottom color={voiceEnabled ? 'text.primary' : 'text.disabled'}>
-                  TTS volume: {voiceTtsVolume}%
-                </Typography>
-                <Slider
-                  value={parseInt(voiceTtsVolume) || 80}
-                  min={0} max={100} step={5}
-                  onChange={(_, v) => setVoiceTtsVolume(String(v))}
-                  valueLabelDisplay="auto"
-                  disabled={!voiceEnabled}
-                  sx={{ width: '100%', maxWidth: 320 }}
-                />
-              </Box>
-
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={voiceWakeAckEnabled}
-                    onChange={(e) => setVoiceWakeAckEnabled(e.target.checked)}
-                  />
-                }
-                label="Play wake acknowledgement sound"
-                sx={{ display: 'block' }}
-                disabled={!voiceEnabled}
-              />
-
-              <TextField
-                label="Wake acknowledgement sound"
-                size="small"
-                select
-                fullWidth
-                value={wakeAckSoundMode}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  if (next === CUSTOM_WAKE_ACK_SOUND) {
-                    if (voiceWakeAckSound.startsWith('builtin:')) setVoiceWakeAckSound('');
-                    return;
-                  }
-                  setVoiceWakeAckSound(next);
-                }}
-                disabled={!voiceEnabled || !voiceWakeAckEnabled}
-                helperText="Built-in sounds are bundled with the app and work offline."
-              >
-                {WAKE_ACK_PRESETS.map((preset) => (
-                  <MenuItem key={preset.value} value={preset.value}>{preset.label}</MenuItem>
-                ))}
-                <MenuItem value={CUSTOM_WAKE_ACK_SOUND}>Custom URL or file path</MenuItem>
-              </TextField>
-
-              {wakeAckSoundMode === CUSTOM_WAKE_ACK_SOUND && (
-                <TextField
-                  label="Custom wake acknowledgement URL or file path"
-                  size="small"
-                  fullWidth
-                  value={voiceWakeAckSound}
-                  onChange={(e) => setVoiceWakeAckSound(e.target.value)}
-                  disabled={!voiceEnabled || !voiceWakeAckEnabled}
-                  placeholder="https://example.com/chime.mp3"
-                  helperText="Played via mpv when wake word is detected. Supports HTTP(S) URLs and local file paths."
-                />
-              )}
-            </Stack>
-
-            <Stack direction="row" spacing={1.5} sx={{ mt: 2.5 }}>
-              <Button
-                variant="contained"
-                size="small"
-                onClick={saveSettings}
-                disabled={saving}
-                startIcon={saving ? <CircularProgress size={14} /> : null}
-              >
-                Save
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={restartVoice}
-                disabled={voiceRestarting}
-                startIcon={voiceRestarting ? <CircularProgress size={14} /> : null}
-              >
-                {voiceEnabled ? 'Save & Restart' : 'Save & Stop'}
-              </Button>
-            </Stack>
-
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-              ESPHome satellite protocol — HA connects to this device on the configured port.
-              In HA: <strong>Settings → Devices &amp; Services → Add Integration → ESPHome</strong>,
-              then enter this machine's IP and port.
-            </Typography>
-          </Paper>
-
-          {/* ── Canvas defaults ──────────────────────────────────────────── */}
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
-              Canvas Defaults
-            </Typography>
-            <FormControlLabel
-              control={<Switch checked={snapEnabled} onChange={toggleSnap} />}
-              label="Snap to grid"
-              sx={{ mb: 2 }}
-            />
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="body2" gutterBottom>
-                Snap size: {localSnapSize}px
-              </Typography>
-              <Slider
-                value={localSnapSize}
-                min={1} max={50} step={1}
-                onChange={(_, v) => setLocalSnapSize(v as number)}
-                valueLabelDisplay="auto"
-                disabled={!snapEnabled}
-                sx={{ width: '100%', maxWidth: 320 }}
-              />
-            </Box>
-            <Divider sx={{ mb: 2 }} />
-            <Typography variant="body2" color="text.secondary" gutterBottom>
-              Default new view resolution
-            </Typography>
-            <Stack direction="row" spacing={2} sx={{ mb: 2, alignItems: 'center' }}>
-              <TextField
-                label="Width" type="number" size="small"
-                value={defaultWidth}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDefaultWidth(Number(e.target.value))}
-                slotProps={{ htmlInput: { min: 320, max: 7680, step: 1 } }}
-                sx={{ width: 110 }}
-              />
-              <Typography variant="body2" color="text.secondary">×</Typography>
-              <TextField
-                label="Height" type="number" size="small"
-                value={defaultHeight}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDefaultHeight(Number(e.target.value))}
-                slotProps={{ htmlInput: { min: 240, max: 4320, step: 1 } }}
-                sx={{ width: 110 }}
+                color={l === 'error' ? 'error' : l === 'warn' ? 'warning' : l === 'info' ? 'info' : 'default'}
+                sx={{ minWidth: 50, fontSize: 10 }}
               />
             </Stack>
-            <Button variant="contained" size="small" onClick={applyCanvasDefaults}>
-              Apply
-            </Button>
-          </Paper>
+          </MenuItem>
+        ))}
+      </Select>
+      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+        {level === 'debug' ? 'All messages including debug details.' :
+         level === 'info'  ? 'Startup, status, and request/response logs.' :
+         level === 'warn'  ? 'Only warnings and errors.' :
+                            'Only errors.'}
+      </Typography>
+    </FormControl>
+  );
+}
 
-          {/* ── About ────────────────────────────────────────────────────── */}
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-              About
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Canvas Display — standalone kiosk display manager
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Built with React + MUI + Zustand + Fastify + MQTT
-            </Typography>
-          </Paper>
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <Stack direction="row" spacing={1}>
+      <Typography variant="caption" color="text.secondary" sx={{ minWidth: 180 }}>{label}</Typography>
+      <Typography variant="body2">{value}</Typography>
+    </Stack>
+  );
+}
 
+function playlistSlotsForPage(page: LegacyPage, scenes: SceneRecord[]): number[] {
+  return (page.panels ?? []).flatMap(panel => {
+    if (panel.content_type !== 'scene' || !panel.scene_id) return [];
+    const scene = scenes.find(item => item.id === panel.scene_id && item.status === 'published');
+    const widgets = (scene?.manifest as { widgets?: Array<{ type?: string; hidden?: boolean; config?: Record<string, unknown> }> } | undefined)?.widgets ?? [];
+    return widgets
+      .filter(widget => widget.type === 'playlistresult' && !widget.hidden)
+      .map(widget => Math.max(1, Math.min(8, Math.trunc(Number(widget.config?.resultSlot ?? 1)))));
+  });
+}
+
+function playlistPageProblem(page: LegacyPage, scenes: SceneRecord[]): string | null {
+  const slots = playlistSlotsForPage(page, scenes);
+  if (slots.length === 0) return 'No published Playlist Result widgets';
+  if (new Set(slots).size !== slots.length) return 'Result slots are duplicated';
+  if (![...slots].sort((a, b) => a - b).every((slot, index) => slot === index + 1)) return 'Result slots must start at 1 without gaps';
+  return null;
+}
+
+function DefaultPagesSection({ settings, pages, scenes, onChange, onSave }: {
+  settings: LegacySettings;
+  pages: LegacyPage[];
+  scenes: SceneRecord[];
+  onChange: (settings: LegacySettings) => void;
+  onSave: (patch: Partial<LegacySettings>) => Promise<void>;
+}) {
+  const selected = pages.find(page => page.id === settings.playlist_selection_page_id);
+  const selectedProblem = selected ? playlistPageProblem(selected, scenes) : null;
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Default pages</Typography>
+      <Typography variant="caption" color="text.secondary">
+        Assign stable page roles used by Core features. More page roles can be added here as Canvas grows.
+      </Typography>
+      <Divider sx={{ my: 2 }} />
+      <Stack spacing={1.5}>
+        <FormControl size="small" fullWidth>
+          <InputLabel>Playlist selection page</InputLabel>
+          <Select
+            label="Playlist selection page"
+            value={settings.playlist_selection_page_id ?? ''}
+            onChange={event => onChange({ ...settings, playlist_selection_page_id: event.target.value })}
+          >
+            <MenuItem value=""><em>Built-in automatic playlist screen</em></MenuItem>
+            {pages.map(page => {
+              const slots = playlistSlotsForPage(page, scenes);
+              const problem = playlistPageProblem(page, scenes);
+              return <MenuItem key={page.id} value={page.id} disabled={!!problem}>{page.name} — {problem ?? `${slots.length} result slot${slots.length === 1 ? '' : 's'}`}</MenuItem>;
+            })}
+          </Select>
+        </FormControl>
+        <Typography variant="caption" color="text.secondary">
+          Core fills the enabled Playlist Result widgets on this page. The page is stored by ID, so renaming it is safe.
+        </Typography>
+        {settings.playlist_selection_page_id && !selected && <Alert severity="warning">The assigned page no longer exists. Select another page or use the built-in screen.</Alert>}
+        {selectedProblem && <Alert severity="warning">{selectedProblem}. Fix the page's published scene before saving it as the default.</Alert>}
+        <Box>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<SaveIcon fontSize="small" />}
+            disabled={!!selectedProblem}
+            onClick={() => onSave({ playlist_selection_page_id: settings.playlist_selection_page_id })}
+            sx={{ textTransform: 'none' }}
+          >
+            Save default pages
+          </Button>
+        </Box>
+      </Stack>
+    </Paper>
+  );
+}
+
+const ROUTING_DOMAINS = [
+  ['general_knowledge', 'General knowledge'],
+  ['home_automation', 'Home automation'],
+  ['music_audio', 'Music and audio'],
+  ['video', 'Video'],
+  ['display_navigation', 'Display navigation'],
+  ['device_control', 'Device control'],
+] as const;
+
+function RequestRoutingSection({ settings, onChange, onSave }: {
+  settings: LegacySettings;
+  onChange: (settings: LegacySettings) => void;
+  onSave: (patch: Partial<LegacySettings>) => Promise<void>;
+}) {
+  const [testText, setTestText] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [classification, setClassification] = useState<RequestClassification | null>(null);
+  const [testError, setTestError] = useState('');
+  const setBool = (key: string, checked: boolean) => onChange({ ...settings, [key]: checked ? '1' : '0' });
+  const routingPatch = Object.fromEntries(
+    Object.entries(settings).filter(([key]) => key.startsWith('request_routing_')),
+  );
+
+  async function runTest() {
+    if (!testText.trim()) return;
+    setTesting(true); setTestError(''); setClassification(null);
+    try {
+      const result = await coreApi.testRequestRouting(testText.trim());
+      setClassification(result.classification);
+    } catch (error) {
+      setTestError((error as Error).message);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return <Stack spacing={3}>
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Request routing policy</Typography>
+      <Typography variant="caption" color="text.secondary">Classify requests before selecting a domain handler. Classification never bypasses typed tools, permissions, or confirmation rules.</Typography>
+      <Divider sx={{ my: 2 }} />
+      <Stack spacing={1.5}>
+        <FormControlLabel control={<Switch checked={settings.request_routing_enabled === '1'} onChange={event => setBool('request_routing_enabled', event.target.checked)} />} label="Enable configurable request routing" />
+        <FormControlLabel control={<Switch checked={settings.request_routing_use_ai === '1'} onChange={event => setBool('request_routing_use_ai', event.target.checked)} />} label="Use the assigned Intent Routing AI model" />
+        <FormControlLabel control={<Switch checked={settings.request_routing_prefer_deterministic === '1'} onChange={event => setBool('request_routing_prefer_deterministic', event.target.checked)} />} label="Prefer fast deterministic routing for high-confidence commands" />
+        <FormControlLabel control={<Switch checked={settings.request_routing_clarify_below_threshold === '1'} onChange={event => setBool('request_routing_clarify_below_threshold', event.target.checked)} />} label="Ask for clarification below the confidence threshold" />
+        <FormControlLabel control={<Switch checked={settings.request_routing_use_context === '1'} onChange={event => setBool('request_routing_use_context', event.target.checked)} />} label="Use conversation context when available" />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField label="Minimum confidence" type="number" size="small" value={settings.request_routing_confidence_threshold ?? '0.72'} onChange={event => onChange({ ...settings, request_routing_confidence_threshold: event.target.value })} slotProps={{ htmlInput: { min: 0, max: 1, step: 0.01 } }} />
+          <FormControl size="small" sx={{ minWidth: 240 }}><InputLabel>Fallback behaviour</InputLabel><Select label="Fallback behaviour" value={settings.request_routing_fallback ?? 'clarify'} onChange={event => onChange({ ...settings, request_routing_fallback: event.target.value })}><MenuItem value="clarify">Ask for clarification</MenuItem><MenuItem value="general_knowledge">General AI response</MenuItem></Select></FormControl>
         </Stack>
-      </Box>
-    </Box>
+        <FormControlLabel control={<Switch checked={settings.request_routing_debug_logging === '1'} onChange={event => setBool('request_routing_debug_logging', event.target.checked)} />} label="Log domain, classifier and confidence" />
+      </Stack>
+    </Paper>
+
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Enabled request domains</Typography>
+      <Divider sx={{ my: 2 }} />
+      <Stack direction={{ xs: 'column', sm: 'row' }} useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
+        {ROUTING_DOMAINS.map(([key, label]) => <FormControlLabel key={key} sx={{ minWidth: 250 }} control={<Switch checked={settings[`request_routing_domain_${key}`] === '1'} onChange={event => setBool(`request_routing_domain_${key}`, event.target.checked)} />} label={label} />)}
+      </Stack>
+      <Button sx={{ mt: 2, textTransform: 'none' }} variant="contained" startIcon={<SaveIcon />} onClick={() => onSave(routingPatch)}>Save request routing</Button>
+    </Paper>
+
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Test request classification</Typography>
+      <Typography variant="caption" color="text.secondary">This classifies the text but does not execute the resulting action.</Typography>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2 }}>
+        <TextField fullWidth size="small" label="Example request" value={testText} onChange={event => setTestText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void runTest(); }} />
+        <Button variant="outlined" disabled={testing || !testText.trim()} onClick={() => void runTest()} sx={{ minWidth: 110, textTransform: 'none' }}>{testing ? 'Testing…' : 'Classify'}</Button>
+      </Stack>
+      {testError && <Alert severity="error" sx={{ mt: 2 }}>{testError}</Alert>}
+      {classification && <Stack spacing={0.75} sx={{ mt: 2 }}>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}><Chip label={classification.domain.replace(/_/g, ' ')} color="primary" /><Chip label={classification.intent} variant="outlined" /><Chip label={`${Math.round(classification.confidence * 100)}% confidence`} variant="outlined" /><Chip label={classification.classifier} variant="outlined" color={classification.classifier === 'ai' ? 'secondary' : 'default'} />{classification.needs_clarification && <Chip label="Clarification required" color="warning" />}</Stack>
+        {classification.query && <Row label="Query" value={classification.query} />}
+        {classification.media_type && <Row label="Media type" value={classification.media_type} />}
+        {classification.source && <Row label="Preferred source" value={classification.source} />}
+        {classification.reasoning && <Row label="Reasoning" value={classification.reasoning} />}
+      </Stack>}
+    </Paper>
+  </Stack>;
+}
+
+// ── AI Providers section ─────────────────────────────────────────────────
+
+const TASK_NAMES: Record<string, string> = {
+  intent_routing: 'Intent Routing',
+  conversation: 'Conversation',
+  vision: 'Camera Vision',
+  asr: 'Speech-to-Text (ASR)',
+  tts: 'Text-to-Speech (TTS)',
+  embedding: 'Embeddings',
+};
+
+const PROVIDER_KIND_LABELS: Record<string, string> = {
+  openai: 'OpenAI', openrouter: 'OpenRouter', anthropic: 'Anthropic',
+  gemini: 'Google Gemini', groq: 'Groq', azure: 'Azure OpenAI',
+  'llama-cpp': 'llama.cpp', ollama: 'Ollama', vllm: 'vLLM',
+  whisper: 'Whisper', piper: 'Piper', coqui: 'Coqui TTS',
+};
+
+const AI_PROVIDER_HEALTH_INTERVAL_MS = 30_000;
+
+function AiProvidersSection() {
+  const [providers, setProviders] = useState<AiProviderInfo[]>([]);
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [checkingHealth, setCheckingHealth] = useState(false);
+  const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
+  const healthCheckActive = useRef(false);
+
+  // Add provider form state
+  const [adding, setAdding] = useState(false);
+  const [newId, setNewId] = useState('');
+  const [newType, setNewType] = useState<AiProviderType>('llm');
+  const [newKind, setNewKind] = useState<AiProviderKind>('openai');
+  const [newBaseUrl, setNewBaseUrl] = useState('');
+  const [newApiKey, setNewApiKey] = useState('');
+  const [newModel, setNewModel] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Edit provider form state
+  const [editing, setEditing] = useState<AiProviderInfo | null>(null);
+  const [editId, setEditId] = useState('');
+  const [editType, setEditType] = useState<AiProviderType>('llm');
+  const [editKind, setEditKind] = useState<AiProviderKind>('openai');
+  const [editBaseUrl, setEditBaseUrl] = useState('');
+  const [editApiKey, setEditApiKey] = useState('');
+  const [editModel, setEditModel] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await coreApi.aiProviders();
+      setProviders(res.providers);
+      setAssignments(res.assignments);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setLoading(false); }
+  }, []);
+
+  const checkHealth = useCallback(async (announce = false) => {
+    if (healthCheckActive.current) return;
+    healthCheckActive.current = true;
+    setCheckingHealth(true);
+    try {
+      const res = await coreApi.healthCheckAiProviders();
+      const healthById = new Map(res.providers.map(provider => [provider.id, provider]));
+      setProviders(current => current.map(provider => {
+        const health = healthById.get(provider.id);
+        return health ? { ...provider, healthy: health.healthy, detail: health.detail } : provider;
+      }));
+      setLastHealthCheck(new Date());
+      setError(null);
+      if (announce) {
+        setSaved(`Health check complete — ${res.providers.filter(p => p.healthy).length}/${res.providers.length} UP`);
+      }
+    } catch (e) {
+      setError(`Automatic provider health check failed: ${(e as Error).message}`);
+    } finally {
+      healthCheckActive.current = false;
+      setCheckingHealth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void load().then(() => {
+      if (!cancelled) void checkHealth();
+    });
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void checkHealth();
+    }, AI_PROVIDER_HEALTH_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkHealth();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [load, checkHealth]);
+
+  async function assignTask(task: string, providerId: string) {
+    setSaved(null);
+    try {
+      await coreApi.assignAiProvider(task, providerId);
+      setAssignments(prev => ({ ...prev, [task]: providerId }));
+      setSaved('Assignment saved.');
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function handleAddProvider() {
+    if (!newId.trim()) { setAddError('Provider ID is required'); return; }
+    setAddError(null);
+    const config: Record<string, unknown> = {};
+    if (newBaseUrl) config.baseUrl = newBaseUrl;
+    if (newApiKey) config.apiKey = newApiKey;
+    if (newModel) config.model = newModel;
+    try {
+      await coreApi.addAiProvider(newId.trim(), newType, newKind, config);
+      setSaved(`Provider '${newId}' added.`);
+      setNewId('');
+      setNewBaseUrl('');
+      setNewApiKey('');
+      setNewModel('');
+      setAdding(false);
+      load();
+    } catch (e) {
+      setAddError((e as Error).message);
+    }
+  }
+
+  async function handleDeleteProvider(id: string) {
+    if (!confirm(`Delete provider '${id}'?`)) return;
+    try {
+      await coreApi.deleteAiProvider(id);
+      setSaved(`Provider '${id}' deleted.`);
+      load();
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  function handleEditProvider(p: AiProviderInfo) {
+    setEditing(p);
+    setEditId(p.id);
+    setEditType(p.type);
+    setEditKind(p.kind);
+    setEditBaseUrl((p.config?.baseUrl as string) ?? '');
+    setEditApiKey((p.config?.apiKey as string) ?? '');
+    setEditModel((p.config?.model as string) ?? '');
+    setEditError(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!editing) return;
+    setEditError(null);
+    const config: Record<string, unknown> = {};
+    if (editBaseUrl) config.baseUrl = editBaseUrl;
+    if (editApiKey) config.apiKey = editApiKey;
+    if (editModel) config.model = editModel;
+    try {
+      await coreApi.updateAiProvider(editId, editType, editKind, config);
+      setSaved(`Provider '${editId}' updated.`);
+      setEditing(null);
+      load();
+    } catch (e) { setEditError((e as Error).message); }
+  }
+
+  async function handleHealthCheck() {
+    setSaved(null);
+    await checkHealth(true);
+  }
+
+  // Helper: get providers of a specific type for assignment dropdowns
+  const providersByType = (type: AiProviderType) =>
+    providers.filter(p => p.type === type);
+
+  // Map task to required provider type
+  const taskType = (task: string): AiProviderType => {
+    if (task === 'asr') return 'asr';
+    if (task === 'tts') return 'tts';
+    return 'llm';
+  };
+
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>AI Providers</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        Manage AI service providers (LLM, ASR, TTS) and assign them to platform tasks. Health is checked automatically every 30 seconds.
+      </Typography>
+      <Divider sx={{ mb: 2 }} />
+      {saved && <Alert severity="success" sx={{ bgcolor: 'rgba(74,222,128,0.1)', mb: 2 }} onClose={() => setSaved(null)}>{saved}</Alert>}
+      {error && <ErrorBanner error={error} onRetry={load} />}
+
+      {/* Toolbar */}
+      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+        <Button size="small" variant="contained" startIcon={<AddIcon fontSize="small" />} onClick={() => setAdding(!adding)} sx={{ textTransform: 'none' }}>
+          {adding ? 'Cancel' : 'Add Provider'}
+        </Button>
+        <Button size="small" variant="outlined" disabled={checkingHealth} startIcon={<RefreshIcon fontSize="small" />} onClick={handleHealthCheck} sx={{ textTransform: 'none' }}>
+          {checkingHealth ? 'Checking…' : 'Check Now'}
+        </Button>
+        <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center', ml: 'auto !important' }}>
+          {lastHealthCheck ? `Updated ${lastHealthCheck.toLocaleTimeString()}` : 'Waiting for first automatic check…'}
+        </Typography>
+      </Stack>
+
+      {/* Add provider form */}
+      {adding && (
+        <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'rgba(108,99,255,0.04)' }}>
+          <Typography variant="subtitle2" sx={{ mb: 1.5 }}>New Provider</Typography>
+          <Stack spacing={1.5}>
+            <Stack direction="row" spacing={1.5}>
+              <TextField
+                label="Provider ID"
+                value={newId}
+                onChange={e => setNewId(e.target.value)}
+                size="small"
+                placeholder="e.g. my-openai"
+                sx={{ flex: 1 }}
+              />
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Type</InputLabel>
+                <Select label="Type" value={newType} onChange={e => setNewType(e.target.value as AiProviderType)}>
+                  <MenuItem value="llm">LLM</MenuItem>
+                  <MenuItem value="asr">ASR</MenuItem>
+                  <MenuItem value="tts">TTS</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Kind</InputLabel>
+                <Select label="Kind" value={newKind} onChange={e => setNewKind(e.target.value as AiProviderKind)}>
+                  {Object.entries(PROVIDER_KIND_LABELS).map(([k, v]) => (
+                    <MenuItem key={k} value={k}>{v}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+            <Stack direction="row" spacing={1.5}>
+              <TextField
+                label="Base URL"
+                value={newBaseUrl}
+                onChange={e => setNewBaseUrl(e.target.value)}
+                size="small"
+                placeholder="http://host:port/v1"
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                label="API Key"
+                type="password"
+                value={newApiKey}
+                onChange={e => setNewApiKey(e.target.value)}
+                size="small"
+                placeholder="Optional"
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                label="Model"
+                value={newModel}
+                onChange={e => setNewModel(e.target.value)}
+                size="small"
+                placeholder="Optional"
+                sx={{ flex: 1 }}
+              />
+            </Stack>
+            {addError && <Typography variant="caption" color="error">{addError}</Typography>}
+            <Button size="small" variant="contained" onClick={handleAddProvider} sx={{ textTransform: 'none', alignSelf: 'flex-start' }}>
+              Add
+            </Button>
+          </Stack>
+        </Paper>
+      )}
+
+      {/* Edit provider dialog */}
+      {editing && (
+        <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'rgba(108,99,255,0.04)' }}>
+          <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Edit Provider: {editing.id}</Typography>
+          <Stack spacing={1.5}>
+            <Stack direction="row" spacing={1.5}>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Type</InputLabel>
+                <Select label="Type" value={editType} onChange={e => setEditType(e.target.value as AiProviderType)}>
+                  <MenuItem value="llm">LLM</MenuItem>
+                  <MenuItem value="asr">ASR</MenuItem>
+                  <MenuItem value="tts">TTS</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 140 }}>
+                <InputLabel>Kind</InputLabel>
+                <Select label="Kind" value={editKind} onChange={e => setEditKind(e.target.value as AiProviderKind)}>
+                  {Object.entries(PROVIDER_KIND_LABELS).map(([k, v]) => (
+                    <MenuItem key={k} value={k}>{v}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+            <Stack direction="row" spacing={1.5}>
+              <TextField label="Base URL" value={editBaseUrl} onChange={e => setEditBaseUrl(e.target.value)} size="small" placeholder="http://host:port/v1" sx={{ flex: 1 }} />
+              <TextField label="API Key" type="password" value={editApiKey} onChange={e => setEditApiKey(e.target.value)} size="small" placeholder="Optional" sx={{ flex: 1 }} />
+              <TextField label="Model" value={editModel} onChange={e => setEditModel(e.target.value)} size="small" placeholder="Optional" sx={{ flex: 1 }} />
+            </Stack>
+            {editError && <Typography variant="caption" color="error">{editError}</Typography>}
+            <Stack direction="row" spacing={1}>
+              <Button size="small" variant="contained" onClick={handleSaveEdit} sx={{ textTransform: 'none' }}>Save</Button>
+              <Button size="small" variant="outlined" onClick={() => setEditing(null)} sx={{ textTransform: 'none' }}>Cancel</Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      )}
+
+      {loading ? <LoadingBox /> : (
+        <>
+          {/* Provider list */}
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Configured Providers</Typography>
+          <Stack spacing={1} sx={{ mb: 3 }}>
+            {providers.map(p => (
+              <Stack key={p.id} direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                <Chip size="small" label={p.id} variant="outlined" sx={{ minWidth: 100, fontFamily: 'monospace', fontSize: 11 }} />
+                <Chip size="small" label={p.type.toUpperCase()} color="default" variant="outlined" sx={{ minWidth: 50, fontSize: 10 }} />
+                <Chip size="small" label={PROVIDER_KIND_LABELS[p.kind] || p.kind} sx={{ minWidth: 100 }} />
+                <Typography variant="caption" color="text.secondary" sx={{ flex: 1, fontSize: 11 }}>
+                  {p.config?.baseUrl ? p.config.baseUrl as string : ''}
+                  {p.config?.model ? ` / ${p.config.model}` : ''}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={p.healthy ? 'UP' : 'DOWN'}
+                  color={p.healthy ? 'success' : 'error'}
+                  variant="outlined"
+                  title={p.detail || 'No health detail reported'}
+                  sx={{ minWidth: 50 }}
+                />
+                <IconButton size="small" onClick={() => handleEditProvider(p)} title="Edit provider">
+                  <EditIcon fontSize="small" />
+                </IconButton>
+                <IconButton size="small" color="error" onClick={() => handleDeleteProvider(p.id)} title="Delete provider">
+                  <DeleteForeverIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            ))}
+            {providers.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>No AI providers configured. Add one above.</Typography>}
+          </Stack>
+
+          {/* Task assignments */}
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Task Assignments</Typography>
+          <Stack spacing={1.5}>
+            {Object.entries(TASK_NAMES).map(([task, label]) => {
+              const t = taskType(task);
+              const candidates = providersByType(t);
+              return (
+                <Stack key={task} direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                  <Typography variant="body2" sx={{ minWidth: 160 }}>{label}</Typography>
+                  <FormControl size="small" sx={{ minWidth: 220 }}>
+                    <Select
+                      value={assignments[task] || ''}
+                      onChange={e => assignTask(task, e.target.value)}
+                      displayEmpty
+                    >
+                      <MenuItem value=""><em>Default (first available)</em></MenuItem>
+                      {candidates.map(p => (
+                        <MenuItem key={p.id} value={p.id}>{p.id} ({PROVIDER_KIND_LABELS[p.kind] || p.kind})</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  {candidates.length === 0 && (
+                    <Typography variant="caption" color="text.warning">No {t.toUpperCase()} providers available</Typography>
+                  )}
+                </Stack>
+              );
+            })}
+          </Stack>
+        </>
+      )}
+    </Paper>
   );
 }

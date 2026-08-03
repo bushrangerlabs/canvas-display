@@ -32,5 +32,16 @@ export const config = {
   // Home Assistant Supervisor — set automatically when running as HA add-on
   haSupervisorToken: process.env.HA_SUPERVISOR_TOKEN ?? null,
   haSupervisorUrl: process.env.HA_SUPERVISOR_URL ?? 'http://supervisor/core',
+  homeAssistantUrl: process.env.HOME_ASSISTANT_URL ?? process.env.HA_URL ?? 'http://homeassistant.local:8123',
+  homeAssistantToken: process.env.HOME_ASSISTANT_TOKEN ?? process.env.HA_TOKEN ?? '',
+  homeAssistantRefreshToken: process.env.HOME_ASSISTANT_REFRESH_TOKEN ?? '',
+  homeAssistantClientId: process.env.HOME_ASSISTANT_CLIENT_ID ?? '',
+  canvasMediaPlayerEntityId: process.env.CANVAS_MEDIA_PLAYER_ENTITY_ID ?? '',
+  youtubeApiKey: process.env.YOUTUBE_API_KEY ?? '',
+  youtubeRegionCode: process.env.YOUTUBE_REGION_CODE ?? 'AU',
+  youtubeRelevanceLanguage: process.env.YOUTUBE_RELEVANCE_LANGUAGE ?? 'en',
+  youtubeSafeSearch: process.env.YOUTUBE_SAFE_SEARCH ?? 'strict',
+  youtubePlayerOrigin: process.env.YOUTUBE_PLAYER_ORIGIN ?? 'http://127.0.0.1:3100/',
+  youtubeAllowRemoteSearch: (process.env.YOUTUBE_ALLOW_REMOTE_SEARCH ?? 'false').toLowerCase() === 'true',
   get isHaAddon(): boolean { return !!this.haSupervisorToken; },
 };

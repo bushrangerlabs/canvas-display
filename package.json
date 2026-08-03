@@ -1,0 +1,45 @@
+{
+  "name": "canvas-display-contracts-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "contracts:generate:ts": "tsx scripts/generate-contracts-ts.ts --write",
+    "contracts:generate:rust": "cargo run --locked --manifest-path tools/contracts-codegen/Cargo.toml -- --write",
+    "contracts:generate": "npm run contracts:generate:ts && npm run contracts:generate:rust",
+    "contracts:validate": "tsx scripts/validate-contracts.ts",
+    "contracts:check:ts": "tsx scripts/generate-contracts-ts.ts --check",
+    "contracts:check:rust": "cargo run --locked --manifest-path tools/contracts-codegen/Cargo.toml -- --check",
+    "contracts:check": "npm run contracts:check:ts && npm run contracts:check:rust",
+    "typecheck:contracts": "tsc -p tsconfig.contracts.json --noEmit",
+    "test:agent": "cargo test --locked --manifest-path edge/Cargo.toml -p canvas-edge-agent",
+    "test:simulator": "tsx --test edge/simulator/test/*.test.ts",
+    "test:conformance": "tsx --test tests/conformance/*.test.ts",
+    "test:admin-security": "tsx --test tests/admin-security/*.test.ts",
+        "test:local-ipc": "tsx --test tests/local-ipc/*.test.ts",
+    "test:pki": "tsx --test tests/pki/*.test.ts",
+    "test:fault-model": "tsx --test tests/fault-model/*.test.ts",
+    "test:compatibility": "tsx --test tests/compatibility/*.test.ts",
+    "test:command-catalog": "tsx --test tests/command-catalog/*.test.ts",
+    "test:state-model": "tsx --test tests/state-model/*.test.ts",
+    "test:fleet-load": "tsx --test tests/load/*.test.ts",
+    "test:scene-digest": "tsx --test tests/scene-digest/*.test.ts",
+    "test:scene-store": "tsx --test tests/scene-store/*.test.ts",
+    "test:regression": "tsx --test tests/regression/hermes-voice-media/*.test.ts",
+    "test:content-bridge": "tsx --test edge/content-bridge-prototype/test/*.test.ts",
+    "prototype:content-bridge": "tsx edge/content-bridge-prototype/manual.ts",
+    "test:contracts": "npm run contracts:validate && npm run contracts:check && npm run typecheck:contracts && npm run test:agent && npm run test:simulator && npm run test:conformance && npm run test:admin-security && npm run test:local-ipc && npm run test:pki && npm run test:fault-model && npm run test:compatibility && npm run test:command-catalog && npm run test:state-model && npm run test:fleet-load && npm run test:scene-digest && npm run test:scene-store && npm run test:regression && npm run test:content-bridge",
+    "ci:contracts": "npm run test:contracts"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.39",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "json-schema-to-typescript": "15.0.4",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3"
+  }
+}

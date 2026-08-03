@@ -1,0 +1,24 @@
+{
+  "id": "002-turn-off-light",
+  "transcript": "turn off the bedroom light",
+  "expected_intent": "light_set",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "light",
+        "service": "turn_off",
+        "service_data": {
+          "entity_id": "light.bedroom"
+        }
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["light.*", "switch.*", "scene.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["light.bedroom"]
+}

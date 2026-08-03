@@ -1,0 +1,9 @@
+{
+  "type": "protocol.error",
+  "protocol": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000040",
+  "sent_at": "2026-07-18T10:00:04.000Z",
+  "correlation_id": "0190f000-0000-7000-8000-000000000030",
+  "code": "invalid_message",
+  "message": "Message failed protocol v1 validation."
+}

@@ -1,0 +1,21 @@
+{
+  "id": "012-navigate-to-dashboard",
+  "transcript": "show me the dashboard for the kitchen",
+  "expected_intent": "navigation",
+  "expected_tool_calls": [
+    {
+      "tool": "canvas.navigate",
+      "arguments": {
+        "view": "dashboard",
+        "room": "kitchen"
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": true,
+    "entity_allowlist": [],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": []
+}

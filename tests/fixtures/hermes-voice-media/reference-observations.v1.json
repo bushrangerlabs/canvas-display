@@ -1,0 +1,255 @@
+{
+  "schema_version": "canvas.hermes-voice-media.observations/v1",
+  "description": "Sanitized adapter-neutral observations representing the accepted current/target behavior boundary. Endpoint labels are transport types only; no credentials or deployment addresses are present.",
+  "observations": [
+    {
+      "case_id": "youtube-title-i-should-be-so-lucky",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-lucky",
+          "source": "youtube",
+          "target": "Play I Should Be So Lucky on YouTube"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.webview.opened", "correlation_id": "playback-lucky", "state": "opened" },
+        { "kind": "edge.media.state", "correlation_id": "playback-lucky", "state": "ready" },
+        { "kind": "edge.media.state", "correlation_id": "playback-lucky", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "youtube-title-radioactive-is-search-text",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-radioactive",
+          "source": "youtube",
+          "target": "Radioactive"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.media.state", "correlation_id": "playback-radioactive", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "youtube-url-direct-short",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-direct",
+          "source": "youtube",
+          "target": "https://youtu.be/qK6IGnNeHn4"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.media.state", "correlation_id": "playback-direct", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "youtube-url-malformed-watch-path",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-malformed-watch",
+          "source": "youtube",
+          "target": "https://www.youtube.com/watch/qK6IGnNeHn4"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.media.state", "correlation_id": "playback-malformed-watch", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "youtube-url-search-results",
+      "adapter": "hermes-reference",
+      "intent": "media.search.youtube",
+      "actions": [
+        {
+          "kind": "media.search",
+          "status": "issued",
+          "correlation_id": "youtube-search-lucky",
+          "source": "youtube",
+          "target": "https://www.youtube.com/results?search_query=I+Should+Be+So+Lucky"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "navigation.result", "correlation_id": "youtube-search-lucky", "state": "opened" }
+      ]
+    },
+    {
+      "case_id": "youtube-url-nested-malformed-search-play",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-nested-search",
+          "source": "youtube",
+          "target": "https://www.youtube.com/results?search_query=https%3A%2F%2Fwww..com%2Fresults%3Fsearch_query%3DI%2BShould%2BBe%2BSo%2BLucky"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.media.state", "correlation_id": "playback-nested-search", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "youtube-url-embed",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-embed",
+          "source": "youtube",
+          "target": "https://www.youtube.com/embed/qK6IGnNeHn4?autoplay=1"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.media.state", "correlation_id": "playback-embed", "state": "playing" }
+      ]
+    },
+    {
+      "case_id": "clarification-ambiguous-website",
+      "adapter": "hermes-reference",
+      "intent": "conversation.clarify",
+      "actions": [],
+      "safety": { "decision": "no_action", "risk": "none" },
+      "events": []
+    },
+    {
+      "case_id": "clarification-cancel-no-action",
+      "adapter": "hermes-reference",
+      "intent": "conversation.cancel",
+      "actions": [],
+      "safety": { "decision": "no_action", "risk": "none" },
+      "events": []
+    },
+    {
+      "case_id": "general-answer-no-action",
+      "adapter": "hermes-reference",
+      "intent": "answer.general",
+      "actions": [],
+      "safety": { "decision": "no_action", "risk": "none" },
+      "events": []
+    },
+    {
+      "case_id": "navigation-explicit-url",
+      "adapter": "hermes-reference",
+      "intent": "display.navigate",
+      "actions": [
+        {
+          "kind": "display.navigate",
+          "status": "issued",
+          "correlation_id": "navigate-main",
+          "target": "https://example.com/status",
+          "panel": "main"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "navigation.result", "correlation_id": "navigate-main", "state": "opened" }
+      ]
+    },
+    {
+      "case_id": "home-assistant-harmless-light-on",
+      "adapter": "hermes-reference",
+      "intent": "home_assistant.control",
+      "actions": [
+        {
+          "kind": "home_assistant.call_service",
+          "status": "issued",
+          "correlation_id": "ha-light-on",
+          "entity_id": "light.reading_lamp",
+          "service": "turn_on"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "tool.result", "correlation_id": "ha-light-on", "state": "succeeded" }
+      ]
+    },
+    {
+      "case_id": "home-assistant-sensitive-unlock-confirmation",
+      "adapter": "hermes-reference",
+      "intent": "home_assistant.control",
+      "actions": [
+        {
+          "kind": "home_assistant.call_service",
+          "status": "proposed",
+          "correlation_id": "ha-unlock-proposal",
+          "entity_id": "lock.front_door",
+          "service": "unlock"
+        }
+      ],
+      "safety": { "decision": "require_confirmation", "risk": "high" },
+      "events": []
+    },
+    {
+      "case_id": "voice-asr-timeout",
+      "adapter": "hermes-reference",
+      "intent": "voice.asr_timeout",
+      "actions": [],
+      "safety": { "decision": "no_action", "risk": "none" },
+      "asr": { "status": "timeout", "provider": "asr-adapter" },
+      "events": [
+        { "kind": "edge.audio_focus", "state": "restored" }
+      ]
+    },
+    {
+      "case_id": "hermes-transport-websocket-http-fallback",
+      "adapter": "hermes-reference",
+      "intent": "answer.general",
+      "actions": [],
+      "safety": { "decision": "no_action", "risk": "none" },
+      "transport": {
+        "attempts": [
+          { "channel": "websocket", "outcome": "failed", "failure_code": "endpoint_not_available" },
+          { "channel": "http", "outcome": "succeeded" }
+        ],
+        "selected": "http"
+      },
+      "events": []
+    },
+    {
+      "case_id": "youtube-webview-open-is-not-playing",
+      "adapter": "hermes-reference",
+      "intent": "media.play.youtube",
+      "actions": [
+        {
+          "kind": "media.play",
+          "status": "issued",
+          "correlation_id": "playback-open-only",
+          "source": "youtube",
+          "target": "https://www.youtube.com/watch?v=abc123DEF45"
+        }
+      ],
+      "safety": { "decision": "allow", "risk": "low" },
+      "events": [
+        { "kind": "edge.webview.opened", "correlation_id": "playback-open-only", "state": "opened" },
+        { "kind": "edge.media.state", "correlation_id": "playback-open-only", "state": "ready" }
+      ]
+    }
+  ]
+}

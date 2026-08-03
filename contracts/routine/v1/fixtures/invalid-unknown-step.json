@@ -1,0 +1,1 @@
+{"schemaVersion":1,"name":"Bad routine","owner":"canvas_core","triggers":[],"inputs":{},"steps":[{"id":"bad","kind":"shell","config":{}}],"result":{},"limits":{"timeoutMs":30000,"maxSteps":20,"maxRoutineDepth":3}}

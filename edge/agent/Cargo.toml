@@ -1,0 +1,45 @@
+[package]
+name = "canvas-edge-agent"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "canvas_edge_agent"
+path = "src/lib.rs"
+
+[dependencies]
+chrono.workspace = true
+regress.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+libc.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+rustls.workspace = true
+flume.workspace = true
+futures-util.workspace = true
+# `reqwest` with `rustls-tls` (NOT `native-tls`) so the agent cross-compiles for
+# `aarch64-unknown-linux-gnu` without a cross-compiled system OpenSSL, mirroring the TLS choice
+# already made by `edge/agent/src/transport/` (`tokio-tungstenite` with `rustls-tls-webpki-roots`)
+# and `edge/updater/src/fetch.rs`. The blocking client is used so the enrollment handshake stays
+# synchronous and can run on a plain `std::thread` off the transport thread, confining async to
+# the single WS runtime per ADR 0009.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+base64 = "0.22"
+# `tiny_http` is the loopback Content Bridge HTTP server (architecture plan §17.3, P-006). It is a
+# minimal blocking HTTP server that matches the daemon's synchronous style (ADR 0009): the bridge
+# runs on its own `std::thread`, NOT tokio, exactly like the IPC accept loop. It binds to
+# `127.0.0.1` only, so it is structurally incapable of exposing a LAN surface.
+tiny_http = "0.12"
+
+[dev-dependencies]
+jsonschema.workspace = true
+tempfile.workspace = true
+canvas-dev-gateway-harness = { path = "../dev-gateway-harness" }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }

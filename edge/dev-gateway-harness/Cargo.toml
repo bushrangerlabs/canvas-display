@@ -1,0 +1,15 @@
+[package]
+name = "canvas-dev-gateway-harness"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "canvas_dev_gateway_harness"
+path = "src/lib.rs"
+
+[dependencies]
+canvas-edge-agent = { path = "../agent" }
+ed25519-dalek.workspace = true
+rand.workspace = true
+sha2.workspace = true

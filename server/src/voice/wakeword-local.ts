@@ -17,7 +17,8 @@
  *   wwd.stop();
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execFile } from 'child_process';
+import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import { existsSync, writeFileSync } from 'fs';
 import { homedir, tmpdir } from 'os';
@@ -28,6 +29,26 @@ function findPython3(): string {
   const venvPy = join(homedir(), '.venv', 'oww', 'bin', 'python3');
   if (existsSync(venvPy)) return venvPy;
   return 'python3';
+}
+
+const execFileAsync = promisify(execFile);
+
+export async function listInstalledWakeWords(): Promise<Array<{ id: string; name: string }>> {
+  const script = [
+    'import glob, json, os, openwakeword',
+    'root=os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")',
+    'files=glob.glob(os.path.join(root, "*.tflite"))+glob.glob(os.path.join(root, "*.onnx"))',
+    'names=sorted(set(os.path.splitext(os.path.basename(p))[0].split("_v")[0] for p in files))',
+    'print(json.dumps(names))',
+  ].join(';');
+  try {
+    const { stdout } = await execFileAsync(findPython3(), ['-c', script], { timeout: 3000 });
+    const names = (JSON.parse(stdout.trim()) as string[])
+      .filter(id => !['embedding_model', 'melspectrogram', 'silero', 'silero_vad'].includes(id));
+    return names.map(id => ({ id: id === 'ok_nabu' ? 'okay_nabu' : id, name: id.replace(/_/g, ' ') }));
+  } catch {
+    return [{ id: 'hey_jarvis', name: 'hey jarvis' }];
+  }
 }
 
 // Python script written to /tmp at startup.
@@ -90,7 +111,10 @@ def main():
     print(f"loading model: {os.path.basename(model_path)} ({framework})", file=sys.stderr, flush=True)
 
     try:
-        oww = Model(wakeword_model_paths=[model_path], inference_framework=framework)
+        # openWakeWord selects the runtime from the model path. Passing
+        # inference_framework breaks current releases because the kwarg is forwarded to
+        # AudioFeatures, which does not accept it.
+        oww = Model(wakeword_model_paths=[model_path])
     except Exception as e:
         print(f"error: failed to load model '{model_name}': {e}", file=sys.stderr, flush=True)
         sys.exit(3)
@@ -112,7 +136,7 @@ def main():
         prediction = oww.predict(audio)
         for ww, score in prediction.items():
             if score >= threshold:
-                print(f"detected:{ww}", flush=True)
+                print(f"detected:{ww}:{score:.6f}", flush=True)
                 oww.reset()
                 break
 
@@ -122,13 +146,15 @@ if __name__ == "__main__":
 
 export class WakeWordDetector extends EventEmitter {
   private wakeWord: string;
+  private threshold: number;
   private scriptPath: string;
   private proc: ChildProcess | null = null;
   private _ready = false;
 
-  constructor(wakeWord: string) {
+  constructor(wakeWord: string, threshold = 0.5) {
     super();
     this.wakeWord = wakeWord;
+    this.threshold = Math.max(0, Math.min(1, threshold));
     this.scriptPath = join(tmpdir(), 'canvas-display-wakeword.py');
     try {
       writeFileSync(this.scriptPath, PYTHON_SCRIPT.trimStart(), { mode: 0o644 });
@@ -146,23 +172,25 @@ export class WakeWordDetector extends EventEmitter {
     const modelName = this.wakeWord.replace(/ /g, '_');
     const python = findPython3();
     console.log('[wakeword] Using Python:', python);
-    this.proc = spawn(python, [this.scriptPath, modelName], {
+    const proc = spawn(python, [this.scriptPath, modelName, String(this.threshold)], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    this.proc = proc;
 
-    this.proc.stdout?.on('data', (data: Buffer) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       for (const line of data.toString().split('\n')) {
         const msg = line.trim();
         if (msg === 'ready') {
           this._ready = true;
           this.emit('ready');
         } else if (msg.startsWith('detected:')) {
-          this.emit('detected');
+          const score = Number.parseFloat(msg.split(':').at(-1) ?? '');
+          this.emit('detected', Number.isFinite(score) ? score : this.threshold);
         }
       }
     });
 
-    this.proc.stderr?.on('data', (data: Buffer) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
       if (!msg) return;
       if (msg.startsWith('error:')) {
@@ -176,7 +204,10 @@ export class WakeWordDetector extends EventEmitter {
       }
     });
 
-    this.proc.on('close', (code) => {
+    proc.on('close', (code) => {
+      // stop()/restart() detaches this child before signalling it. Ignore its
+      // eventual close so it cannot mark the replacement detector failed.
+      if (this.proc !== proc) return;
       const wasReady = this._ready;
       this._ready = false;
       this.proc = null;
@@ -198,7 +229,8 @@ export class WakeWordDetector extends EventEmitter {
       }
     });
 
-    this.proc.on('error', (err) => {
+    proc.on('error', (err) => {
+      if (this.proc !== proc) return;
       this._ready = false;
       this.proc = null;
       console.error('[wakeword] Failed to spawn Python (tried', findPython3() + '):', err.message);
@@ -221,5 +253,11 @@ export class WakeWordDetector extends EventEmitter {
       try { this.proc.kill('SIGTERM'); } catch { /* ignore */ }
       this.proc = null;
     }
+  }
+
+  /** Discard queued PCM and reset model state without replacing this object. */
+  restart(): void {
+    this.stop();
+    this.start();
   }
 }

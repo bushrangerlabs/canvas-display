@@ -1,0 +1,24 @@
+{
+  "id": "007-activate-scene",
+  "transcript": "activate movie night scene",
+  "expected_intent": "scene_activate",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "scene",
+        "service": "turn_on",
+        "service_data": {
+          "entity_id": "scene.movie_night"
+        }
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["scene.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["scene.movie_night"]
+}

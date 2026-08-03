@@ -58,8 +58,17 @@ export async function commandRoutes(app: FastifyInstance) {
 
   // POST /api/commands/page — push a page to the display (by id or name)
   app.post<{ Body: any }>('/commands/page', async (req, reply) => {
+    const body: Record<string, any> = req.body ?? {};
+    if (body.page_data && typeof body.page_data === 'object' && Array.isArray(body.page_data.panels)) {
+      const pageData = body.page_data;
+      const pageId = String(pageData.id ?? body.page_id ?? '');
+      if (!pageId) return reply.code(400).send({ error: 'inline page requires an id' });
+      broadcast({ type: 'load_page', page_id: pageId, page_data: pageData }, 'browser');
+      return { success: true, page_id: pageId, page_name: pageData.name ?? pageId, inline: true };
+    }
+
     const db = getDb();
-    const page = resolvePage(db, req.body ?? {});
+    const page = resolvePage(db, body);
     if (!page) return reply.code(404).send({ error: 'Page not found' });
 
     db.prepare(

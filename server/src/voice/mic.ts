@@ -216,3 +216,54 @@ export class MicCapture extends EventEmitter {
     });
   }
 }
+
+/** Capture a bounded PCM sample and return a browser-playable WAV payload. */
+export async function testMicCapture(device = 'default', durationMs = 1000): Promise<{
+  ok: boolean;
+  sample?: string;
+  format?: 'wav';
+  duration_ms: number;
+  error?: string;
+}> {
+  const boundedDuration = Math.max(250, Math.min(5000, Math.round(durationMs)));
+  const mic = new MicCapture(device);
+  const chunks: Buffer[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, boundedDuration);
+      mic.on('data', (chunk: Buffer) => chunks.push(chunk));
+      mic.once('error', (error: Error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      mic.start();
+    });
+  } catch (error) {
+    await mic.stop();
+    return { ok: false, duration_ms: boundedDuration, error: error instanceof Error ? error.message : String(error) };
+  }
+  await mic.stop();
+  const pcm = Buffer.concat(chunks);
+  if (!pcm.length) return { ok: false, duration_ms: boundedDuration, error: 'Microphone captured no audio' };
+
+  const wav = Buffer.alloc(44 + pcm.length);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + pcm.length, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  return {
+    ok: true,
+    sample: `base64:${wav.toString('base64')}`,
+    format: 'wav',
+    duration_ms: boundedDuration,
+  };
+}

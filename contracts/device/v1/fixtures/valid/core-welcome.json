@@ -1,0 +1,16 @@
+{
+  "type": "core.welcome",
+  "message_id": "0190f000-0000-7000-8000-000000000002",
+  "sent_at": "2026-07-18T10:00:00.050Z",
+  "protocol": 1,
+  "session_id": "0190f000-0000-7000-8000-000000000003",
+  "heartbeat_seconds": 20,
+  "core_time": "2026-07-18T10:00:00.050Z",
+  "resume": {
+    "accepted": true,
+    "core_stream_epoch": "0190efff-0000-7000-8000-000000000010",
+    "edge_stream_epoch": "0190efff-0000-7000-8000-000000000011",
+    "next_core_sequence": 1
+  },
+  "desired_revision": 1
+}

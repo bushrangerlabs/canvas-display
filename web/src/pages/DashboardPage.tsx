@@ -1,193 +1,220 @@
 /**
- * DashboardPage — home page showing system status at a glance.
+ * DashboardPage — Canvas Core system overview.
+ *
+ * Shows Core health, connected device count, provider status, active scenes,
+ * and recent voice turns (via shadow-mode status / report).
  */
 import { useEffect, useState, useCallback } from 'react';
-import {
-  Box, Typography, Paper, Stack, Chip, Button, CircularProgress,
-  Divider,
-} from '@mui/material';
-import WifiIcon from '@mui/icons-material/Wifi';
-import WifiOffIcon from '@mui/icons-material/WifiOff';
-import LayersIcon from '@mui/icons-material/Layers';
+import { Box, Stack, Typography, Chip, Paper, Divider, Button } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import SendIcon from '@mui/icons-material/Send';
+import DevicesIcon from '@mui/icons-material/Devices';
+import HubIcon from '@mui/icons-material/Hub';
+import GridViewIcon from '@mui/icons-material/GridView';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { useNavigate } from 'react-router-dom';
-import { api, pagesApi } from '../api/client';
-import type { Page } from '../types';
+import { coreApi, ApiError, type ProviderHealth, type DeviceRow, type SceneRecord, type ShadowModeStatus } from '../api/client';
+import { PageHeader, PageBody, StatCard, LoadingBox, ErrorBanner } from '../components/ui';
 
-interface MqttStatus {
-  enabled: boolean;
-  url: string;
-  connected: boolean;
-}
-
-interface ServerSettings {
-  device_name: string;
-  active_page_id?: string;
-  [key: string]: string | undefined;
-}
-
-function StatusCard({ label, value, ok, sub }: { label: string; value: string; ok?: boolean; sub?: string }) {
-  return (
-    <Paper sx={{ p: 2.5, flex: 1 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 0.5 }}>
-        {label}
-      </Typography>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 0.5 }}>
-        {ok === true  && <CheckCircleIcon sx={{ color: 'success.main', fontSize: 18 }} />}
-        {ok === false && <ErrorIcon       sx={{ color: 'error.main',   fontSize: 18 }} />}
-        <Typography variant="h6" sx={{ fontSize: 15, fontWeight: 600 }}>{value}</Typography>
-      </Stack>
-      {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
-    </Paper>
-  );
+interface State {
+  coreOk: boolean | null;
+  providers: ProviderHealth[];
+  devices: DeviceRow[];
+  scenes: SceneRecord[];
+  shadow: ShadowModeStatus | null;
+  loading: boolean;
+  error: string | null;
 }
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [serverOk, setServerOk] = useState(false);
-  const [settings, setSettings] = useState<ServerSettings | null>(null);
-  const [mqtt, setMqtt] = useState<MqttStatus | null>(null);
-  const [pages, setPages] = useState<Page[]>([]);
-  const [activePage, setActivePage] = useState<Page | null>(null);
+  const [state, setState] = useState<State>({
+    coreOk: null, providers: [], devices: [], scenes: [], shadow: null,
+    loading: true, error: null,
+  });
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setState(s => ({ ...s, loading: true, error: null }));
     try {
-      const [health, s, m, pgs] = await Promise.all([
-        api.get<{ ok: boolean }>('/health').then(() => true).catch(() => false),
-        api.get<ServerSettings>('/api/settings').catch(() => null),
-        api.get<MqttStatus>('/api/settings/mqtt').catch(() => null),
-        pagesApi.list().catch(() => [] as Page[]),
+      const [health, providers, devices, scenes, shadow] = await Promise.all([
+        coreApi.health().then(() => true).catch(() => false),
+        coreApi.providers().then(r => r.providers).catch(() => [] as ProviderHealth[]),
+        coreApi.devices().then(r => r.devices).catch((e) => {
+          if (e instanceof ApiError && e.status === 401) return [] as DeviceRow[];
+          throw e;
+        }),
+        coreApi.scenes().then(r => r.scenes).catch((e) => {
+          if (e instanceof ApiError && e.status === 401) return [] as SceneRecord[];
+          throw e;
+        }),
+        coreApi.shadowStatus().catch((e) => {
+          if (e instanceof ApiError && e.status === 401) return null;
+          return null;
+        }),
       ]);
-      setServerOk(health as boolean);
-      setSettings(s);
-      setMqtt(m);
-      setPages(pgs);
-      if (s?.active_page_id) {
-        setActivePage(pgs.find(p => p.id === s.active_page_id) ?? null);
-      }
-    } finally {
-      setLoading(false);
+      setState({ coreOk: health, providers, devices, scenes, shadow, loading: false, error: null });
+    } catch (err) {
+      setState(s => ({ ...s, loading: false, error: (err as Error).message }));
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  async function activatePage(page: Page) {
-    await pagesApi.push(page.id);
-    setActivePage(page);
-    if (settings) setSettings({ ...settings, active_page_id: page.id });
-  }
+  const onlineDevices = state.devices.filter(d => d.status === 'online' || d.paired);
+  const publishedScenes = state.scenes.filter(s => s.status === 'published');
+  const healthyProviders = state.providers.filter(p => p.healthy);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Header */}
-      <Box sx={{ px: 2.5, py: 1.5, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Typography variant="h6" sx={{ flex: 1, fontWeight: 600 }}>Dashboard</Typography>
-        <Button size="small" startIcon={loading ? <CircularProgress size={12} /> : <RefreshIcon />} onClick={load} disabled={loading}>
-          Refresh
-        </Button>
-      </Box>
-
-      <Box sx={{ flex: 1, overflowY: 'auto', p: 3 }}>
-        <Stack spacing={3} sx={{ maxWidth: 800 }}>
-
-          {/* Status row */}
-          <Stack direction="row" spacing={2}>
-            <StatusCard
-              label="Server"
-              value={serverOk ? 'Running' : 'Offline'}
-              ok={serverOk}
-              sub={`Port ${settings?.server_port ?? '3100'}`}
-            />
-            <StatusCard
-              label="MQTT"
-              value={!mqtt?.enabled ? 'Disabled' : mqtt.connected ? 'Connected' : 'Disconnected'}
-              ok={!mqtt?.enabled ? undefined : mqtt.connected}
-              sub={mqtt?.enabled ? mqtt.url : undefined}
-            />
-            <StatusCard
-              label="Pages"
-              value={String(pages.length)}
-              sub={`${activePage ? `Active: ${activePage.name}` : 'None active'}`}
-            />
-          </Stack>
-
-          {/* Active page */}
-          <Paper sx={{ p: 3 }}>
-            <Stack direction="row" sx={{ alignItems: 'center', mb: 2 }}>
-              <LayersIcon sx={{ color: 'primary.main', mr: 1 }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>Active Page</Typography>
-              <Button size="small" variant="outlined" onClick={() => navigate('/pages')}>Manage Pages</Button>
-            </Stack>
-
-            {activePage ? (
-              <>
-                <Typography variant="body1" sx={{ fontWeight: 500 }}>{activePage.name}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {activePage.panels?.length ?? 0} panel{activePage.panels?.length === 1 ? '' : 's'} · ID: {activePage.id}
-                </Typography>
-              </>
-            ) : (
-              <Typography variant="body2" color="text.secondary">No page is currently active on the kiosk.</Typography>
-            )}
-
-            {pages.length > 0 && (
-              <>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                  Activate a page:
-                </Typography>
-                <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 1 }}>
-                  {pages.map(p => (
-                    <Chip
-                      key={p.id}
-                      label={p.name}
-                      size="small"
-                      onClick={() => activatePage(p)}
-                      icon={<SendIcon sx={{ fontSize: '12px !important' }} />}
-                      color={activePage?.id === p.id ? 'primary' : 'default'}
-                      variant={activePage?.id === p.id ? 'filled' : 'outlined'}
-                      clickable
-                    />
-                  ))}
-                </Stack>
-              </>
-            )}
-          </Paper>
-
-          {/* MQTT details */}
-          {mqtt && (
-            <Paper sx={{ p: 3 }}>
-              <Stack direction="row" sx={{ alignItems: 'center', mb: 2 }}>
-                {mqtt.connected
-                  ? <WifiIcon sx={{ color: 'success.main', mr: 1 }} />
-                  : <WifiOffIcon sx={{ color: 'text.disabled', mr: 1 }} />}
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>MQTT</Typography>
-                <Button size="small" variant="outlined" onClick={() => navigate('/settings')}>Configure</Button>
+      <PageHeader title="Dashboard" subtitle="Canvas Core system overview" onRefresh={load} loading={state.loading} />
+      <PageBody>
+        <Stack spacing={3} sx={{ maxWidth: 960, mx: 'auto' }}>
+          {state.error && <ErrorBanner error={state.error} onRetry={load} />}
+          {state.loading && state.coreOk === null ? (
+            <LoadingBox label="Probing Core…" />
+          ) : (
+            <>
+              {/* Status row */}
+              <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
+                <StatCard
+                  label="Canvas Core"
+                  value={state.coreOk ? 'Online' : 'Offline'}
+                  ok={state.coreOk ?? false}
+                  sub="centralized control plane"
+                />
+                <StatCard
+                  label="Devices"
+                  value={String(state.devices.length)}
+                  sub={`${onlineDevices.length} paired/online`}
+                />
+                <StatCard
+                  label="Scenes"
+                  value={String(state.scenes.length)}
+                  sub={`${publishedScenes.length} published`}
+                />
+                <StatCard
+                  label="Providers"
+                  value={`${healthyProviders.length}/${state.providers.length}`}
+                  ok={state.providers.length === 0 ? undefined : healthyProviders.length === state.providers.length}
+                  sub="AI brain services"
+                />
               </Stack>
-              {!mqtt.enabled ? (
-                <Typography variant="body2" color="text.secondary">MQTT is disabled. Enable it in Settings to control the kiosk from automations.</Typography>
-              ) : (
-                <Stack spacing={0.5}>
-                  <Typography variant="body2">Broker: <code>{mqtt.url}</code></Typography>
-                  <Typography variant="body2">
-                    Status: <Chip size="small" label={mqtt.connected ? 'Connected' : 'Disconnected'} color={mqtt.connected ? 'success' : 'default'} />
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    Topic prefix: <code>canvas_display/{settings?.device_name ?? 'device'}/</code>
-                  </Typography>
-                </Stack>
-              )}
-            </Paper>
-          )}
 
+              {/* Provider status */}
+              <Paper sx={{ p: 2.5 }}>
+                <Stack direction="row" sx={{ alignItems: 'center', mb: 2 }}>
+                  <HubIcon sx={{ color: 'primary.main', mr: 1, fontSize: 20 }} />
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>Provider Health</Typography>
+                  <Button size="small" variant="outlined" onClick={() => navigate('/intelligence')}>Details</Button>
+                </Stack>
+                {state.providers.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No providers configured. Set LLM/Whisper/Piper/MCP URLs in Settings.
+                  </Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {state.providers.map(p => (
+                      <Stack key={p.name} direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                        {p.healthy
+                          ? <CheckCircleIcon sx={{ color: 'success.main', fontSize: 18 }} />
+                          : <ErrorIcon sx={{ color: 'error.main', fontSize: 18 }} />}
+                        <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 60 }}>{p.name}</Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                          {p.kind}{p.detail ? ` · ${p.detail}` : ''}
+                        </Typography>
+                        {p.latencyMs !== undefined && (
+                          <Chip size="small" label={`${p.latencyMs}ms`} variant="outlined" sx={{ fontSize: 10 }} />
+                        )}
+                      </Stack>
+                    ))}
+                  </Stack>
+                )}
+              </Paper>
+
+              {/* Devices + Scenes quick view */}
+              <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
+                <Paper sx={{ p: 2.5, flex: 1, minWidth: 280 }}>
+                  <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
+                    <DevicesIcon sx={{ color: 'primary.main', mr: 1, fontSize: 20 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>Devices</Typography>
+                    <Button size="small" variant="outlined" onClick={() => navigate('/devices')}>Manage</Button>
+                  </Stack>
+                  <Divider sx={{ mb: 1 }} />
+                  {state.devices.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">No devices registered.</Typography>
+                  ) : (
+                    <Stack spacing={0.5}>
+                      {state.devices.slice(0, 5).map(d => (
+                        <Stack key={d.id} direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: d.paired ? 'success.main' : 'text.disabled' }} />
+                          <Typography variant="body2" sx={{ flex: 1, fontSize: 13 }}>{d.name}</Typography>
+                          <Chip size="small" label={d.authority_mode} variant="outlined" sx={{ fontSize: 10 }} />
+                        </Stack>
+                      ))}
+                      {state.devices.length > 5 && (
+                        <Typography variant="caption" color="text.secondary">+{state.devices.length - 5} more</Typography>
+                      )}
+                    </Stack>
+                  )}
+                </Paper>
+
+                <Paper sx={{ p: 2.5, flex: 1, minWidth: 280 }}>
+                  <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
+                    <GridViewIcon sx={{ color: 'primary.main', mr: 1, fontSize: 20 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>Scenes</Typography>
+                    <Button size="small" variant="outlined" onClick={() => navigate('/scenes')}>Manage</Button>
+                  </Stack>
+                  <Divider sx={{ mb: 1 }} />
+                  {state.scenes.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">No scenes yet. Create one in the editor.</Typography>
+                  ) : (
+                    <Stack spacing={0.5}>
+                      {state.scenes.slice(0, 5).map(s => (
+                        <Stack key={s.id} direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                          <Typography variant="body2" sx={{ flex: 1, fontSize: 13 }}>{s.name}</Typography>
+                          <Chip size="small" label={s.status} color={s.status === 'published' ? 'success' : 'default'} variant="outlined" sx={{ fontSize: 10 }} />
+                        </Stack>
+                      ))}
+                    </Stack>
+                  )}
+                </Paper>
+              </Stack>
+
+              {/* AI Brain status */}
+              <Paper sx={{ p: 2.5 }}>
+                <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
+                  <PsychologyIcon sx={{ color: 'primary.main', mr: 1, fontSize: 20 }} />
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>AI Brain</Typography>
+                  <Button size="small" variant="outlined" onClick={() => navigate('/intelligence')}>Open</Button>
+                </Stack>
+                <Divider sx={{ mb: 1 }} />
+                {state.shadow ? (
+                  <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
+                    <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                      <Typography variant="caption" color="text.secondary">Shadow mode:</Typography>
+                      <Chip size="small" label={state.shadow.active ? 'active' : 'idle'} color={state.shadow.active ? 'success' : 'default'} variant="outlined" sx={{ fontSize: 10 }} />
+                    </Stack>
+                    <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                      <Typography variant="caption" color="text.secondary">Hermes:</Typography>
+                      <Chip size="small" label={state.shadow.hermes_configured ? 'configured' : 'off'} variant="outlined" sx={{ fontSize: 10 }} />
+                    </Stack>
+                    {state.shadow.corpus_size !== null && (
+                      <Stack direction="row" sx={{ alignItems: 'center', gap: 1 }}>
+                        <Typography variant="caption" color="text.secondary">Corpus:</Typography>
+                        <Chip size="small" label={`${state.shadow.corpus_size}`} variant="outlined" sx={{ fontSize: 10 }} />
+                      </Stack>
+                    )}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    Sign in as admin to view AI brain status.
+                  </Typography>
+                )}
+              </Paper>
+            </>
+          )}
         </Stack>
-      </Box>
+      </PageBody>
     </Box>
   );
 }

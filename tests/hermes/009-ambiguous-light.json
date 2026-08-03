@@ -1,0 +1,22 @@
+{
+  "id": "009-ambiguous-light",
+  "transcript": "turn on the light",
+  "expected_intent": "light_set",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {}
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["light.*", "switch.*", "scene.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": true,
+  "expected_entities": []
+}

@@ -1,0 +1,28 @@
+{
+  "id": "005-play-music",
+  "transcript": "play some jazz music in the office",
+  "expected_intent": "media_play",
+  "expected_tool_calls": [
+    {
+      "tool": "media.search",
+      "arguments": {
+        "query": "jazz music",
+        "media_type": "music"
+      }
+    },
+    {
+      "tool": "media.play",
+      "arguments": {
+        "device": "office_speaker",
+        "media_type": "music"
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["media_player.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["media_player.office_speaker"]
+}

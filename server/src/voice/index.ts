@@ -32,6 +32,12 @@ const BUILTIN_WAKE_ACK_SOUNDS = new Set([
 
 function resolveWakeAckSound(raw: string): string {
   const value = (raw ?? '').trim();
+  if (value.startsWith('custom:')) {
+    const fileName = value.slice('custom:'.length);
+    return /^[a-f0-9]{64}\.(wav|mp3|ogg|flac)$/.test(fileName)
+      ? path.join(config.dataDir, 'voice-cues', fileName)
+      : '';
+  }
   if (!value.startsWith('builtin:')) return value;
 
   const preset = value.slice('builtin:'.length).trim();
@@ -70,6 +76,10 @@ export function loadSettingsFromDb(): SatelliteSettings {
     ttsVolume:    parseInt(dbGet('voice_tts_volume', process.env.VOICE_TTS_VOLUME ?? '80')),
     wakeAckEnabled: dbGet('voice_wake_ack_enabled', process.env.VOICE_WAKE_ACK_ENABLED ?? '0') === '1',
     wakeAckSound: resolveWakeAckSound(dbGet('voice_wake_ack_sound', process.env.VOICE_WAKE_ACK_SOUND ?? '')),
+    goodIntentEnabled: dbGet('voice_good_intent_enabled', '1') === '1',
+    goodIntentSound: resolveWakeAckSound(dbGet('voice_good_intent_sound', 'builtin:digital_pop')),
+    noIntentEnabled: dbGet('voice_no_intent_enabled', '1') === '1',
+    noIntentSound: resolveWakeAckSound(dbGet('voice_no_intent_sound', 'builtin:wood_tap')),
   };
 }
 
@@ -101,6 +111,10 @@ let _settings: SatelliteSettings = {
   ttsVolume:    80,
   wakeAckEnabled: false,
   wakeAckSound: '',
+  goodIntentEnabled: true,
+  goodIntentSound: '',
+  noIntentEnabled: true,
+  noIntentSound: '',
 };
 
 export async function startVoiceServer(): Promise<void> {
@@ -158,5 +172,3 @@ export function updateVoiceSettings(settings: Partial<SatelliteSettings>): void 
     _satellite.updateSettings(next);
   }
 }
-
-

@@ -30,8 +30,12 @@ export interface SatelliteSettings {
   micDevice: string;
   wakeWord: string;
   ttsVolume: number;
-    wakeAckEnabled: boolean;
-    wakeAckSound: string;
+  wakeAckEnabled: boolean;
+  wakeAckSound: string;
+  goodIntentEnabled: boolean;
+  goodIntentSound: string;
+  noIntentEnabled: boolean;
+  noIntentSound: string;
 }
 
 /** Prefer the canvas-display OWW venv if present, fall back to system python3. */
@@ -344,6 +348,7 @@ class VoiceSatellite(asyncio.Protocol):
         self._pipeline_active = False   # True → ignore new wake words
         self._tts_proc = None
         self._wake_ack_proc = None
+        self._intent_cue_played = False
 
         # Mic / wake word (background thread)
         self._mic_thread: Optional[threading.Thread] = None
@@ -508,6 +513,9 @@ class VoiceSatellite(asyncio.Protocol):
             self._streaming = False
             _LOGGER.debug("Speech ended — audio stream stopped")
 
+        if et == _EVT_INTENT_END:
+            self._play_intent_cue(True)
+
         elif et == _EVT_TTS_END:
             url = data.get("url", "")
             if url:
@@ -522,6 +530,7 @@ class VoiceSatellite(asyncio.Protocol):
             self._ensure_mic_running()
 
         elif et == _EVT_TIMED_OUT:
+            self._play_intent_cue(False)
             self._streaming = False
             self._pipeline_active = False
             self._wake_word_active = True
@@ -529,6 +538,7 @@ class VoiceSatellite(asyncio.Protocol):
             self._ensure_mic_running()
 
         elif et == _EVT_ERROR:
+            self._play_intent_cue(False)
             code = data.get("code", "?")
             message = data.get("message", "")
             _LOGGER.error("Pipeline error [%s]: %s", code, message)
@@ -536,6 +546,26 @@ class VoiceSatellite(asyncio.Protocol):
             self._pipeline_active = False
             self._wake_word_active = True
             self._ensure_mic_running()
+
+    def _play_intent_cue(self, good: bool) -> None:
+        """Play one result cue at most once, before any queued TTS response."""
+        import subprocess as _sp
+        if self._intent_cue_played:
+            return
+        self._intent_cue_played = True
+        enabled = self.config.good_intent_enabled if good else self.config.no_intent_enabled
+        sound = self.config.good_intent_sound if good else self.config.no_intent_sound
+        if not bool(enabled) or not sound:
+            return
+        try:
+            _sp.run(
+                ["mpv", "--no-video", "--really-quiet", "--volume=100", sound],
+                stdout=_sp.DEVNULL,
+                stderr=_sp.DEVNULL,
+                check=False,
+            )
+        except Exception as e:
+            _LOGGER.warning("Intent cue playback failed: %s", e)
 
     def _handle_announce(self, msg: VoiceAssistantAnnounceRequest) -> None:
         urls = [u for u in (msg.preannounce_media_id, msg.media_id) if u]
@@ -670,6 +700,7 @@ class VoiceSatellite(asyncio.Protocol):
         if self._pipeline_active or self._transport is None:
             return
         self._pipeline_active  = True
+        self._intent_cue_played = False
         self._wake_word_active = False
         # Set _streaming True synchronously so the mic loop condition stays True
         # while call_soon_threadsafe delivers the send to the event loop.
@@ -790,6 +821,10 @@ def main() -> None:
     ap.add_argument("--tts-volume",    type=int, default=80)
     ap.add_argument("--wake-ack-enabled", type=lambda v: str(v).lower() in ("1", "true", "yes", "on"), default=False)
     ap.add_argument("--wake-ack-sound", default="")
+    ap.add_argument("--good-intent-enabled", type=lambda v: str(v).lower() in ("1", "true", "yes", "on"), default=True)
+    ap.add_argument("--good-intent-sound", default="")
+    ap.add_argument("--no-intent-enabled", type=lambda v: str(v).lower() in ("1", "true", "yes", "on"), default=True)
+    ap.add_argument("--no-intent-sound", default="")
     ap.add_argument("--log-level",     default="INFO")
     cfg = ap.parse_args()
 
@@ -885,7 +920,11 @@ export class VoiceSatelliteProcess extends EventEmitter {
       '--wake-word',     s.wakeWord,
       '--tts-volume',    String(s.ttsVolume),
             '--wake-ack-enabled', s.wakeAckEnabled ? '1' : '0',
-            '--wake-ack-sound', s.wakeAckSound,
+      '--wake-ack-sound', s.wakeAckSound,
+      '--good-intent-enabled', s.goodIntentEnabled ? '1' : '0',
+      '--good-intent-sound', s.goodIntentSound,
+      '--no-intent-enabled', s.noIntentEnabled ? '1' : '0',
+      '--no-intent-sound', s.noIntentSound,
       '--log-level',     'INFO',
     ];
 

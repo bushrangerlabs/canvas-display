@@ -1,0 +1,40 @@
+#!/bin/sh
+# postrm — canvas-edge package post-removal script
+set -e
+
+case "$1" in
+  remove)
+    # Disable services (but do NOT remove users/data — that's only on purge)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl disable canvas-edge-agent.service || true
+      systemctl disable canvas-edge-updater.service || true
+      systemctl daemon-reload || true
+    fi
+    # Remove /usr/bin symlinks
+    rm -f /usr/bin/canvas-edge-agentd /usr/bin/canvas-edge-updaterd
+    ;;
+
+  purge)
+    # Remove service users and their data directories
+    if getent passwd canvas-edge-agent >/dev/null 2>&1; then
+      userdel -r canvas-edge-agent 2>/dev/null || true
+    fi
+    if getent passwd canvas-edge-updater >/dev/null 2>&1; then
+      userdel -r canvas-edge-updater 2>/dev/null || true
+    fi
+    # Remove data directories if left behind
+    rm -rf /var/lib/canvas-edge-agent /var/lib/canvas-edge-updater
+    rm -rf /var/log/canvas-edge-agent /var/log/canvas-edge-updater
+    ;;
+
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    exit 0
+    ;;
+
+  *)
+    echo "postrm called with unknown argument '$1'" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

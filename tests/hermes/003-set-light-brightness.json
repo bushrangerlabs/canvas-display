@@ -1,0 +1,25 @@
+{
+  "id": "003-set-light-brightness",
+  "transcript": "set the living room light to 50 percent",
+  "expected_intent": "light_set",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {
+          "entity_id": "light.living_room",
+          "brightness_pct": 50
+        }
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["light.*", "switch.*", "scene.*"],
+    "max_intensity": 100
+  },
+  "expects_clarification": false,
+  "expected_entities": ["light.living_room"]
+}

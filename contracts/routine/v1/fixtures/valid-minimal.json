@@ -1,0 +1,1 @@
+{"schemaVersion":1,"name":"Good night","owner":"canvas_core","triggers":[{"type":"voice"}],"inputs":{},"steps":[{"id":"lights","kind":"tool","config":{"tool":"ha.entity.set"}}],"result":{},"limits":{"timeoutMs":30000,"maxSteps":20,"maxRoutineDepth":3}}

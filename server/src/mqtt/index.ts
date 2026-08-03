@@ -12,6 +12,14 @@
  *   canvas_display/{device_id}/cmd/navigate       ← subscribe { panel_id, url }
  *   canvas_display/{device_id}/cmd/reload         ← subscribe {}
  *   canvas_display/{device_id}/cmd/quit           ← subscribe {}
+ *
+ * Phase 3 coexistence (P-011): MQTT input is being routed through Canvas
+ * Core's command journal instead of being handled independently by each
+ * sidecar. Set `CANVAS_SIDECAR_MQTT_COMMANDS_ENABLED=false` to make this
+ * client keep publishing state (so Core/other brokers can still observe
+ * the device) but stop subscribing to and acting on `cmd/+` topics. This
+ * is an opt-in flag — the default (`true`) preserves legacy behavior so
+ * the currently-running sidecar is unaffected until an operator opts in.
  */
 
 import * as mqttLib from 'mqtt';
@@ -21,6 +29,19 @@ import { getAudioState } from '../routes/audio';
 
 let client: mqttLib.MqttClient | null = null;
 let _enabled = false;
+
+/**
+ * When false, the sidecar still connects to the broker and publishes state,
+ * but it does not subscribe to `cmd/+` topics and ignores any command
+ * messages that arrive. This is the P-011 coexistence switch: Core becomes
+ * the sole command path while the sidecar remains a state publisher.
+ */
+const commandsEnabled =
+  (process.env.CANVAS_SIDECAR_MQTT_COMMANDS_ENABLED ?? 'true').toLowerCase() !== 'false';
+
+export function isMqttCommandHandlingEnabled(): boolean {
+  return commandsEnabled;
+}
 
 // ── Settings helpers ────────────────────────────────────────────────────
 
@@ -77,10 +98,16 @@ export async function connectMqtt(): Promise<void> {
   client.on('connect', () => {
     console.log('[mqtt] Connected');
     publishServerState(true);
-    subscribeCommandTopics();
+    if (commandsEnabled) {
+      subscribeCommandTopics();
+    } else {
+      console.log('[mqtt] Command handling disabled (CANVAS_SIDECAR_MQTT_COMMANDS_ENABLED=false) — publishing state only');
+    }
     publishAllDeviceStates();
   });
 
+  // Always wire the message handler; when commands are disabled it short-circuits
+  // so any retained/late command delivery has no effect.
   client.on('message', handleCommandMessage);
 
   client.on('error', (err) => {
@@ -193,6 +220,11 @@ export function publishAudioState(): void {
 }
 
 function handleCommandMessage(topic: string, payload: Buffer): void {
+  // P-011 coexistence switch: when command handling is disabled, ignore all
+  // `cmd/+` messages. State publishes are unaffected (they use different
+  // topics and are sent directly via `publish()`, not through this handler).
+  if (!commandsEnabled) return;
+
   // topic: canvas_ui/{device_id_or_name}/cmd/{action}
   const parts = topic.split('/');
   if (parts.length !== 4 || parts[0] !== 'canvas_display' || parts[2] !== 'cmd') return;
@@ -354,6 +386,41 @@ function handleCommandMessage(topic: string, payload: Buffer): void {
           console.error('[mqtt] audio command error:', err);
         }
       }).catch(err => console.error('[mqtt] audio import error:', err));
+      break;
+    }
+
+    case 'media': {
+      // canvas_display/<device>/cmd/media
+      // { action: 'pause' | 'resume' | 'stop' | 'next', source?: 'youtube' }
+      const mediaAction = String(data.action ?? '');
+      if (!['pause', 'resume', 'stop', 'next'].includes(mediaAction)) {
+        console.warn('[mqtt] media cmd: action must be pause, resume, stop, or next');
+        return;
+      }
+      import('http').then(({ default: http }) => {
+        const body = JSON.stringify({
+          source: String(data.source ?? 'youtube'),
+          action: mediaAction,
+        });
+        const request = http.request({
+          host: '127.0.0.1',
+          port: Number(getSetting('server_port') ?? '3100'),
+          path: '/api/media/control',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+          },
+        }, response => {
+          if ((response.statusCode ?? 500) >= 400) {
+            console.warn(`[mqtt] media control returned HTTP ${response.statusCode}`);
+          }
+          response.resume();
+        });
+        request.on('error', error => console.error('[mqtt] media control error:', error));
+        request.write(body);
+        request.end();
+      }).catch(error => console.error('[mqtt] media HTTP import error:', error));
       break;
     }
 

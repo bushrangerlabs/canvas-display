@@ -1,11 +1,23 @@
 /**
  * HA Proxy routes — forwards requests to HA supervisor API.
  * Only available when the add-on has homeassistant_api: true.
+ *
+ * Phase 4 migration (D-012): Core is the primary HA integration point.
+ * Set `CANVAS_SIDECAR_HA_PROXY_ENABLED=false` to opt out of these routes
+ * on the sidecar — Core's HomeAssistantClient becomes the sole HA proxy.
+ * Default is `true` (legacy behavior preserved) for backward compatibility.
  */
 import type { FastifyInstance } from 'fastify';
 
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const HA_API = 'http://supervisor/core/api';
+
+/**
+ * Phase 4 coexistence gate: when false, the HA proxy routes are not registered.
+ * Core's HomeAssistantClient (core/src/providers/ha.ts) replaces these routes.
+ */
+const haProxyEnabled =
+  (process.env.CANVAS_SIDECAR_HA_PROXY_ENABLED ?? 'true').toLowerCase() !== 'false';
 
 async function supervisorFetch(path: string) {
   if (!SUPERVISOR_TOKEN) throw new Error('SUPERVISOR_TOKEN not available');
@@ -36,6 +48,10 @@ async function supervisorPost(path: string, body: unknown) {
 }
 
 export async function haRoutes(app: FastifyInstance) {
+  if (!haProxyEnabled) {
+    console.log('[ha] HA proxy disabled (CANVAS_SIDECAR_HA_PROXY_ENABLED=false) — routes not registered');
+    return;
+  }
   // GET /api/ingress-info — returns this add-on's ingress path from the supervisor
   // Used by the kiosk app to load panels via HA ingress so Lovelace cards can access HA frontend
   app.get('/ingress-info', async (_req, reply) => {

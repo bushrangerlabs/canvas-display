@@ -15,9 +15,13 @@ OPTIONS=/data/options.json
 if [[ -f "${OPTIONS}" ]]; then
     JWT_SECRET=$(jq -r '.jwt_secret // ""' "${OPTIONS}")
     LOG_LEVEL=$(jq -r '.log_level // "warn"' "${OPTIONS}")
+    CANVAS_CORE_URL=$(jq -r '.canvas_core_url // ""' "${OPTIONS}")
+    CANVAS_EDGE_VOICE_TOKEN=$(jq -r '.edge_voice_token // ""' "${OPTIONS}")
 else
     JWT_SECRET=""
     LOG_LEVEL="warn"
+    CANVAS_CORE_URL=""
+    CANVAS_EDGE_VOICE_TOKEN=""
 fi
 
 # Auto-generate a JWT secret if not set
@@ -28,6 +32,8 @@ fi
 
 export JWT_SECRET
 export LOG_LEVEL
+export CANVAS_CORE_URL
+export CANVAS_EDGE_VOICE_TOKEN
 
 # HA Supervisor provides SUPERVISOR_TOKEN automatically
 export HA_SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"

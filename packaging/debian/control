@@ -1,0 +1,24 @@
+Source: canvas-edge
+Section: utils
+Priority: optional
+Maintainer: Canvas Display Team <dev@canvas-display.example.com>
+Build-Depends: debhelper-compat (= 13), cargo, rustc
+Standards-Version: 4.6.2
+Homepage: https://github.com/bushrangerlabs/canvas-display
+
+Package: canvas-edge
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd (>= 247)
+Description: Canvas Edge Agent and Updater
+ Canvas Edge is the local execution plane for Canvas Display — a resilient
+ native Rust daemon that renders scenes, controls hardware, plays media,
+ and maintains offline continuity. This package provides:
+  - canvas-edge-agentd: the main Edge Agent (durable local state, IPC broker,
+    hardware control, content bridge)
+  - canvas-edge-updaterd: the independently supervised updater (signed release
+    verification, two-slot install journal, self-upgrade, rollback watchdog)
+  - systemd service units for both daemons
+  - dedicated non-root service users (canvas-edge-agent, canvas-edge-updater)
+ .
+ Architecture-specific builds are signed and verified. See
+ /usr/share/doc/canvas-edge/ for release signing documentation.

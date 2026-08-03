@@ -1,0 +1,37 @@
+// Lazy widget imports — this file maps widget types to their lazy-loaded components
+import { lazy } from 'react';
+import type { WidgetProps } from './types/index';
+
+export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.ComponentType<WidgetProps>>> = {
+  text: lazy(() => import('./widgets/TextWidget')),
+  value: lazy(() => import('./widgets/ValueWidget')),
+  gauge: lazy(() => import('./widgets/GaugeWidget')),
+  progressbar: lazy(() => import('./widgets/ProgressBarWidget')),
+  progresscircle: lazy(() => import('./widgets/ProgressCircleWidget')),
+  icon: lazy(() => import('./widgets/IconWidget')),
+  html: lazy(() => import('./widgets/HtmlWidget')),
+  scrollingtext: lazy(() => import('./widgets/ScrollingTextWidget')),
+  weather: lazy(() => import('./widgets/WeatherWidget')),
+  graph: lazy(() => import('./widgets/GraphWidget')),
+  resolution: lazy(() => import('./widgets/ResolutionWidget')),
+  analogclock: lazy(() => import('./widgets/AnalogClockWidget')),
+  flipclock: lazy(() => import('./widgets/FlipClockWidget')),
+  digitalclock: lazy(() => import('./widgets/DigitalClockWidget')),
+  button: lazy(() => import('./widgets/ButtonWidget')),
+  switch: lazy(() => import('./widgets/SwitchWidget')),
+  slider: lazy(() => import('./widgets/SliderWidget')),
+  knob: lazy(() => import('./widgets/KnobWidget')),
+  inputtext: lazy(() => import('./widgets/InputTextWidget')),
+  keyboard: lazy(() => import('./widgets/KeyboardWidget')),
+  radiobutton: lazy(() => import('./widgets/RadioButtonWidget')),
+  colorpicker: lazy(() => import('./widgets/ColorPickerWidget')),
+  image: lazy(() => import('./widgets/ImageWidget')),
+  camera: lazy(() => import('./widgets/CameraWidget')),
+  iframe: lazy(() => import('./widgets/IFrameWidget')),
+  border: lazy(() => import('./widgets/BorderWidget')),
+  shape: lazy(() => import('./widgets/ShapeWidget')),
+  calendar: lazy(() => import('./widgets/CalendarWidget')),
+  screensaver: lazy(() => import('./widgets/ScreensaverWidget')),
+  scrollablecontainer: lazy(() => import('./widgets/ScrollableContainerWidget')),
+  playlistresult: lazy(() => import('./widgets/PlaylistResultWidget')),
+};

@@ -1,0 +1,78 @@
+[Unit]
+Description=Canvas Edge Updater (durable install journal / watchdog daemon)
+Documentation=https://github.com/bushrangerlabs/canvas-display
+# Independent of the Agent's own ordering requirements: the updater must be able to start and
+# recover even if the Agent cannot (that is the entire reason it is a separate process/unit).
+After=network.target local-fs.target
+Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/canvas-edge-updaterd
+
+# Dedicated, non-root, non-shared service identity, distinct from canvas-edge-agent's own user.
+# Per docs/CANVAS_CORE_EDGE_ARCHITECTURE_PLAN.md section 21.4 ("Privilege boundary"): the updater
+# is a separately supervised, narrowly scoped helper so it can recover the Agent when the Agent
+# itself cannot start. Provisioning this user is a packaging-time concern, not this unit's -- see
+# README.md in this directory.
+User=canvas-edge-updater
+Group=canvas-edge-updater
+
+# StateDirectory=canvas-edge-updater causes systemd to create, and own as User/Group above,
+# /var/lib/canvas-edge-updater with mode 0750 before every start. This is the updater's only
+# writable location today and must match canvas-edge-updaterd's default
+# CANVAS_EDGE_UPDATER_DATA_DIR.
+StateDirectory=canvas-edge-updater
+StateDirectoryMode=0750
+Environment=CANVAS_EDGE_UPDATER_DATA_DIR=/var/lib/canvas-edge-updater
+
+# Sandbox posture, mirroring canvas-edge-agent.service (docs/PHASE_0_LOCAL_IPC_SPEC.md "Sandbox
+# posture" section). This will need to be *loosened*, not tightened, once real package
+# installation lands: at minimum ProtectSystem/ReadWritePaths will need an explicit exception for
+# wherever the Agent package is actually installed to (e.g. /usr/bin/canvas-edge-agentd), and
+# CapabilityBoundingSet will need whatever capability a real "install a new binary and restart a
+# service" operation requires (this development slice does not perform that operation yet, so the
+# strictest possible posture is still correct today -- see README.md's "what's deliberately
+# deferred" section).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# The updater fetches a signed manifest and its hash-pinned artifact directly from the Core
+# HTTPS release endpoint. DNS is not required for the default IP-address endpoint, but both
+# Internet address families are allowed so deployments may use a local DNS name.
+RestrictAddressFamilies=AF_INET AF_INET6
+
+# Bounded logs: rely on the journal's own rotation/limits rather than growing an unbounded file
+# under the updater's own StateDirectory.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=canvas-edge-updater
+
+# Crash restart: canvas-edge-updaterd's own startup recovery pass (recover_on_startup) is what
+# makes "just restart it" a safe default -- a crash mid-rollout is durably resolved (resume,
+# roll-forward, or roll-back) rather than silently resumed as if nothing happened.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

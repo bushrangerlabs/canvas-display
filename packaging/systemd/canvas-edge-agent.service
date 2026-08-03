@@ -1,0 +1,81 @@
+[Unit]
+Description=Canvas Edge Agent (durable local state daemon)
+Documentation=https://github.com/bushrangerlabs/canvas-display
+# The Agent is the first thing that must be up for the renderer/updater to have anything to
+# talk to; do not order it after the display/graphical target, since it has no UI of its own.
+After=network.target local-fs.target
+Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/canvas-edge-agentd
+
+# Dedicated, non-root, non-shared service identity (Phase 1 sandbox posture requirement in
+# docs/PHASE_0_LOCAL_IPC_SPEC.md). Provisioning this user is a packaging-time concern, not this
+# unit's -- see README.md in this directory.
+User=canvas-edge-agent
+Group=canvas-edge-agent
+
+# StateDirectory=canvas-edge-agent causes systemd to create, and own as User/Group above,
+# /var/lib/canvas-edge-agent with mode 0750 before every start. This is the Agent's only writable
+# location and must match canvas-edge-agentd's default CANVAS_EDGE_AGENT_DATA_DIR.
+StateDirectory=canvas-edge-agent
+StateDirectoryMode=0750
+Environment=CANVAS_EDGE_AGENT_DATA_DIR=/var/lib/canvas-edge-agent
+
+# RuntimeDirectory=canvas-edge causes systemd to create, and own as User/Group above,
+# /run/canvas-edge with mode 0750 before every start. This is where the local IPC Unix socket
+# lives (CANVAS_EDGE_IPC_SOCKET default = /run/canvas-edge/agent.sock, per
+# docs/PHASE_0_LOCAL_IPC_SPEC.md). /run is a tmpfs cleared on reboot, which is correct for a
+# runtime-only socket file. The daemon also creates this directory itself (mode 0700) if it is
+# missing, so a non-systemd manual run still works; under systemd, RuntimeDirectory owns it.
+RuntimeDirectory=canvas-edge
+RuntimeDirectoryMode=0750
+
+# Sandbox posture (docs/PHASE_0_LOCAL_IPC_SPEC.md "Sandbox posture" section).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# The IPC broker is now wired into canvas-edge-agentd's main() (edge/agentd/src/ipc.rs): the
+# daemon opens a real Unix domain socket (AF_UNIX) at /run/canvas-edge/agent.sock and serves the
+# allowlisted renderer/updater methods from edge/agent/src/ipc/. We reviewed that code (Phase 1
+# diagnostics/hardening pass + the wiring pass) and confirmed it uses std::os::unix::net -- real
+# AF_UNIX sockets, not AF_INET/AF_UNSPEC -- so AF_UNIX is the correct narrow allowlist. Do NOT
+# widen this to AF_UNSPEC/AF_INET wholesale when Core networking eventually lands; add
+# AF_INET/AF_INET6 as its own narrow addition at that time instead.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Bounded logs: rely on the journal's own rotation/limits rather than growing an unbounded file
+# under the Agent's own StateDirectory.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=canvas-edge-agent
+
+# Crash restart: the Agent's own startup recovery pass (recover_non_repeatable_running) is what
+# makes "just restart it" a safe default -- restarting never resumes a non_repeatable command that
+# was left running, it only marks it unknown_outcome.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

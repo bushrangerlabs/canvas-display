@@ -1,0 +1,7 @@
+{
+  "type": "stream.ack",
+  "protocol": 1,
+  "sent_at": "2026-07-18T10:00:01.000Z",
+  "stream_epoch": "0190efff-0000-7000-8000-000000000010",
+  "acknowledged_sequence": 1
+}

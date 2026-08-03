@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "digest_profile": "canvas.command.request/v1",
+  "digest_input_fields": ["kind", "semantic_version", "parameters", "preconditions"],
+  "execution_classes": {
+    "replay_safe": "May rerun only when the operation is intrinsically safe and returns the same logical result.",
+    "state_reconcilable": "After interruption, observe the requested postcondition and complete only when it is proven; do not blindly repeat.",
+    "externally_idempotent": "Reserved for a Core integration whose external API accepts the same Canvas idempotency key and contractually deduplicates it.",
+    "non_repeatable": "Never retry after execution may have begun; recover as unknown_outcome unless an authoritative postcondition can prove the result."
+  },
+  "desired_state_not_commands": [
+    "scene.assignment",
+    "display.power",
+    "display.brightness",
+    "audio.volume",
+    "voice.enabled",
+    "voice.wake_word_policy",
+    "update.channel"
+  ],
+  "commands": [
+    {
+      "kind": "diagnostics.echo",
+      "semantic_version": 1,
+      "wire_status": "active_vertical_slice",
+      "execution_class": "replay_safe",
+      "required_capability": null,
+      "parameter_contract": "Device Protocol v1 DiagnosticsEchoCommandIssue.parameters",
+      "postcondition": "Return the exact bounded message without hardware, filesystem, network, or external side effects."
+    },
+    {
+      "kind": "renderer.reload",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "state_reconcilable",
+      "required_capability": { "category": "renderer", "token": "renderer-control-v1" },
+      "parameter_contract": "planned: target renderer session and known-good revision",
+      "postcondition": "The target renderer reports ready on the requested known-good revision."
+    },
+    {
+      "kind": "media.session.play",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "state_reconcilable",
+      "required_capability": { "category": "media", "token": "media-session-v1" },
+      "parameter_contract": "planned: Core-issued media session and approved candidate IDs, never arbitrary credentials",
+      "postcondition": "A correlated Edge player event reports playing for the requested media session."
+    },
+    {
+      "kind": "media.session.pause",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "state_reconcilable",
+      "required_capability": { "category": "media", "token": "media-session-v1" },
+      "parameter_contract": "planned: existing media session ID",
+      "postcondition": "The correlated Edge player reports paused or an already-terminal session."
+    },
+    {
+      "kind": "media.session.stop",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "state_reconcilable",
+      "required_capability": { "category": "media", "token": "media-session-v1" },
+      "parameter_contract": "planned: existing media session ID",
+      "postcondition": "The correlated Edge player reports stopped/ended and audio focus is restored."
+    },
+    {
+      "kind": "display.identify",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "replay_safe",
+      "required_capability": { "category": "hardware", "token": "display-identify-v1" },
+      "parameter_contract": "planned: bounded duration and non-sensitive label",
+      "postcondition": "A bounded identification overlay is shown; repeating it causes no persistent mutation."
+    },
+    {
+      "kind": "system.reboot",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "non_repeatable",
+      "required_capability": { "category": "hardware", "token": "system-power-v1" },
+      "parameter_contract": "planned: empty parameters plus explicit Core authorization/preconditions",
+      "postcondition": "A new boot identity/uptime may reconcile success; an ambiguous crash remains unknown_outcome."
+    },
+    {
+      "kind": "system.shutdown",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "non_repeatable",
+      "required_capability": { "category": "hardware", "token": "system-power-v1" },
+      "parameter_contract": "planned: empty parameters plus explicit Core authorization/preconditions",
+      "postcondition": "Power-off cannot be safely auto-retried after the execution boundary."
+    },
+    {
+      "kind": "update.apply",
+      "semantic_version": 1,
+      "wire_status": "planned",
+      "execution_class": "state_reconcilable",
+      "required_capability": { "category": "hardware", "token": "updater-v1" },
+      "parameter_contract": "planned: signed release manifest identity only; no arbitrary package path or URL",
+      "postcondition": "The independent updater reports the signed target installed and healthy or rolled back."
+    }
+  ]
+}

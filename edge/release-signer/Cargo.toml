@@ -1,0 +1,15 @@
+[package]
+name = "canvas-edge-release-signer"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "canvas-edge-release-signer"
+path = "src/main.rs"
+
+[dependencies]
+canvas-edge-updater = { path = "../updater" }
+ed25519-dalek.workspace = true
+rand.workspace = true
+serde_json.workspace = true

@@ -85,3 +85,64 @@ quit:
       example: "Living Room Display"
       selector:
         text:
+
+load_device_page:
+  name: Load Device Page
+  description: Activate one page from a Core-managed device's page library.
+  fields:
+    device_id:
+      required: true
+      selector: { text: {} }
+    page:
+      required: true
+      selector: { text: {} }
+
+page_back:
+  name: Previous Device Page
+  description: Return a device to its previous active page.
+  fields:
+    device_id:
+      required: true
+      selector: { text: {} }
+
+load_panel_url:
+  name: Load Panel URL
+  description: Replace one device panel with internal or external URL content.
+  fields:
+    device_id:
+      required: true
+      selector: { text: {} }
+    panel:
+      required: true
+      selector: { text: {} }
+    url:
+      required: true
+      selector: { text: {} }
+
+load_panel_scene:
+  name: Load Panel Scene
+  description: Replace one device panel with a published Canvas scene.
+  fields:
+    device_id:
+      required: true
+      selector: { text: {} }
+    panel:
+      required: true
+      selector: { text: {} }
+    scene:
+      required: true
+      selector: { text: {} }
+
+set_panel_visibility:
+  name: Set Panel Visibility
+  description: Show or hide one panel without changing its content.
+  fields:
+    device_id:
+      required: true
+      selector: { text: {} }
+    panel:
+      required: true
+      selector: { text: {} }
+    visible:
+      required: true
+      selector: { boolean: {} }

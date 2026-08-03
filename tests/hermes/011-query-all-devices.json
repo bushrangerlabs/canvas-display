@@ -1,0 +1,21 @@
+{
+  "id": "011-query-all-devices",
+  "transcript": "which lights are on right now",
+  "expected_intent": "device_query",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.query",
+      "arguments": {
+        "domain": "light",
+        "state": "on"
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": true,
+    "entity_allowlist": ["light.*", "sensor.*", "binary_sensor.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": []
+}

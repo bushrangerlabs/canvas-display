@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "platform": "linux",
+  "architectures": ["amd64", "arm64"],
+  "advertisement_rule": "Registry presence does not imply support; Edge advertises a token only when that implementation is installed, enabled, and healthy for the current session.",
+  "categories": {
+    "renderer": [
+      { "token": "canvas-scene-v1", "status": "phase0_contract", "description": "Render verified Canvas Scene Manifest v1 content." },
+      { "token": "webview", "status": "legacy_available", "description": "Render policy-approved WebView content without privileged native capabilities." },
+      { "token": "renderer-control-v1", "status": "planned", "description": "Typed reload/readiness control through Agent-to-renderer IPC." }
+    ],
+    "media": [
+      { "token": "youtube-iframe", "status": "phase0_prototype", "description": "Official YouTube IFrame playback through the loopback Content Bridge." },
+      { "token": "mpv", "status": "legacy_available", "description": "Local mpv-backed playback where installed and healthy." },
+      { "token": "hls", "status": "legacy_available", "description": "HLS playback where the selected media adapter supports it." },
+      { "token": "media-session-v1", "status": "planned", "description": "Typed, correlated media session commands and observed player events." }
+    ],
+    "voice": [
+      { "token": "wakeword-local", "status": "legacy_available", "description": "Local wake-word detection before any voice stream begins." },
+      { "token": "opus-wss", "status": "planned", "description": "Post-trigger Opus voice frames over the separate authenticated voice plane." }
+    ],
+    "hardware": [
+      { "token": "brightness", "status": "legacy_available", "description": "Discover, set, and observe supported display brightness." },
+      { "token": "dpms", "status": "legacy_available", "description": "Set and observe supported display power state." },
+      { "token": "display-identify-v1", "status": "planned", "description": "Bounded visual identification effect for an operator-selected display." },
+      { "token": "system-power-v1", "status": "planned", "description": "Policy-authorized reboot or shutdown through a narrow helper." },
+      { "token": "updater-v1", "status": "planned", "description": "Independent signed package staging, health gating, and rollback." }
+    ]
+  }
+}

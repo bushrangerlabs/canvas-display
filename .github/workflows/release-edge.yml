@@ -1,0 +1,214 @@
+name: Release Edge Agent
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to release (e.g., v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Build amd64 ──────────────────────────────────────────────────────────────
+  build-amd64:
+    name: Build amd64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build Edge Agent and Updater (amd64)
+        run: |
+          cargo build --release --manifest-path edge/Cargo.toml \
+            -p canvas-edge-agentd \
+            --target x86_64-unknown-linux-gnu
+          cargo build --release --manifest-path edge/Cargo.toml \
+            -p canvas-edge-updaterd \
+            --target x86_64-unknown-linux-gnu
+
+      - name: Build .deb package
+        run: |
+          bash scripts/build-deb.sh \
+            "amd64" \
+            "x86_64-unknown-linux-gnu" \
+            "amd64" \
+            "amd64" \
+            "${GITHUB_REF_NAME#v}"
+
+      - name: Upload amd64 .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: artifacts/canvas-edge_*.deb
+          if-no-files-found: error
+
+      - name: Upload amd64 build artifacts (for manifest signing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-metadata-amd64
+          path: artifacts/.metadata_*
+          if-no-files-found: error
+
+  # ── Build arm64 (Bookworm-compatible) ────────────────────────────────────────
+  build-arm64:
+    name: Build arm64
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install aarch64 cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Build Edge Agent and Updater (arm64)
+        run: |
+          cargo build --release --manifest-path edge/Cargo.toml \
+            -p canvas-edge-agentd \
+            --target aarch64-unknown-linux-gnu
+          cargo build --release --manifest-path edge/Cargo.toml \
+            -p canvas-edge-updaterd \
+            --target aarch64-unknown-linux-gnu
+
+      - name: Check glibc compatibility (Bookworm ≤ 2.36)
+        run: |
+          AGENT_BIN="edge/target/aarch64-unknown-linux-gnu/release/canvas-edge-agentd"
+          UPDATER_BIN="edge/target/aarch64-unknown-linux-gnu/release/canvas-edge-updaterd"
+          MAX_GLIBC="2.36"
+          for BIN in "$AGENT_BIN" "$UPDATER_BIN"; do
+            if [ -f "$BIN" ]; then
+              FOUND_GLIBC=$(objdump -T "$BIN" 2>/dev/null | grep -oP 'GLIBC_\K[0-9]+\.[0-9]+' | sort -V | tail -1 || echo "0.0")
+              echo "  $BIN: glibc $FOUND_GLIBC"
+              if [ "$(echo -e "$FOUND_GLIBC\n$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+                echo "✓ glibc $FOUND_GLIBC ≤ $MAX_GLIBC — Bookworm-compatible"
+              else
+                echo "⚠  glibc $FOUND_GLIBC > $MAX_GLIBC — NOT Bookworm-compatible" >&2
+                echo "This artifact will be labeled arm64-trixie-dev instead of arm64" >&2
+                echo "glibc_too_high=true" >> "$GITHUB_ENV"
+              fi
+            fi
+          done
+
+      - name: Build .deb package (arm64)
+        run: |
+          bash scripts/build-deb.sh \
+            "arm64" \
+            "aarch64-unknown-linux-gnu" \
+            "arm64" \
+            "arm64" \
+            "${GITHUB_REF_NAME#v}"
+
+      - name: Upload arm64 .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: artifacts/canvas-edge_*.deb
+          if-no-files-found: error
+
+      - name: Upload arm64 build metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-metadata-arm64
+          path: artifacts/.metadata_*
+          if-no-files-found: error
+
+  # ── Sign and publish release ──────────────────────────────────────────────────
+  sign-and-publish:
+    name: Sign and publish release
+    needs: [build-amd64, build-arm64]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compute SHA-256 and generate manifest
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          cd release-artifacts
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Release version: $VERSION"
+
+          # Collect SHA-256 for each .deb
+          for deb in canvas-edge_*.deb; do
+            arch=$(echo "$deb" | sed 's/.*_\(.*\)\.deb/\1/')
+            sha256=$(sha256sum "$deb" | cut -d' ' -f1)
+            size=$(stat -c%s "$deb")
+            echo "  $deb: sha256=$sha256 size=$size"
+            echo "$sha256" > ".sha256_${arch}"
+            echo "$size" > ".size_${arch}"
+            echo "$deb" > ".deb_${arch}"
+          done
+
+          # Generate the signed release manifest using the release-signer
+          # We build it once and sign for each architecture separately
+          cd ..
+          bash scripts/generate-release-manifest.sh \
+            "${GITHUB_REF_NAME#v}" \
+            release-artifacts
+
+      - name: Verify signed manifest
+        run: |
+          if [ -n "${{ secrets.RELEASE_TRUST_ROOT }}" ]; then
+            cargo run --manifest-path edge/Cargo.toml -p canvas-edge-release-signer -- \
+              verify \
+              --signed artifacts/canvas-edge_*.json \
+              --trust-root "${{ secrets.RELEASE_TRUST_ROOT }}"
+          else
+            echo "⚠  RELEASE_TRUST_ROOT not set — skipping manifest verification in CI"
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/canvas-edge_*.deb
+            artifacts/canvas-edge_*_manifest.json
+            artifacts/canvas-edge_*_manifest.sig
+          generate_release_notes: true

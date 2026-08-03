@@ -1,0 +1,110 @@
+name: Release Debian Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    name: Build ${{ matrix.arch_label }} deb
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch_label: amd64
+            runner: ubuntu-22.04
+            sidecar_script: build:sidecar:x64
+            artifact_name: canvas-display-deb-amd64
+          - arch_label: arm64
+            runner: ubuntu-22.04-arm
+            sidecar_script: build:sidecar:arm64
+            artifact_name: canvas-display-deb-arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            server/package-lock.json
+            browser/linux/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            binutils \
+            curl \
+            file \
+            patchelf
+
+      - name: Build web bundle
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Build and test server sidecar
+        run: |
+          cd server
+          npm ci
+          npm run type-check
+          npm run test:youtube
+          npm run test:smoke
+          npm run ${{ matrix.sidecar_script }}
+
+      - name: Build Linux deb
+        run: |
+          cd browser/linux
+          npm ci
+          npx tauri build --bundles deb --ci
+
+      - name: Verify package architecture and compatibility
+        env:
+          MAX_GLIBC: "2.35"
+        run: bash scripts/verify-linux-deb.sh "${{ matrix.arch_label }}"
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: browser/linux/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+  publish-release-assets:
+    name: Publish release assets
+    needs: build-deb
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Publish .deb files to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**/*.deb

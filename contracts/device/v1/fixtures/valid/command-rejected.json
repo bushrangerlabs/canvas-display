@@ -1,0 +1,17 @@
+{
+  "type": "command.rejected",
+  "protocol": 1,
+  "payload_version": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000035",
+  "stream_epoch": "0190efff-0000-7000-8000-000000000011",
+  "sequence": 4,
+  "sent_at": "2026-07-18T10:00:03.200Z",
+  "correlation_id": "0190f000-0000-7000-8000-000000000031",
+  "payload": {
+    "command_id": "0190f000-0000-7000-8000-000000000032",
+    "idempotency_key": "diagnostics-echo-1",
+    "request_digest": "sha256:28bede070c136713d1410189d7ce119fbc8f4a63cdab872894f5f6dd9b4eb52b",
+    "code": "idempotency_conflict",
+    "message": "The idempotency key was already used with a different request digest."
+  }
+}

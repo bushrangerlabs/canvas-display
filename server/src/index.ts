@@ -14,8 +14,17 @@ import { settingsRoutes } from './routes/settings';
 import { commandRoutes } from './routes/commands';
 import { audioRoutes }   from './routes/audio';
 import { logRoutes }     from './routes/logs';
+import { mediaRoutes }   from './routes/media';
+import { sceneRoutes }   from './routes/scenes';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
+import { startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
+import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
+
+function useDirectCoreVoice(): boolean {
+  return process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
+    && Boolean(process.env.CANVAS_CORE_URL && process.env.CANVAS_EDGE_VOICE_TOKEN);
+}
 
 async function main() {
   // ── Database ──────────────────────────────────────────────────────────────
@@ -36,6 +45,8 @@ async function main() {
   await app.register(settingsRoutes, { prefix: '/api' });
   await app.register(commandRoutes,  { prefix: '/api' });
   await app.register(audioRoutes,    { prefix: '/api' });
+  await app.register(mediaRoutes,    { prefix: '/api' });
+  await app.register(sceneRoutes,    { prefix: '/api' });
   await app.register(logRoutes,      { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────
@@ -85,9 +96,16 @@ async function main() {
     // Start MQTT client if configured
     await connectMqtt();
 
-    // Start ESPHome voice satellite if enabled in DB or env
+    // A Core-enrolled Edge owns its complete wake -> Core -> local TTS loop.
+    // The ESPHome satellite is the fallback for HA-owned installations. Never
+    // start both because they would compete for the same microphone.
     if (isVoiceEnabled()) {
-      await startVoiceServer();
+      const direct = useDirectCoreVoice();
+      const owner = claimVoiceOwnership(direct ? 'core-direct' : 'ha-satellite');
+      if (!owner.owned || owner.pid !== process.pid) {
+        console.error(`[voice] Microphone ownership denied: ${owner.error ?? 'owned by another process'}`);
+      } else if (direct) await startDirectWakeword();
+      else await startVoiceServer();
     }
   } catch (err) {
     app.log.error(err);
@@ -95,8 +113,8 @@ async function main() {
   }
 }
 
-process.on('SIGTERM', async () => { await stopVoiceServer(); disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  async () => { await stopVoiceServer(); disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { await stopDirectWakeword(); await stopVoiceServer(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { await stopDirectWakeword(); await stopVoiceServer(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

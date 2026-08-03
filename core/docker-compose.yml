@@ -1,0 +1,73 @@
+# Canvas Core — centralized control plane / AI brain (plan doc §20.5, D-009..D-013).
+#
+# Uses the EXTERNAL PostgreSQL container already running on the host (the `postgresql`
+# container on port 5432, user `casaos`, database `canvas_core`). No separate Postgres
+# service in this Compose stack — Core connects to the external one via `host.docker.internal`.
+#
+# Usage:
+#   cd core && cp .env.example .env && docker compose up --build
+
+name: canvas-core
+
+services:
+  canvas-core:
+    build:
+      context: ..
+      dockerfile: core/Dockerfile
+    restart: unless-stopped
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      # Plain WebSocket/HTTP transport for trusted-LAN Edge Agents. The public/admin
+      # surface remains on the TLS proxy at 3100.
+      - '3101:3100'
+    environment:
+      CANVAS_CORE_HOST: '0.0.0.0'
+      CANVAS_CORE_PORT: '3100'
+      CANVAS_CORE_DATABASE_URL: 'postgresql://${CANVAS_CORE_DB_USER:-casaos}:${CANVAS_CORE_DB_PASSWORD:-casaos}@host.docker.internal:5432/${CANVAS_CORE_DB_NAME:-canvas_core}'
+      CANVAS_CORE_GATEWAY_PATH: '/gateway/v1'
+      CANVAS_CORE_WHISPER_URL: '${CANVAS_CORE_WHISPER_URL:-http://host.docker.internal:10301}'
+      CANVAS_CORE_WHISPER_MODEL: '${CANVAS_CORE_WHISPER_MODEL:-Systran/faster-whisper-base.en}'
+      CANVAS_CORE_PIPER_URL: '${CANVAS_CORE_PIPER_URL:-http://host.docker.internal:10200}'
+      CANVAS_CORE_LLM_BASE_URL: '${CANVAS_CORE_LLM_BASE_URL:-http://host.docker.internal:8089/v1}'
+      CANVAS_CORE_MCP_URL: '${CANVAS_CORE_MCP_URL:-}'
+      CANVAS_CORE_MCP_URLS: '${CANVAS_CORE_MCP_URLS:-http://host.docker.internal:5020}'
+      # au-weather-mcp — bundled stdio child process.
+      CANVAS_CORE_MCP_CMD_1: 'python3'
+      CANVAS_CORE_MCP_ARGS_1: '/app/au_weather_stdio.py'
+      CANVAS_CORE_MCP_NAME_1: 'au-weather'
+      # bowling-mcp — bundled stdio child process (live ComputerScore scraper).
+      CANVAS_CORE_MCP_CMD_2: 'python3'
+      CANVAS_CORE_MCP_ARGS_2: '/app/bowling_mcp.py'
+      CANVAS_CORE_MCP_NAME_2: 'bowling'
+      CANVAS_CORE_HA_URL: '${CANVAS_CORE_HA_URL:-}'
+      CANVAS_CORE_HA_TOKEN: '${CANVAS_CORE_HA_TOKEN:-}'
+      CANVAS_CORE_EDGE_VOICE_TOKEN: '${CANVAS_CORE_EDGE_VOICE_TOKEN:-}'
+      CANVAS_CORE_AUTOMATION_TOKEN: '${CANVAS_CORE_AUTOMATION_TOKEN:-}'
+      CANVAS_CORE_LOG_LEVEL: '${CANVAS_CORE_LOG_LEVEL:-info}'
+      CANVAS_CORE_HERMES_CORPUS_PATH: '/app/tests/hermes'
+      CANVAS_CORE_ENROLLMENT_SEED: '${CANVAS_CORE_ENROLLMENT_SEED:-}'
+      CANVAS_CORE_SECURITY_EPOCH: '${CANVAS_CORE_SECURITY_EPOCH:-1}'
+      CANVAS_CORE_ALLOW_OPEN_PAIRING: '${CANVAS_CORE_ALLOW_OPEN_PAIRING:-true}'
+      ASSET_STORAGE_PATH: '/app/data/assets'
+    volumes:
+      - 'canvas-core-assets:/app/data/assets'
+
+  tls-proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - canvas-core
+    ports:
+      - '${CANVAS_CORE_PORT:-3100}:443'
+    volumes:
+      - './nginx.conf:/etc/nginx/nginx.conf:ro'
+      - './tls/server.crt:/etc/nginx/tls/server.crt:ro'
+      - './tls/server.key:/etc/nginx/tls/server.key:ro'
+      - './tls/rsa-server.crt:/etc/nginx/tls/rsa-server.crt:ro'
+      - './tls/rsa-server.key:/etc/nginx/tls/rsa-server.key:ro'
+      - './releases:/srv/releases:ro'
+
+volumes:
+  canvas-core-assets:
+    name: canvas-core-assets

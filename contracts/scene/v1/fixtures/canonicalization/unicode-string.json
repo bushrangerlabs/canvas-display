@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "scene_id": "0190f400-0000-7000-8000-000000000001",
+  "revision_id": "0190f400-0000-7000-8000-000000000002",
+  "revision_number": 1,
+  "published_at": "2026-07-18T12:00:00.000Z",
+  "manifest_digest": "sha256:ae97951f6f914d42732b603b249bc1a41a4210d15f85b908f0fd776a58517235",
+  "requirements": {
+    "minimum_version": "0.3.0",
+    "capabilities": ["canvas-scene-v1", "entity-state-v1"]
+  },
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": "夜空 🌌 — café — line\ncontrol:\u000f"
+  },
+  "document": {
+    "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "size": 4096,
+    "media_type": "application/vnd.canvas.scene+json",
+    "logical_path": "scene.json"
+  },
+  "assets": [
+    {
+      "hash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "size": 8192,
+      "media_type": "image/png",
+      "logical_path": "assets/background.png"
+    }
+  ],
+  "entity_subscriptions": [
+    {
+      "entity_id": "sensor.living_room_temperature",
+      "fields": ["state", "attributes.unit_of_measurement"]
+    }
+  ],
+  "security": {
+    "allowed_origins": ["https://homeassistant.local", "http://127.0.0.1:43121"],
+    "allow_raw_html": false,
+    "allow_iframes": false
+  },
+  "offline": {
+    "eligible": true,
+    "schedule_eligible": true,
+    "max_stale_seconds": 86400
+  }
+}

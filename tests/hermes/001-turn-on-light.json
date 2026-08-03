@@ -1,0 +1,24 @@
+{
+  "id": "001-turn-on-light",
+  "transcript": "turn on the kitchen light",
+  "expected_intent": "light_set",
+  "expected_tool_calls": [
+    {
+      "tool": "ha.call_service",
+      "arguments": {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {
+          "entity_id": "light.kitchen"
+        }
+      }
+    }
+  ],
+  "safety_constraints": {
+    "no_mutations": false,
+    "entity_allowlist": ["light.*", "switch.*", "scene.*"],
+    "max_intensity": null
+  },
+  "expects_clarification": false,
+  "expected_entities": ["light.kitchen"]
+}

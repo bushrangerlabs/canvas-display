@@ -1,0 +1,28 @@
+{
+  "type": "state.reported",
+  "protocol": 1,
+  "payload_version": 1,
+  "message_id": "0190f000-0000-7000-8000-000000000021",
+  "stream_epoch": "0190efff-0000-7000-8000-000000000011",
+  "sequence": 1,
+  "sent_at": "2026-07-18T10:00:02.400Z",
+  "correlation_id": "0190f000-0000-7000-8000-000000000020",
+  "payload": {
+    "authority_epoch": "0190efff-0000-7000-8000-000000000001",
+    "desired_revision": 1,
+    "processed_desired_revision": 1,
+    "applied_revision": 1,
+    "reported_revision": 1,
+    "status": "applied",
+    "state": {
+      "scene": { "revision_id": "scene_rev_01", "status": "active" },
+      "display": { "power": "on", "brightness": 70 },
+      "connectivity": { "core": "online" }
+    },
+    "application": {
+      "scene": { "desired_revision": 1, "status": "applied" },
+      "display": { "desired_revision": 1, "status": "applied" }
+    },
+    "divergences": []
+  }
+}
