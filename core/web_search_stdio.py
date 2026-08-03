@@ -5,7 +5,8 @@ Provides two tools that the AI can call to look up information and display
 results on Canvas screens:
 
   web_search(query, max_results=5)
-    - Searches the web using DuckDuckGo (no API key required)
+    - Searches via SearXNG if SEARXNG_URL env var is set (preferred: self-hosted, private)
+    - Falls back to DuckDuckGo if SearXNG is not configured
     - Returns titles, snippets, and URLs
 
   wikipedia_lookup(topic, sentences=5)
@@ -16,12 +17,19 @@ Canvas Core's StdioMcpClient spawns this as a child process:
   command: python3
   args: ["/app/web_search_stdio.py"]
 
+Environment variables:
+  SEARXNG_URL   - Base URL of a SearXNG instance (e.g. http://host.docker.internal:8082)
+                  When set, SearXNG is used for web_search instead of DuckDuckGo.
+
 Install dependencies in the Core image (see Dockerfile):
   pip install duckduckgo_search wikipedia-api
 """
 import asyncio
 import json
+import os
 import sys
+import urllib.parse
+import urllib.request
 from typing import Any
 
 
@@ -36,7 +44,8 @@ TOOLS = [
         "description": (
             "Search the web for current information. Use this when asked about recent events, "
             "specific facts, news, how-to guides, or any topic where a web search would help provide "
-            "a better answer. Returns page titles, snippets, and URLs."
+            "a better answer. Returns page titles, snippets, and URLs. "
+            "Uses SearXNG (self-hosted, private) when available, otherwise DuckDuckGo."
         ),
         "inputSchema": {
             "type": "object",
@@ -80,7 +89,43 @@ TOOLS = [
 ]
 
 
+def _searxng_search(query: str, max_results: int, base_url: str) -> dict[str, Any]:
+    """Search using a self-hosted SearXNG instance (JSON API)."""
+    params = urllib.parse.urlencode({
+        "q": query,
+        "format": "json",
+        "categories": "general",
+        "language": "en",
+    })
+    url = f"{base_url.rstrip('/')}/search?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "CanvasCore/1.0 (canvas-display)"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode())
+    raw = data.get("results", [])
+    results = []
+    for r in raw[:max(1, min(10, max_results))]:
+        results.append({
+            "title": r.get("title", ""),
+            "snippet": r.get("content", "") or r.get("snippet", ""),
+            "url": r.get("url", ""),
+        })
+    return {"query": query, "results": results, "count": len(results), "engine": "searxng"}
+
+
 def _web_search(query: str, max_results: int = 5) -> dict[str, Any]:
+    searxng_url = os.environ.get("SEARXNG_URL", "").strip()
+    if searxng_url:
+        try:
+            return _searxng_search(query, max_results, searxng_url)
+        except Exception as e:
+            # SearXNG failed — fall through to DuckDuckGo
+            sys.stderr.write(f"[web-search-mcp] SearXNG failed ({e}), falling back to DuckDuckGo\n")
+            sys.stderr.flush()
+
+    # DuckDuckGo fallback
     try:
         from duckduckgo_search import DDGS
         results = []
@@ -93,9 +138,9 @@ def _web_search(query: str, max_results: int = 5) -> dict[str, Any]:
                 })
         if not results:
             return {"error": "No results found", "query": query, "results": []}
-        return {"query": query, "results": results, "count": len(results)}
+        return {"query": query, "results": results, "count": len(results), "engine": "duckduckgo"}
     except ImportError:
-        return {"error": "duckduckgo_search library not installed", "results": []}
+        return {"error": "duckduckgo_search library not installed and SEARXNG_URL not set", "results": []}
     except Exception as e:
         return {"error": str(e), "results": []}
 
