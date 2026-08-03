@@ -293,13 +293,12 @@ Each Canvas display device should register and behave as a full HA media player 
 ### AI Web Lookup & On-Screen Display ⭐ New
 When the AI answers a general knowledge question, it should be able to fetch supporting web content and display it on the screen.
 
-- [ ] **Web search MCP tool** — A built-in MCP tool (or stdio server) that performs a web search (DuckDuckGo/Brave/Bing API) and returns structured results (title, snippet, URL) for the LLM to use in its answer
-- [ ] **Wikipedia lookup tool** — Dedicated MCP tool that fetches a Wikipedia article summary and key sections by topic; used when the LLM identifies an encyclopedic query
-- [ ] **Web result widget** — A display widget that renders a web page or article summary (title, body text, image, source URL) in a readable format on the canvas
-- [ ] **Voice-triggered page navigation** — When the AI invokes a web lookup, it automatically pushes a "knowledge card" page to the active display device showing the result alongside the TTS response
+- [x] **Web search MCP tool** — `web_search_stdio.py` bundled in Core, uses DuckDuckGo via `duckduckgo_search` library
+- [x] **Wikipedia lookup tool** — `wikipedia_lookup` in the same stdio server, fetches Wikipedia summaries
+- [x] **Knowledge card widget** — `KnowledgeCardWidget.tsx` — polls `/api/knowledge-card/latest`; shows title, body, source URL, optional image, dismiss button; auto-dismiss configurable
+- [x] **Voice-triggered knowledge card** — Core intelligence pipeline extracts knowledge cards from `web_search`/`wikipedia_lookup` tool call results and includes `knowledge_card` in the voice turn response; display server stores it for the widget to display
 - [ ] **"Show me" intent** — The AI recognises requests like "show me photos of the Eiffel Tower" or "look up the weather forecast for Sydney" and renders an appropriate widget or webpage
 - [ ] **Iframe widget auto-open** — For richer content, AI can command the display to open a specific URL in the IFrame widget (with safe-list of allowed domains)
-- [ ] **Knowledge card widget** — A new widget type purpose-built for AI-fetched content: heading, body, source, optional image, dismiss button
 
 ### Security / Enrollment
 - [ ] **Production PKI mode** — `CANVAS_CORE_ALLOW_OPEN_PAIRING=true` warning is always shown; proper enrollment gate (`P-003`) not enabled. Devices aren't verified before accepting commands.
@@ -372,6 +371,8 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 | Version | Key Changes |
 |---|---|
 | 0.2.25 | Core bridge settings in-app (Settings > Integrations): configure Core URL + voice token, test connection button |
+| 0.2.26 | Knowledge Card widget; web search + Wikipedia MCP; core MCP stdio fix (all 6/6 MCPs up); knowledge cards extracted from voice turns |
+| 0.2.25 | Canvas Core bridge settings in-app (Settings > Integrations); voice token UI; test connection button |
 | 0.2.24 | Auto-provision voice token; voice bridge status panel in AI Brain |
 | 0.2.23 | Added `canvas_core_url` + `edge_voice_token` addon options; fixed frontend deploy path |
 | Earlier | MCP stdio support, bowling MCP, web frontend fixes, logs page, AI intent chat |
