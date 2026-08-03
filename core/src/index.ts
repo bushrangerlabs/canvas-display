@@ -813,6 +813,61 @@ async function main(): Promise<void> {
     }
   });
 
+  // --- TTS Broadcast (multi-room audio) ------------------------------------
+  // Core synthesizes TTS and stores it per-device. Display devices poll
+  // GET /api/edge/tts/pending to pick up and play queued audio.
+  {
+    const pendingTts = new Map<string, { audioBase64: string; text: string; timestamp: string }>();
+    const ALL_DEVICES = '__all__';
+
+    fastify.post<{ Body: { text?: string; deviceIds?: string[] } }>(
+      '/api/edge/tts/broadcast',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const { text, deviceIds } = request.body ?? {};
+        if (!text?.trim()) {
+          return reply.code(400).send({ error: 'text is required' });
+        }
+        const speech = intelligence.providers.tts;
+        if (!speech) {
+          return reply.code(503).send({ error: 'TTS provider not configured' });
+        }
+        const audio = await speech.synthesize(text.trim());
+        const audioBase64 = audio.toString('base64');
+        const timestamp = new Date().toISOString();
+        const targets = deviceIds?.length ? deviceIds : [ALL_DEVICES];
+        for (const id of targets) {
+          pendingTts.set(id, { audioBase64, text: text.trim(), timestamp });
+        }
+        console.log(`[core][tts-broadcast] queued "${text.trim().slice(0, 60)}" for ${targets.join(',')}`);
+        return reply.send({ ok: true, targets, timestamp });
+      },
+    );
+
+    fastify.get<{ Querystring: { deviceId?: string } }>(
+      '/api/edge/tts/pending',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const deviceId = request.query.deviceId ?? 'unknown';
+        const entry = pendingTts.get(deviceId) ?? pendingTts.get(ALL_DEVICES);
+        if (!entry) return reply.send({ empty: true });
+        pendingTts.delete(deviceId);
+        if (pendingTts.get(ALL_DEVICES) === entry) pendingTts.delete(ALL_DEVICES);
+        return reply.send(entry);
+      },
+    );
+  }
+
   // --- Phase 2 Home Assistant integration routes (D-012) -------------------
   // HA credentials live only in Core; these endpoints never forward the token to
   // Edge. Reads are open to any authenticated admin; service calls are admin-only.

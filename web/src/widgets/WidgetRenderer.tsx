@@ -35,4 +35,5 @@ export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.Com
   scrollablecontainer: lazy(() => import('./widgets/ScrollableContainerWidget')),
   playlistresult: lazy(() => import('./widgets/PlaylistResultWidget')),
   knowledgecard: lazy(() => import('./widgets/KnowledgeCardWidget')),
+  announcement: lazy(() => import('./widgets/AnnouncementWidget')),
 };

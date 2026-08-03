@@ -104,6 +104,9 @@ export async function connectMqtt(): Promise<void> {
       console.log('[mqtt] Command handling disabled (CANVAS_SIDECAR_MQTT_COMMANDS_ENABLED=false) — publishing state only');
     }
     publishAllDeviceStates();
+    // HA MQTT discovery — register this display as a media_player entity
+    publishHaMediaPlayerDiscovery();
+    publishHaMediaPlayerState();
   });
 
   // Always wire the message handler; when commands are disabled it short-circuits
@@ -217,6 +220,68 @@ function subscribeCommandTopics(): void {
 export function publishAudioState(): void {
   const mqttDeviceId = getSetting('device_id') ?? 'local';
   publish(`canvas_display/${mqttDeviceId}/audio/state`, getAudioState(), true);
+  // Keep HA media_player entity in sync
+  publishHaMediaPlayerState();
+}
+
+// ── HA MQTT Discovery ─────────────────────────────────────────────────────
+
+/**
+ * Publishes HA MQTT auto-discovery config for this display as a media_player entity.
+ * Call after MQTT connects. HA will create the entity automatically.
+ */
+export function publishHaMediaPlayerDiscovery(): void {
+  if (!client?.connected) return;
+  const mqttDeviceId = getSetting('device_id') ?? 'local';
+  const deviceName = getSetting('device_name') ?? 'Canvas Display';
+  const uniqueId = `canvas_display_${mqttDeviceId}`;
+  const stateTopic = `canvas_display/${mqttDeviceId}/media_player/state`;
+  const cmdTopic = `canvas_display/${mqttDeviceId}/media_player/cmd`;
+
+  const config = {
+    name: deviceName,
+    unique_id: uniqueId,
+    platform: 'mqtt',
+    state_topic: stateTopic,
+    command_topic: cmdTopic,
+    value_template: '{{ value_json.state }}',
+    volume_template: '{{ value_json.volume | float(0) }}',
+    muted_template: '{{ value_json.muted | lower }}',
+    supported_features: 1 | 2 | 4 | 8 | 16 | 64, // play|pause|stop|vol_set|vol_step|mute
+    device: {
+      identifiers: [uniqueId],
+      name: deviceName,
+      model: 'Canvas Display',
+      manufacturer: 'Canvas',
+    },
+  };
+  client.publish(
+    `homeassistant/media_player/${uniqueId}/config`,
+    JSON.stringify(config),
+    { retain: true, qos: 1 },
+  );
+  console.log(`[mqtt] Published HA media_player discovery for ${deviceName} (${mqttDeviceId})`);
+
+  // Subscribe to HA commands
+  client.subscribe(cmdTopic, { qos: 1 }, (err) => {
+    if (err) console.error('[mqtt] Failed to subscribe to media_player cmd:', err.message);
+  });
+}
+
+/** Publishes the current media_player state to HA. */
+export function publishHaMediaPlayerState(): void {
+  if (!client?.connected) return;
+  const mqttDeviceId = getSetting('device_id') ?? 'local';
+  const audio = getAudioState();
+  const haState = audio.state === 'playing' ? 'playing'
+    : audio.state === 'paused' ? 'paused'
+    : 'idle';
+  publish(`canvas_display/${mqttDeviceId}/media_player/state`, {
+    state: haState,
+    volume: Math.round((audio.volume ?? 80) / 100 * 100) / 100,
+    muted: audio.muted ?? false,
+    source: audio.title ?? null,
+  }, true);
 }
 
 function handleCommandMessage(topic: string, payload: Buffer): void {
@@ -227,17 +292,34 @@ function handleCommandMessage(topic: string, payload: Buffer): void {
 
   // topic: canvas_ui/{device_id_or_name}/cmd/{action}
   const parts = topic.split('/');
-  if (parts.length !== 4 || parts[0] !== 'canvas_display' || parts[2] !== 'cmd') return;
+  if (parts.length < 3 || parts[0] !== 'canvas_display') return;
 
   const topicDevice = parts[1];
-  const action = parts[3];
-
-  // Accept either device_id or device_name in the topic
   const myDeviceId   = getSetting('device_id')   ?? 'local';
   const myDeviceName = getSetting('device_name')  ?? '';
   if (topicDevice !== myDeviceId && topicDevice.toLowerCase() !== myDeviceName.toLowerCase()) {
     return; // not for us
   }
+
+  // Handle HA media_player cmd topic: canvas_display/{device}/media_player/cmd
+  if (parts[2] === 'media_player' && parts[3] === 'cmd') {
+    let cmd: Record<string, unknown> = {};
+    try { cmd = JSON.parse(payload.toString()); } catch { cmd = { command: payload.toString().trim() }; }
+    const command = String(cmd.command ?? payload.toString().trim());
+    import('../routes/audio.js').then(({ pauseAudio, resumeAudio, stopAudio, setAudioVolume, setAudioMute }) => {
+      if (command === 'pause') void pauseAudio();
+      else if (command === 'play' || command === 'media_play') void resumeAudio();
+      else if (command === 'stop' || command === 'media_stop') void stopAudio();
+      else if (command === 'volume_set' && typeof cmd.volume === 'number') void setAudioVolume(Math.round(cmd.volume * 100));
+      else if (command === 'mute' || command === 'media_mute') void setAudioMute(true);
+      else if (command === 'unmute' || command === 'media_unmute') void setAudioMute(false);
+      publishHaMediaPlayerState();
+    }).catch(err => console.error('[mqtt] ha media_player cmd error:', err));
+    return;
+  }
+
+  if (parts.length !== 4 || parts[2] !== 'cmd') return;
+  const action = parts[3];
 
   let data: Record<string, any> = {};
   try {

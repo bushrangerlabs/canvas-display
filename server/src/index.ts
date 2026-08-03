@@ -17,10 +17,12 @@ import { logRoutes }     from './routes/logs';
 import { mediaRoutes }   from './routes/media';
 import { sceneRoutes }   from './routes/scenes';
 import { knowledgeCardRoutes } from './routes/knowledge-card';
+import { alertRoutes } from './routes/alert';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
 import { startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
 import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
+import { startTtsBroadcastPoller, stopTtsBroadcastPoller } from './voice/tts-broadcast-poller';
 
 function useDirectCoreVoice(): boolean {
   return process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
@@ -49,6 +51,7 @@ async function main() {
   await app.register(mediaRoutes,    { prefix: '/api' });
   await app.register(sceneRoutes,    { prefix: '/api' });
   await app.register(knowledgeCardRoutes, { prefix: '/api' });
+  await app.register(alertRoutes, { prefix: '/api' });
   await app.register(logRoutes,      { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────
@@ -109,14 +112,16 @@ async function main() {
       } else if (direct) await startDirectWakeword();
       else await startVoiceServer();
     }
+    // Start TTS broadcast poller if Core URL is configured (polls for server-pushed TTS)
+    startTtsBroadcastPoller();
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
 
-process.on('SIGTERM', async () => { await stopDirectWakeword(); await stopVoiceServer(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  async () => { await stopDirectWakeword(); await stopVoiceServer(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

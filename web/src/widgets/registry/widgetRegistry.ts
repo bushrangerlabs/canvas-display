@@ -36,6 +36,7 @@ import { ValueWidgetMetadata } from '../widgets/ValueWidget';
 import { weatherWidgetMetadata } from '../widgets/WeatherWidget';
 import { PlaylistResultWidgetMetadata } from '../widgets/PlaylistResultWidget';
 import { KnowledgeCardWidgetMetadata } from '../widgets/KnowledgeCardWidget';
+import { AnnouncementWidgetMetadata } from '../widgets/AnnouncementWidget';
 
 export interface WidgetRegistryEntry {
   type: string;
@@ -76,6 +77,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   scrollablecontainer: scrollableContainerMetadata,
   playlistresult: PlaylistResultWidgetMetadata,
   knowledgecard: KnowledgeCardWidgetMetadata,
+  announcement: AnnouncementWidgetMetadata,
 };
 
 /**
