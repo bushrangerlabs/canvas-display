@@ -253,7 +253,7 @@ Together they form a platform where you design pixel-perfect smart home displays
 - [ ] **Wake word model selection UI** — Currently must know model paths manually; no in-app picker
 - [ ] **Voice error recovery feedback** — Display shows no visual indication of voice errors to the user
 - [ ] **Streaming TTS interruption** — No way to interrupt TTS mid-playback (e.g., new wake word while speaking)
-- [ ] **Multi-room TTS announcement** — Broadcast a spoken TTS message to all/selected display devices simultaneously (e.g., "Dinner is ready")
+- [x] **Multi-room TTS announcement** — `POST /api/edge/tts/broadcast` on Core synthesizes TTS and queues for devices; display server polls Core's `/api/edge/tts/pending` every 5s and plays via mpv (v0.2.27)
 
 ### AI Self-Learning & Skill Autonomy ⭐ New
 The AI should be able to observe interactions, identify patterns, and autonomously create, refine, and deploy new skills — similar to how the Hermes agent learns from its corpus.
@@ -272,7 +272,7 @@ The AI should be able to observe interactions, identify patterns, and autonomous
 Canvas display devices should be able to broadcast audio to each other — enabling intercom, whole-home announcements, and audio zone control.
 
 - [ ] **Device-to-device audio streaming** — One display can stream its microphone/TTS output to one or more other display devices over the local network (WebRTC or RTP via Core broker)
-- [ ] **Whole-home TTS broadcast** — When Core generates a TTS response or announcement, it can push the audio simultaneously to all registered display devices that are online
+- [x] **Whole-home TTS broadcast** — Core's `POST /api/edge/tts/broadcast` synthesizes TTS and queues for all/specific devices; display pollers pick up and play (v0.2.27)
 - [ ] **Intercom mode** — Two display devices can open a two-way audio channel (push-to-talk or open mic) — "Hey kitchen, dinner's ready"
 - [ ] **Audio zones** — Group devices into zones (e.g., upstairs, downstairs); target broadcasts to a zone
 - [ ] **Core audio broker** — Core acts as the relay/signalling server for device-to-device audio; handles session setup, auth, and teardown
@@ -281,7 +281,7 @@ Canvas display devices should be able to broadcast audio to each other — enabl
 ### HA Media Player Integration + Music Assistant ⭐ New
 Each Canvas display device should register and behave as a full HA media player entity, enabling native HA automations and Music Assistant integration.
 
-- [ ] **Register as HA media player** — Each display device auto-registers a `media_player` entity in HA via the integration (canvas-ui-hacs). Supports standard HA media player services: `play_media`, `media_play`, `media_pause`, `media_stop`, `media_next_track`, `media_previous_track`, `volume_set`, `volume_mute`
+- [x] **Register as HA media player** — Each display auto-registers a `media_player` entity via MQTT auto-discovery on MQTT connect. State topic + command topic wired. Supports play/pause/stop/volume_set/mute. (v0.2.27)
 - [ ] **Now-playing state** — Display pushes current playback state (title, artist, album art, position, duration) back to HA so it shows in dashboards and automations
 - [ ] **Music Assistant integration** — Connect Canvas displays as MA speakers/players. Voice command "play jazz in the kitchen" routes to Music Assistant, which queues tracks and pushes to the display's audio output
 - [ ] **Music Assistant widget** — A dedicated widget showing MA queue, now playing, album art, and playback controls
@@ -305,7 +305,7 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 - [ ] **Token rotation** — No mechanism to rotate the voice bridge token without clearing the DB
 
 ### Display / UI
-- [ ] **Push notifications / alerts** — No way to push alerts to a display from an automation (e.g., doorbell, weather alert overlay)
+- [x] **Push notifications / alerts** — `AnnouncementWidget` polls `GET /api/alert/current`; Core/automations call `POST /api/alert` to push timed alerts. Auto-dismiss configurable. (v0.2.27)
 - [ ] **Doorbell integration** — When doorbell rings, display automatically shows camera feed and plays chime sound
 - [ ] **Multi-scene push** — Scene can be assigned to one device but no bulk push to all devices
 - [ ] **Display online status in editor** — No way to see if a display device is currently online in the editor
@@ -371,6 +371,7 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 | Version | Key Changes |
 |---|---|
 | 0.2.25 | Core bridge settings in-app (Settings > Integrations): configure Core URL + voice token, test connection button |
+| 0.2.27 | Announcement widget; alert API; TTS broadcast (Core→display polling); HA media_player MQTT auto-discovery |
 | 0.2.26 | Knowledge Card widget; web search + Wikipedia MCP; core MCP stdio fix (all 6/6 MCPs up); knowledge cards extracted from voice turns |
 | 0.2.25 | Canvas Core bridge settings in-app (Settings > Integrations); voice token UI; test connection button |
 | 0.2.24 | Auto-provision voice token; voice bridge status panel in AI Brain |
