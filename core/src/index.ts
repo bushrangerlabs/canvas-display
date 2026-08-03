@@ -622,12 +622,60 @@ async function main(): Promise<void> {
     runVoicePipelineRequest,
   );
 
+  // --- Edge voice token management -------------------------------------------
+  // If CANVAS_CORE_EDGE_VOICE_TOKEN is set in env, it's always used.
+  // Otherwise the core auto-provisions the token from the FIRST connecting edge
+  // device and persists it in the settings table. This zero-config approach
+  // means you don't need to manually sync tokens between core and edge devices.
+  async function resolveEdgeVoiceToken(presented: string): Promise<string | null> {
+    // Env var overrides everything
+    if (config.edgeVoiceToken) return config.edgeVoiceToken;
+    // Check DB for a previously stored token
+    const row = await pool.query<{ value: string }>(
+      'SELECT value FROM settings WHERE key = $1', ['edge_voice_token'],
+    );
+    if (row.rowCount && row.rows[0]?.value) return row.rows[0].value;
+    // No token configured — auto-capture from first connecting edge device
+    if (presented && presented.length >= 16) {
+      await pool.query(
+        'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=now()',
+        ['edge_voice_token', presented],
+      );
+      console.log(`[core][voice] Auto-provisioned edge voice token from first connecting edge device (prefix: ${presented.slice(0, 8)}...)`);
+      return presented;
+    }
+    return null;
+  }
+
+  function checkEdgeVoiceAuth(expected: string | null, presented: string): boolean {
+    if (!expected || !presented) return false;
+    if (presented.length !== expected.length) return false;
+    return timingSafeEqual(Buffer.from(presented), Buffer.from(expected));
+  }
+
+  // Admin endpoint to view/reset the edge voice bridge token
+  fastify.get('/api/admin/voice-bridge', {
+    preHandler: requireAdmin({ roles: ['admin'] }),
+  }, async () => {
+    const envToken = config.edgeVoiceToken;
+    const row = await pool.query<{ value: string }>(
+      'SELECT value FROM settings WHERE key = $1', ['edge_voice_token'],
+    );
+    const dbToken = row.rows[0]?.value ?? null;
+    const active = envToken ?? dbToken;
+    return {
+      configured: Boolean(active),
+      source: envToken ? 'env' : dbToken ? 'db' : 'none',
+      token: active ?? null,
+      coreUrl: `http://${fastify.server.address() ? (fastify.server.address() as import('net').AddressInfo).address : 'localhost'}:${config.port}`,
+    };
+  });
+
   fastify.post('/api/edge/voice/turn', async (request, reply) => {
-    const expected = config.edgeVoiceToken;
     const header = request.headers.authorization;
     const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
-    if (!expected || presented.length !== expected.length
-        || !timingSafeEqual(Buffer.from(presented), Buffer.from(expected))) {
+    const expected = await resolveEdgeVoiceToken(presented);
+    if (!checkEdgeVoiceAuth(expected, presented)) {
       reply.code(401);
       return { error: 'invalid_edge_voice_credential' };
     }
@@ -677,11 +725,10 @@ async function main(): Promise<void> {
   });
 
   fastify.post('/api/edge/voice/metrics', async (request, reply) => {
-    const expected = config.edgeVoiceToken;
     const header = request.headers.authorization;
     const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
-    if (!expected || presented.length !== expected.length
-        || !timingSafeEqual(Buffer.from(presented), Buffer.from(expected))) {
+    const expected = await resolveEdgeVoiceToken(presented);
+    if (!checkEdgeVoiceAuth(expected, presented)) {
       reply.code(401);
       return { error: 'invalid_edge_voice_credential' };
     }
@@ -711,11 +758,10 @@ async function main(): Promise<void> {
   });
 
   fastify.post('/api/edge/voice/turn-stream', async (request, reply) => {
-    const expected = config.edgeVoiceToken;
     const header = request.headers.authorization;
     const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
-    if (!expected || presented.length !== expected.length
-        || !timingSafeEqual(Buffer.from(presented), Buffer.from(expected))) {
+    const expected = await resolveEdgeVoiceToken(presented);
+    if (!checkEdgeVoiceAuth(expected, presented)) {
       reply.code(401); return { error: 'invalid_edge_voice_credential' };
     }
     const body = (request.body ?? {}) as Record<string, unknown>;

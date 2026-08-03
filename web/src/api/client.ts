@@ -545,6 +545,7 @@ export const coreApi = {
   shadowRun: () => api.post<unknown>('/api/admin/shadow-mode/run'),
   shadowReport: () => api.get<unknown>('/api/admin/shadow-mode/report'),
   audioFocus: () => api.get<AudioFocusState>('/api/admin/audio-focus'),
+  voiceBridge: () => api.get<{ configured: boolean; source: 'env' | 'db' | 'none'; token: string | null; coreUrl: string }>('/api/admin/voice-bridge'),
 
   // Pages / WebViews (legacy-compatible records managed by Core)
   pages: () => api.get<LegacyPage[]>('/api/pages'),

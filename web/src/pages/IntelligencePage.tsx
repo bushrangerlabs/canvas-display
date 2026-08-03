@@ -9,11 +9,13 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box, Stack, Typography, Paper, Chip, Button, TextField, Divider, Alert,
   CircularProgress, Accordion, AccordionSummary, AccordionDetails, Select, MenuItem, FormControl,
+  IconButton, Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import SendIcon from '@mui/icons-material/Send';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import PersonIcon from '@mui/icons-material/Person';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -32,6 +34,7 @@ export default function IntelligencePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const [voiceBridge, setVoiceBridge] = useState<{ configured: boolean; source: string; token: string | null; coreUrl: string } | null>(null);
 
   const [transcript, setTranscript] = useState('');
   const [running, setRunning] = useState(false);
@@ -41,7 +44,7 @@ export default function IntelligencePage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [p, s, af] = await Promise.all([
+      const [p, s, af, vb] = await Promise.all([
         coreApi.providers().then(r => r.providers).catch(() => [] as ProviderHealth[]),
         coreApi.shadowStatus().catch((e) => {
           if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
@@ -51,10 +54,12 @@ export default function IntelligencePage() {
           if (e instanceof ApiError && e.status === 401) return null;
           return null;
         }),
+        coreApi.voiceBridge().catch(() => null),
       ]);
       setProviders(p);
       setShadow(s);
       setAudioFocus(af);
+      setVoiceBridge(vb);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -135,6 +140,39 @@ export default function IntelligencePage() {
                   ) : <Typography variant="body2" color="text.secondary">Sign in to view.</Typography>}
                 </Paper>
               </Stack>
+
+              {/* Voice Bridge */}
+              <Paper sx={{ p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Voice bridge</Typography>
+                <Divider sx={{ mb: 1.5 }} />
+                {voiceBridge ? (
+                  <Stack spacing={1}>
+                    <Row label="Status" value={
+                      <Chip size="small" label={voiceBridge.configured ? 'connected' : 'not configured'} color={voiceBridge.configured ? 'success' : 'warning'} variant="outlined" sx={{ fontSize: 10 }} />
+                    } />
+                    <Row label="Source" value={<Typography variant="caption">{voiceBridge.source}</Typography>} />
+                    {voiceBridge.token && (
+                      <Row label="Token" value={
+                        <Stack direction="row" sx={{ alignItems: 'center' }} spacing={0.5}>
+                          <Typography variant="caption" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                            {voiceBridge.token}
+                          </Typography>
+                          <Tooltip title="Copy token">
+                            <IconButton size="small" onClick={() => navigator.clipboard.writeText(voiceBridge.token!)}>
+                              <ContentCopyIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Stack>
+                      } />
+                    )}
+                    {!voiceBridge.configured && (
+                      <Alert severity="info" sx={{ mt: 1, bgcolor: 'rgba(100,181,246,0.1)', fontSize: 12 }}>
+                        The core will auto-learn the token when a display device first connects. Trigger the wake word to pair automatically.
+                      </Alert>
+                    )}
+                  </Stack>
+                ) : <Typography variant="body2" color="text.secondary">Sign in to view.</Typography>}
+              </Paper>
 
               {/* Test voice */}
               <Paper sx={{ p: 2.5 }}>
