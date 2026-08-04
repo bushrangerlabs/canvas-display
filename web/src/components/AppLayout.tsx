@@ -20,6 +20,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import LogsIcon from '@mui/icons-material/Terminal';
 import MenuIcon from '@mui/icons-material/Menu';
 import HubIcon from '@mui/icons-material/Hub';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import LoginIcon from '@mui/icons-material/Login';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { label: 'Pages',        path: '/pages',        icon: <PagesIcon fontSize="small" /> },
   { label: 'Editor',       path: '/editor',       icon: <EditorIcon fontSize="small" /> },
   { label: 'AI Brain',     path: '/intelligence', icon: <IntelligenceIcon fontSize="small" /> },
+  { label: 'Automations',  path: '/flows',        icon: <AccountTreeIcon fontSize="small" /> },
   { label: 'Settings',     path: '/settings',     icon: <SettingsIcon fontSize="small" /> },
   { label: 'Logs',         path: '/logs',         icon: <LogsIcon fontSize="small" /> },
 ];

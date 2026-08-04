@@ -449,6 +449,57 @@ export interface SkillRevision { id:string;skill_id:string;revision:number;defin
 export interface SkillRecord { id:string;name:string;description?:string;status:string;active_revision?:number|null;revisions?:SkillRevision[]; }
 export interface SkillPlan { prompt:string;definition:SkillDefinition|null;validation:{valid:boolean;errors:Array<{path:string;message:string}>};risk:'normal'|'elevated';remainsDisabled:true; }
 
+// ── Visual Automation Flows ─────────────────────────────────────────────────
+
+export type FlowNodeType =
+  | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state' | 'trigger_webhook' | 'trigger_manual'
+  | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_delay' | 'action_http'
+  | 'action_set_variable' | 'action_ai_reply' | 'action_knowledge_card'
+  | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
+
+export interface FlowNode {
+  id: string;
+  type: FlowNodeType;
+  position: { x: number; y: number };
+  label?: string;
+  config: Record<string, unknown>;
+}
+
+export interface FlowEdge {
+  id: string;
+  source: string;
+  sourceHandle?: string;
+  target: string;
+}
+
+export interface FlowDefinition {
+  schemaVersion: 1;
+  name: string;
+  description?: string;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
+export interface FlowRow {
+  id: string;
+  name: string;
+  description: string | null;
+  definition: FlowDefinition;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FlowExecution {
+  id: string;
+  flow_id: string;
+  trigger_data: Record<string, unknown> | null;
+  status: 'running' | 'completed' | 'error';
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 // ── Typed API surface ───────────────────────────────────────────────────────
 
 export const coreApi = {
@@ -690,4 +741,15 @@ export const coreApi = {
       sound,
       volume,
     }),
+
+  // ── Visual Automation Flows ─────────────────────────────────────────────
+  listFlows: () => api.get<{ flows: FlowRow[] }>('/api/flows'),
+  getFlow: (id: string) => api.get<FlowRow>(`/api/flows/${id}`),
+  createFlow: (definition: FlowDefinition) => api.post<FlowRow>('/api/flows', { definition }),
+  updateFlow: (id: string, definition: FlowDefinition) => api.put<FlowRow>(`/api/flows/${id}`, { definition }),
+  setFlowEnabled: (id: string, enabled: boolean) => api.patch<{ ok: boolean }>(`/api/flows/${id}/enabled`, { enabled }),
+  deleteFlow: (id: string) => api.delete<{ ok: boolean }>(`/api/flows/${id}`),
+  executeFlow: (id: string, triggerData?: Record<string, unknown>) =>
+    api.post<{ ok: boolean; executionId: string }>(`/api/flows/${id}/execute`, triggerData ?? {}),
+  getFlowExecutions: (id: string) => api.get<{ executions: FlowExecution[] }>(`/api/flows/${id}/executions`),
 };

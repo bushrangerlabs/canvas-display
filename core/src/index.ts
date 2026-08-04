@@ -75,6 +75,7 @@ import { registerRoutineRoutes, type RoutineEngine } from './routines.js';
 import { RoutinePlanner } from './routine-planner.js';
 import { RoutineLearningService, registerRoutineLearningRoutes } from './routine-learning.js';
 import { SkillService, registerSkillRoutes } from './skills.js';
+import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 
 /**
  * Canvas Core — centralized control plane and AI brain (plan doc §20.5, D-009..D-013).
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
   let routineEngine: RoutineEngine | null = null;
   let skillService: SkillService | null = null;
   let routineTriggerTimer: ReturnType<typeof setInterval> | null = null;
+  let flowExecutor: FlowExecutor | null = null;
 
   const cacheHaEntity = async (entity: {
     entityId: string;
@@ -839,9 +841,20 @@ async function main(): Promise<void> {
   // --- TTS Broadcast (multi-room audio) ------------------------------------
   // Core synthesizes TTS and stores it per-device. Display devices poll
   // GET /api/edge/tts/pending to pick up and play queued audio.
+  // Exposed to the flow executor via closure.
+  let flowEnqueueTts: ((text: string, deviceId?: string) => Promise<void>) | null = null;
   {
     const pendingTts = new Map<string, { audioBase64: string; text: string; timestamp: string }>();
     const ALL_DEVICES = '__all__';
+
+    // Expose TTS queue to flow executor
+    flowEnqueueTts = async (text: string, deviceId?: string) => {
+      const speech = intelligence.providers.tts;
+      if (!speech) return;
+      const audio = await speech.synthesize(text.trim());
+      const key = deviceId ?? ALL_DEVICES;
+      pendingTts.set(key, { audioBase64: audio.toString('base64'), text: text.trim(), timestamp: new Date().toISOString() });
+    };
 
     fastify.post<{ Body: { text?: string; deviceIds?: string[] } }>(
       '/api/edge/tts/broadcast',
@@ -1666,6 +1679,52 @@ async function main(): Promise<void> {
   skillService = new SkillService(pool, intelligence.toolRegistry, intelligence.providers.llm, () => routineEngine, () => intelligence.getToolContext());
   skillService.registerTools();
   registerSkillRoutes(fastify, skillService, requireAdmin);
+
+  // ── Visual Automation Flows (Node-RED style) ──────────────────────────────
+  const flowRepo = new FlowRepository(pool);
+  flowExecutor = new FlowExecutor(flowRepo, {
+    pool,
+    callHaService: async (domain, service, data) => {
+      if (!ha) throw new Error('HA not configured');
+      await ha.callService(domain, service, data as Record<string, unknown>);
+    },
+    speakTts: async (text, deviceId) => {
+      if (flowEnqueueTts) await flowEnqueueTts(text, deviceId);
+    },
+    switchScene: async (sceneName, deviceId) => {
+      // Look up scene by name and navigate the device to it
+      const r = await pool.query<{ id: string }>(
+        `SELECT id FROM scenes WHERE lower(name) = lower($1) AND status='published' LIMIT 1`,
+        [sceneName]
+      );
+      if (r.rows[0] && deviceId) {
+        await requestDeviceAction(deviceId, 'navigate_panel', {
+          url: `/display/scenes/${encodeURIComponent(r.rows[0].id)}`,
+        }).catch(err => console.warn('[flows] switchScene failed:', (err as Error).message));
+      }
+    },
+    askAi: async (prompt) => {
+      const result = await intelligence.runIntelligentPipeline({
+        transcript: prompt,
+        skipTts: true,
+      });
+      return result.reply ?? '';
+    },
+    pushKnowledgeCard: async (card, deviceId) => {
+      // Push card to display device (best-effort, device must be running display server)
+      console.log(`[flows] knowledge card: ${card.title} → ${deviceId ?? 'all'}`);
+    },
+  });
+  registerFlowRoutes(fastify, flowRepo, flowExecutor, requireAdmin);
+  intelligence.setToolContext({
+    invokeVoiceFlow: async (transcript, deviceId) => {
+      if (!flowExecutor) return { matched: false };
+      const flow = await flowExecutor.matchVoiceTrigger(transcript);
+      if (!flow) return { matched: false };
+      const executionId = await flowExecutor.execute(flow.id, { transcript, deviceId });
+      return { matched: true, flowName: flow.name, executionId };
+    },
+  });
   await routineEngine?.primeHaStates();
   routineTriggerTimer = setInterval(() => {
     if (routineEngine) {

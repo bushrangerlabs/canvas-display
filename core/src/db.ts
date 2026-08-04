@@ -618,5 +618,30 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     ALTER TABLE routine_plan_learning ADD COLUMN IF NOT EXISTS fast_path_hits INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE routine_plan_learning ADD COLUMN IF NOT EXISTS last_fast_path_ms INTEGER;
   `);
+
+  // Visual Automation Flows (Node-RED style)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS flows (
+      id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      name        TEXT NOT NULL,
+      description TEXT,
+      definition  JSONB NOT NULL DEFAULT '{}',
+      enabled     BOOLEAN NOT NULL DEFAULT false,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_flows_enabled ON flows (enabled);
+    CREATE TABLE IF NOT EXISTS flow_executions (
+      id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      flow_id      TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+      trigger_data JSONB,
+      status       TEXT NOT NULL DEFAULT 'running',
+      error        TEXT,
+      started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      finished_at  TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_flow_executions_flow ON flow_executions (flow_id, started_at DESC);
+  `);
+
   console.log('[core][db] migrations applied');
 }

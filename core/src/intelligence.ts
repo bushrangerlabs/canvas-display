@@ -726,6 +726,7 @@ export function createIntelligence(
     const planningStartedAt = performance.now();
     const skillMatch = await toolContext.invokeVoiceSkill?.(transcript, input.originDeviceId);
     const routineMatch = await toolContext.invokeVoiceRoutine?.(transcript, input.originDeviceId);
+    const flowMatch = await toolContext.invokeVoiceFlow?.(transcript, input.originDeviceId);
 
     // 5) Tool execution (if intent is known and actionable)
     let toolResult: ToolResult | undefined;
@@ -741,6 +742,9 @@ export function createIntelligence(
     } else if (skillMatch?.ambiguous?.length) {
       reply = `That request matches more than one skill: ${skillMatch.ambiguous.join(', ')}. Please be more specific.`;
       toolResult = { ok: false, message: reply };
+    } else if (flowMatch?.matched) {
+      reply = `Running automation: ${flowMatch.flowName ?? 'flow'}.`;
+      toolResult = { ok: true, message: reply, data: { executionId: flowMatch.executionId } };
     } else if (routineMatch?.matched) {
       reply = routineMatch.reply ?? 'Routine completed.';
       toolResult = { ok: true, message: reply, data: routineMatch.result };

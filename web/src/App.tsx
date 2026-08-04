@@ -10,6 +10,8 @@ import IntelligencePage from './pages/IntelligencePage';
 import SettingsPage from './pages/SettingsPage';
 import LogsPage from './pages/LogsPage';
 import SceneDisplayPage from './pages/SceneDisplayPage';
+import FlowsListPage from './pages/FlowsListPage';
+import FlowEditorPage from './pages/FlowEditorPage';
 import { WebSocketProvider } from './widgets/providers/WebSocketProvider';
 
 const darkTheme = createTheme({
@@ -49,6 +51,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/display/scenes/:sceneId" element={<SceneDisplayPage />} />
+          <Route path="/flows/:id" element={<FlowEditorPage />} />
           <Route path="*" element={<AppLayout><Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/devices" element={<DevicesPage />} />
@@ -56,6 +59,7 @@ export default function App() {
             <Route path="/pages" element={<PagesPage />} />
             <Route path="/editor" element={<EditorPage />} />
             <Route path="/intelligence" element={<IntelligencePage />} />
+            <Route path="/flows" element={<FlowsListPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
