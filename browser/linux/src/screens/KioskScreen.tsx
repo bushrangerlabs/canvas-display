@@ -506,7 +506,11 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
             }
           } else if (cmd.action === 'navigate_scene') {
             // Core flow: switch the main display to a scene URL
-            const url = String(cmd.payload?.url ?? '');
+            const rawUrl = String(cmd.payload?.url ?? '');
+            // Resolve relative URLs against serverUrl (Core sends paths like /display/scenes/:id)
+            const url = rawUrl.startsWith('/')
+              ? `${config.serverUrl.replace(/\/$/, '')}${rawUrl}`
+              : rawUrl;
             if (url) {
               await invoke('navigate_webview', { label: 'main', url }).catch(console.error);
             }

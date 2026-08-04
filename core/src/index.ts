@@ -63,7 +63,7 @@ import { ShadowModeRunner } from './shadow-mode.js';
 import { RolloutStrategy, InMemoryRolloutRepository, registerRolloutRoutes } from './rollout-strategy.js';
 import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
-import { registerLegacyRoutes, requestDeviceAction } from './legacy-routes.js';
+import { registerLegacyRoutes, requestDeviceAction, sendCommand } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
@@ -1744,8 +1744,7 @@ async function main(): Promise<void> {
         ? [deviceId]
         : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(r => r.device_id);
       for (const dId of targets) {
-        await deliverPageToDevice(page, dId)
-          .catch(err => console.warn(`[flows] switchPage failed for ${dId}:`, (err as Error).message));
+        sendCommand(dId, { type: 'load_page', page_id: page.id, page_data: page });
       }
     },
   });
