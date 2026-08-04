@@ -25,6 +25,10 @@ npm run build
 cd "$REPO_ROOT"
 echo "✓ web built"
 
+# ── 2b. Copy web build → core/public (served by Canvas Core) ─────────────────
+cp -r "$REPO_ROOT/web/dist/." "$REPO_ROOT/core/public/"
+echo "✓ web assets copied → core/public/"
+
 # ── 3. Build server sidecar binary ───────────────────────────────────────────
 echo "Building server sidecar…"
 cd "$REPO_ROOT/server"
