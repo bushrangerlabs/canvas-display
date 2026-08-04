@@ -9,9 +9,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Box, Button, Chip, CircularProgress, Divider, IconButton, MenuItem,
+  Autocomplete, Box, Button, Checkbox, Chip, CircularProgress, Divider,
+  FormControl, FormControlLabel, FormGroup, IconButton, InputLabel, MenuItem,
   Paper, Select, Stack, Switch, TextField, Tooltip, Typography, Alert,
-  FormControlLabel, InputLabel, FormControl,
 } from '@mui/material';
 import {
   ReactFlow,
@@ -37,7 +37,8 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useParams } from 'react-router-dom';
-import { coreApi, type FlowDefinition, type FlowNode, type FlowRow, type FlowNodeType } from '../api/client';
+import { coreApi, type FlowDefinition, type FlowNode, type FlowRow, type FlowNodeType,
+  type HaEntityCatalogueItem, type DeviceRow, type SceneRecord } from '../api/client';
 import { randomUUID } from '../utils/uuid';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,8 +57,15 @@ interface NodeMeta {
 interface ConfigField {
   key: string;
   label: string;
-  type: 'text' | 'textarea' | 'select' | 'number';
+  type: 'text' | 'textarea' | 'select' | 'number'
+      | 'intent_multiselect'   // checkboxes for known AI intent names
+      | 'cron_preset'          // common schedule presets + custom cron input
+      | 'entity_picker'        // searchable HA entity autocomplete
+      | 'device_picker'        // enrolled display device dropdown
+      | 'scene_picker'         // published scene dropdown
+      | 'ha_service_picker';   // domain + service combined selector
   options?: string[];
+  domain_filter?: string;      // for entity_picker: filter by HA domain (e.g. 'light')
   placeholder?: string;
   hint?: string;
 }
@@ -76,14 +84,14 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     label: 'Schedule', color: '#c05621', textColor: '#fff',
     group: 'Triggers', icon: '⏰',
     configFields: [
-      { key: 'cron', label: 'Cron expression', type: 'text', placeholder: '0 7 * * *', hint: 'e.g. 0 7 * * * = 7am daily' },
+      { key: 'cron', label: 'Schedule', type: 'cron_preset', placeholder: '0 7 * * *', hint: 'When to run' },
     ],
   },
   trigger_ha_state: {
     label: 'HA State Change', color: '#c05621', textColor: '#fff',
     group: 'Triggers', icon: '🏠',
     configFields: [
-      { key: 'entity_id', label: 'Entity ID', type: 'text', placeholder: 'binary_sensor.motion' },
+      { key: 'entity_id', label: 'Entity', type: 'entity_picker', placeholder: 'binary_sensor.motion' },
       { key: 'to_state', label: 'New state (optional)', type: 'text', placeholder: 'on' },
     ],
   },
@@ -105,17 +113,16 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     configFields: [
       {
         key: 'intents',
-        label: 'Match intents (one per line, blank = any)',
-        type: 'textarea',
-        placeholder: 'weather_query\nmedia_play\nlight_set',
+        label: 'Match intents (blank = any)',
+        type: 'intent_multiselect',
         hint: 'Fires when AI classifies the request as any of these intents',
       },
       {
         key: 'domains',
-        label: 'Limit to domains (one per line, optional)',
-        type: 'textarea',
-        placeholder: 'media\nlight\nclimate',
-        hint: 'Optional extra filter: intent must start with one of these prefixes',
+        label: 'Limit to domains (optional prefix filter)',
+        type: 'text',
+        placeholder: 'media, light',
+        hint: 'Comma-separated — intent must start with one of these',
       },
     ],
   },
@@ -125,9 +132,8 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     label: 'HA Service', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '🏠',
     configFields: [
-      { key: 'domain', label: 'Domain', type: 'text', placeholder: 'light' },
-      { key: 'service', label: 'Service', type: 'text', placeholder: 'turn_on' },
-      { key: 'entity_id', label: 'Entity ID', type: 'text', placeholder: 'light.living_room or {{variable}}' },
+      { key: 'ha_service', label: 'Service', type: 'ha_service_picker', hint: 'domain.service' },
+      { key: 'entity_id', label: 'Entity', type: 'entity_picker', placeholder: 'light.living_room or {{variable}}' },
     ],
   },
   action_tts: {
@@ -135,15 +141,15 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     group: 'Actions', icon: '🔊',
     configFields: [
       { key: 'text', label: 'Text to speak', type: 'textarea', placeholder: 'Good morning! {{greeting}}' },
-      { key: 'device_id', label: 'Device ID (blank = all)', type: 'text', placeholder: '' },
+      { key: 'device_id', label: 'Device', type: 'device_picker' },
     ],
   },
   action_scene: {
     label: 'Switch Scene', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '🖥️',
     configFields: [
-      { key: 'scene', label: 'Scene name', type: 'text', placeholder: 'Movie Night' },
-      { key: 'device_id', label: 'Device ID', type: 'text', placeholder: '' },
+      { key: 'scene', label: 'Scene', type: 'scene_picker' },
+      { key: 'device_id', label: 'Device', type: 'device_picker' },
     ],
   },
   action_delay: {
@@ -184,7 +190,7 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     configFields: [
       { key: 'title', label: 'Title', type: 'text', placeholder: '{{topic}}' },
       { key: 'body', label: 'Body', type: 'textarea', placeholder: '{{ai_reply}}' },
-      { key: 'device_id', label: 'Device ID (blank = all)', type: 'text' },
+      { key: 'device_id', label: 'Device (blank = all)', type: 'device_picker' },
     ],
   },
 
@@ -192,7 +198,7 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     label: 'Device Command', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '📺',
     configFields: [
-      { key: 'device_id', label: 'Device ID (blank = all)', type: 'text', placeholder: 'kitchen-display' },
+      { key: 'device_id', label: 'Device (blank = all)', type: 'device_picker' },
       { key: 'command', label: 'Command', type: 'select', options: ['navigate', 'overlay_show', 'overlay_hide', 'media_play', 'media_pause', 'media_stop', 'volume_set', 'reload'] },
       { key: 'payload', label: 'Payload (JSON or text)', type: 'textarea', placeholder: '{"scene": "Movie Night"}' },
     ],
@@ -364,6 +370,11 @@ export default function FlowEditorPage() {
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
 
+  // Reference data for smart pickers
+  const [haEntities, setHaEntities] = useState<HaEntityCatalogueItem[]>([]);
+  const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [scenes, setScenes] = useState<SceneRecord[]>([]);
+
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Load flow
@@ -381,6 +392,13 @@ export default function FlowEditorPage() {
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Load reference data for pickers
+  useEffect(() => {
+    coreApi.haEntities().then(r => setHaEntities(r.entities)).catch(() => {/* optional */});
+    coreApi.devices().then(r => setDevices(r.devices.filter(d => d.paired))).catch(() => {});
+    coreApi.scenes().then(r => setScenes(r.scenes.filter(s => s.status === 'published'))).catch(() => {});
+  }, []);
 
   const onConnect = useCallback((connection: Connection) => {
     setRfEdges(eds => addEdge({
@@ -403,10 +421,12 @@ export default function FlowEditorPage() {
   };
 
   const updateSelectedConfig = (key: string, value: string) => {
+    updateSelectedConfigRaw(key, key === 'cases' ? (JSON.parse(value) as unknown) : value);
+  };
+
+  const updateSelectedConfigRaw = (key: string, value: unknown) => {
     if (!selectedNode) return;
-    // Special: 'cases' is stored as a JSON array
-    const parsed: unknown = key === 'cases' ? (JSON.parse(value) as unknown) : value;
-    const updated = { ...selectedNode, config: { ...selectedNode.config, [key]: parsed } };
+    const updated = { ...selectedNode, config: { ...selectedNode.config, [key]: value } };
     setSelectedNode(updated);
     setRfNodes(ns => ns.map(n =>
       n.id === selectedNode.id
@@ -631,34 +651,247 @@ export default function FlowEditorPage() {
                 placeholder={NODE_CATALOG[selectedNode.type]?.label}
               />
 
-              {NODE_CATALOG[selectedNode.type]?.configFields.map(field => (
-                <Box key={field.key} sx={{ mb: 2 }}>
-                  {field.type === 'select' ? (
-                    <FormControl fullWidth size="small">
-                      <InputLabel>{field.label}</InputLabel>
-                      <Select
-                        value={String(selectedNode.config[field.key] ?? field.options?.[0] ?? '')}
-                        label={field.label}
-                        onChange={e => updateSelectedConfig(field.key, e.target.value)}
-                      >
-                        {field.options?.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                  ) : (
+              {NODE_CATALOG[selectedNode.type]?.configFields.map(field => {
+                const cfgVal = selectedNode.config[field.key];
+                const strVal = cfgVal != null ? String(cfgVal) : '';
+
+                // ── intent_multiselect ───────────────────────────────────
+                if (field.type === 'intent_multiselect') {
+                  const ALL_INTENTS = [
+                    'light_set','lock_set','climate_set','climate_query',
+                    'weather_query','device_query',
+                    'media_play','media_pause','media_resume','media_stop','media_next','media_select',
+                    'scene_activate','navigation','timer_set','time_query','date_query','unknown',
+                  ];
+                  const selected: string[] = Array.isArray(cfgVal) ? cfgVal as string[]
+                    : strVal ? strVal.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean) : [];
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <Typography sx={{ fontSize: '0.72rem', color: '#8b949e', mb: 0.5 }}>{field.label}</Typography>
+                      <Paper sx={{ p: 1, bgcolor: '#0d1117', border: '1px solid #30363d', borderRadius: 1 }}>
+                        <FormGroup>
+                          {ALL_INTENTS.map(intent => (
+                            <FormControlLabel key={intent}
+                              sx={{ '& .MuiFormControlLabel-label': { fontSize: '0.72rem', fontFamily: 'monospace', color: '#e6edf3' }, my: -0.5 }}
+                              control={
+                                <Checkbox
+                                  checked={selected.includes(intent)}
+                                  size="small"
+                                  sx={{ color: '#484f58', '&.Mui-checked': { color: '#58a6ff' }, py: 0.25 }}
+                                  onChange={e => {
+                                    const next = e.target.checked
+                                      ? [...selected, intent]
+                                      : selected.filter(i => i !== intent);
+                                    updateSelectedConfigRaw(field.key, next);
+                                  }}
+                                />
+                              }
+                              label={intent}
+                            />
+                          ))}
+                        </FormGroup>
+                        {field.hint && <Typography sx={{ fontSize: '0.62rem', color: '#484f58', mt: 0.5 }}>{field.hint}</Typography>}
+                      </Paper>
+                    </Box>
+                  );
+                }
+
+                // ── cron_preset ──────────────────────────────────────────
+                if (field.type === 'cron_preset') {
+                  const PRESETS = [
+                    { label: 'Every minute', value: '* * * * *' },
+                    { label: 'Every 5 minutes', value: '*/5 * * * *' },
+                    { label: 'Every 15 minutes', value: '*/15 * * * *' },
+                    { label: 'Every hour', value: '0 * * * *' },
+                    { label: 'Daily at 6am', value: '0 6 * * *' },
+                    { label: 'Daily at 7am', value: '0 7 * * *' },
+                    { label: 'Daily at 8am', value: '0 8 * * *' },
+                    { label: 'Daily at noon', value: '0 12 * * *' },
+                    { label: 'Daily at 6pm', value: '0 18 * * *' },
+                    { label: 'Daily at 9pm', value: '0 21 * * *' },
+                    { label: 'Daily at midnight', value: '0 0 * * *' },
+                    { label: 'Weekdays at 7am', value: '0 7 * * 1-5' },
+                    { label: 'Weekends at 9am', value: '0 9 * * 0,6' },
+                    { label: 'Weekly (Mon 7am)', value: '0 7 * * 1' },
+                    { label: 'Custom…', value: '__custom__' },
+                  ];
+                  const isCustom = strVal && !PRESETS.some(p => p.value === strVal && p.value !== '__custom__');
+                  const selectVal = isCustom ? '__custom__' : (strVal || '');
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <FormControl fullWidth size="small" sx={{ mb: isCustom ? 1 : 0 }}>
+                        <InputLabel sx={{ color: '#8b949e' }}>{field.label}</InputLabel>
+                        <Select value={selectVal} label={field.label}
+                          onChange={e => {
+                            if (e.target.value === '__custom__') updateSelectedConfig(field.key, '');
+                            else updateSelectedConfig(field.key, e.target.value);
+                          }}
+                        >
+                          {PRESETS.map(p => <MenuItem key={p.value} value={p.value}>{p.label}</MenuItem>)}
+                        </Select>
+                      </FormControl>
+                      {isCustom && (
+                        <TextField label="Cron expression" value={strVal} fullWidth size="small"
+                          onChange={e => updateSelectedConfig(field.key, e.target.value)}
+                          placeholder="0 7 * * *" helperText="min hour day month weekday"
+                        />
+                      )}
+                    </Box>
+                  );
+                }
+
+                // ── entity_picker ────────────────────────────────────────
+                if (field.type === 'entity_picker') {
+                  const filtered = field.domain_filter
+                    ? haEntities.filter(e => e.domain === field.domain_filter)
+                    : haEntities;
+                  const opts = filtered.map(e => ({
+                    label: e.friendly_name ? `${e.friendly_name} (${e.entity_id})` : e.entity_id,
+                    id: e.entity_id,
+                  }));
+                  const cur = opts.find(o => o.id === strVal) ?? (strVal ? { label: strVal, id: strVal } : null);
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <Autocomplete
+                        freeSolo size="small" options={opts}
+                        value={cur} inputValue={strVal}
+                        getOptionLabel={o => typeof o === 'string' ? o : o.label}
+                        onInputChange={(_, v) => updateSelectedConfig(field.key, v)}
+                        onChange={(_, v) => updateSelectedConfig(field.key, typeof v === 'string' ? v : (v?.id ?? ''))}
+                        renderInput={params => (
+                          <TextField {...params} label={field.label} placeholder={field.placeholder ?? 'Search entities…'} helperText={field.hint} />
+                        )}
+                        renderOption={(props, option) => (
+                          <li {...props} key={option.id}>
+                            <Box>
+                              <Typography variant="body2">{typeof option === 'string' ? option : option.label.split('(')[0].trim()}</Typography>
+                              <Typography variant="caption" sx={{ color: 'text.secondary' }}>{typeof option === 'string' ? '' : option.id}</Typography>
+                            </Box>
+                          </li>
+                        )}
+                        noOptionsText={haEntities.length === 0 ? 'Loading entities…' : 'No matches'}
+                      />
+                    </Box>
+                  );
+                }
+
+                // ── device_picker ────────────────────────────────────────
+                if (field.type === 'device_picker') {
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>{field.label}</InputLabel>
+                        <Select value={strVal} label={field.label}
+                          onChange={e => updateSelectedConfig(field.key, e.target.value)}
+                        >
+                          <MenuItem value=""><em>All devices</em></MenuItem>
+                          {devices.map(d => (
+                            <MenuItem key={d.id} value={d.id}>{d.name || d.id}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                }
+
+                // ── scene_picker ─────────────────────────────────────────
+                if (field.type === 'scene_picker') {
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>{field.label}</InputLabel>
+                        <Select value={strVal} label={field.label}
+                          onChange={e => updateSelectedConfig(field.key, e.target.value)}
+                        >
+                          <MenuItem value=""><em>Select scene…</em></MenuItem>
+                          {scenes.map(s => (
+                            <MenuItem key={s.id} value={s.name}>{s.name}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                }
+
+                // ── ha_service_picker ────────────────────────────────────
+                if (field.type === 'ha_service_picker') {
+                  const HA_SERVICES = [
+                    'light.turn_on','light.turn_off','light.toggle',
+                    'switch.turn_on','switch.turn_off','switch.toggle',
+                    'climate.set_temperature','climate.set_hvac_mode',
+                    'lock.lock','lock.unlock',
+                    'media_player.play_media','media_player.pause','media_player.stop',
+                    'media_player.volume_set','media_player.next_track',
+                    'scene.turn_on',
+                    'script.turn_on',
+                    'automation.trigger','automation.turn_on','automation.turn_off',
+                    'cover.open_cover','cover.close_cover',
+                    'fan.turn_on','fan.turn_off',
+                    'notify.notify',
+                    'input_boolean.turn_on','input_boolean.turn_off','input_boolean.toggle',
+                    'input_number.set_value',
+                    'input_select.select_option',
+                  ];
+                  // Split stored "ha_service" back into domain/service for the executor
+                  const svcVal = strVal || (String(selectedNode.config.domain ?? '') ? `${selectedNode.config.domain}.${selectedNode.config.service}` : '');
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <Autocomplete
+                        freeSolo size="small"
+                        options={HA_SERVICES}
+                        value={svcVal}
+                        inputValue={svcVal}
+                        onInputChange={(_, v) => {
+                          const [domain, ...rest] = v.split('.');
+                          updateSelectedConfigRaw(field.key, v);
+                          updateSelectedConfigRaw('domain', domain ?? '');
+                          updateSelectedConfigRaw('service', rest.join('.') ?? '');
+                        }}
+                        onChange={(_, v) => {
+                          const svc = typeof v === 'string' ? v : '';
+                          const [domain, ...rest] = svc.split('.');
+                          updateSelectedConfigRaw(field.key, svc);
+                          updateSelectedConfigRaw('domain', domain ?? '');
+                          updateSelectedConfigRaw('service', rest.join('.') ?? '');
+                        }}
+                        renderInput={params => (
+                          <TextField {...params} label={field.label} placeholder="light.turn_on" helperText={field.hint} />
+                        )}
+                      />
+                    </Box>
+                  );
+                }
+
+                // ── select ───────────────────────────────────────────────
+                if (field.type === 'select') {
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>{field.label}</InputLabel>
+                        <Select value={strVal || (field.options?.[0] ?? '')} label={field.label}
+                          onChange={e => updateSelectedConfig(field.key, e.target.value)}
+                        >
+                          {field.options?.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                }
+
+                // ── text / textarea / number ─────────────────────────────
+                return (
+                  <Box key={field.key} sx={{ mb: 2 }}>
                     <TextField
-                      label={field.label}
-                      value={String(selectedNode.config[field.key] ?? '')}
+                      label={field.label} value={strVal}
                       onChange={e => updateSelectedConfig(field.key, e.target.value)}
                       fullWidth size="small"
-                      multiline={field.type === 'textarea'}
-                      rows={field.type === 'textarea' ? 3 : undefined}
+                      multiline={field.type === 'textarea'} rows={field.type === 'textarea' ? 3 : undefined}
                       type={field.type === 'number' ? 'number' : 'text'}
-                      placeholder={field.placeholder}
-                      helperText={field.hint}
+                      placeholder={field.placeholder} helperText={field.hint}
                     />
-                  )}
-                </Box>
-              ))}
+                  </Box>
+                );
+              })}
 
               {selectedNode.type === 'logic_if_else' && (
                 <Paper sx={{ p: 1.5, bgcolor: '#0d1117', border: '1px solid #30363d', borderRadius: 1.5 }}>
@@ -722,23 +955,8 @@ export default function FlowEditorPage() {
 
               {selectedNode.type === 'trigger_intent' && (
                 <Paper sx={{ p: 1.5, bgcolor: '#0d1117', border: '1px solid #30363d', borderRadius: 1.5, mt: 1 }}>
-                  <Typography sx={{ fontSize: '0.7rem', color: '#8b949e', mb: 0.5, fontWeight: 600 }}>
-                    Available intents
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', lineHeight: 1.8, fontFamily: 'monospace' }}>
-                    {[
-                      'light_set', 'lock_set', 'climate_set', 'climate_query',
-                      'weather_query', 'device_query',
-                      'media_play', 'media_pause', 'media_resume', 'media_stop',
-                      'media_next', 'media_select',
-                      'scene_activate', 'navigation',
-                      'timer_set', 'time_query', 'date_query',
-                      'unknown',
-                    ].join(' · ')}
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', mt: 0.5 }}>
-                    Intent flows run as side effects — they don't replace the AI's main response.
-                    Context variables available: <code>intent</code>, <code>transcript</code>, <code>deviceId</code>, <code>slots</code>
+                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', lineHeight: 1.6 }}>
+                    Runs as a side effect alongside the AI response. Context variables: <code>{'{{intent}}'}</code>, <code>{'{{transcript}}'}</code>, <code>{'{{deviceId}}'}</code>, <code>{'{{slots}}'}</code>
                   </Typography>
                 </Paper>
               )}
