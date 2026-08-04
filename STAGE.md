@@ -370,6 +370,7 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 | Version | Key Changes |
 |---|---|
+| 0.2.31 | Conversational memory (last 5 turns passed as context to LLM on every voice turn); Skill suggestions UI in admin (table of high-frequency unhandled intents with one-click AI plan + create); Now Playing widget (album art, title, artist, playback controls, live progress bar, calls HA media_player services); Countdown Timer widget (circular SVG ring, configurable duration/label/colour, click to start/pause/reset, auto-restart) |
 | 0.2.30 | Doorbell HA entity auto-detection (TTS broadcast + alert to all displays with camera entity inline); alert broadcast poller; AnnouncementWidget camera feed inline; "show me" page nav (voice overlay "View page" button + iframe overlay); skill suggestions endpoint (`GET /api/skills/suggestions`); Z-index editor (right-click context menu, Layer field in Inspector) |
 | 0.2.29 | Cast/stream receiver (`POST /api/media/cast` + MQTT `play_media`); enriched HA media_player now-playing state (title, artwork); voice state overlay on display (listening/processing/done/error); 👍/👎 feedback UI; interaction memory (`voice_turns` table saves full turns); feedback endpoint on Core |
 | 0.2.28 | SearXNG integration (web search uses local SearXNG, falls back to DuckDuckGo) |
@@ -385,20 +386,21 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 ## Recommended Next Steps (Priority Order)
 
 ### Immediate
-1. **Verify voice loop end-to-end** — Trigger wake word, confirm state overlay appears, confirm 👍/👎 works
+1. **Verify voice loop end-to-end** — Trigger wake word, confirm state overlay appears, confirm 👍/👎 works, confirm multi-turn follow-up questions retain context
 2. **Test doorbell** — Trigger a doorbell binary_sensor in HA, verify TTS plays + overlay shows with camera
 
 ### Short-term
-3. **Pattern-based skill suggestions UI** — Wire `GET /api/skills/suggestions` into admin Skills UI for one-click create
-4. **Auto-skill generation + approval flow** — AI proposes skills from patterns; admin approves
-5. **Music Assistant integration** — Connect displays as MA players; voice music control
-6. **Scene transition animations** — Smooth page navigation
-7. **Device-to-device audio / intercom** — Audio from one display to another
+3. **Music Assistant integration** — Connect displays as MA players; Now Playing widget picks up MA media state automatically via MQTT-published media_player state
+4. **Auto-skill generation + approval flow** — AI proposes skills from patterns; admin approves (suggestions UI done, full loop needs Core scheduled job)
+5. **Scene transition animations** — Smooth page navigation
+6. **Device-to-device audio / intercom** — Audio from one display to another
+7. **Energy monitor widget** — Solar generation, grid import/export, battery SoC from HA energy entities
+8. **Voice timer control** — Intent to start/reset Countdown Timer widget via voice ("set a 10-minute timer" → Core finds CountdownTimer widget on active page and sets its duration + starts it)
 
 ### Longer-term (polish & scale)
-8. **Production PKI mode** — Proper enrollment gate; disable open pairing
-9. **Scene preview thumbnails** — Mini canvas previews in scene list
-10. **Refactor `index.ts`** — Extract route groups into separate files
-11. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
-12. **Offline graceful degradation** — Useful fallback when Core is unreachable
-13. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
+9. **Production PKI mode** — Proper enrollment gate; disable open pairing
+10. **Scene preview thumbnails** — Mini canvas previews in scene list
+11. **Refactor `core/src/index.ts`** — 1970+ lines; extract route groups into separate files
+12. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
+13. **Offline graceful degradation** — Useful fallback when Core is unreachable
+14. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
