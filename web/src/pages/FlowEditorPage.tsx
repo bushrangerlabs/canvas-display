@@ -63,6 +63,7 @@ interface ConfigField {
       | 'entity_picker'        // searchable HA entity autocomplete
       | 'device_picker'        // enrolled display device dropdown
       | 'scene_picker'         // published scene dropdown
+      | 'page_picker'          // legacy page dropdown
       | 'ha_service_picker';   // domain + service combined selector
   options?: string[];
   domain_filter?: string;      // for entity_picker: filter by HA domain (e.g. 'light')
@@ -156,7 +157,7 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     label: 'Switch Page', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '📄',
     configFields: [
-      { key: 'page', label: 'Page Name or ID', type: 'text', placeholder: 'Home' },
+      { key: 'page', label: 'Page', type: 'page_picker' },
       { key: 'device_id', label: 'Device', type: 'device_picker' },
     ],
   },
@@ -382,6 +383,7 @@ export default function FlowEditorPage() {
   const [haEntities, setHaEntities] = useState<HaEntityCatalogueItem[]>([]);
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [scenes, setScenes] = useState<SceneRecord[]>([]);
+  const [pages, setPages] = useState<import('../api/client').LegacyPage[]>([]);
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -406,6 +408,7 @@ export default function FlowEditorPage() {
     coreApi.haEntities().then(r => setHaEntities(r.entities)).catch(() => {/* optional */});
     coreApi.devices().then(r => setDevices(r.devices.filter(d => d.paired))).catch(() => {});
     coreApi.scenes().then(r => setScenes(r.scenes.filter(s => s.status === 'published'))).catch(() => {});
+    coreApi.pages().then(r => setPages(r)).catch(() => {});
   }, []);
 
   const onConnect = useCallback((connection: Connection) => {
@@ -814,6 +817,25 @@ export default function FlowEditorPage() {
                           <MenuItem value=""><em>Select scene…</em></MenuItem>
                           {scenes.map(s => (
                             <MenuItem key={s.id} value={s.name}>{s.name}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                  );
+                }
+
+                // ── page_picker ──────────────────────────────────────────
+                if (field.type === 'page_picker') {
+                  return (
+                    <Box key={field.key} sx={{ mb: 2 }}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel>{field.label}</InputLabel>
+                        <Select value={strVal} label={field.label}
+                          onChange={e => updateSelectedConfig(field.key, e.target.value)}
+                        >
+                          <MenuItem value=""><em>Select page…</em></MenuItem>
+                          {pages.map(p => (
+                            <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
                           ))}
                         </Select>
                       </FormControl>
