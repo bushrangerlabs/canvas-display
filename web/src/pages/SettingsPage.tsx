@@ -29,8 +29,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
-import RoutinesSettingsSection from './RoutinesSettingsSection';
-import SkillsSettingsSection from './SkillsSettingsSection';
+import LegacyAutomationsSection from './LegacyAutomationsSection';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
   { key: 'voice_ha_url', label: 'Home Assistant URL', placeholder: 'http://homeassistant.local:8123' },
@@ -195,8 +194,7 @@ export default function SettingsPage() {
               <Tab value="integrations" label="Integrations" />
               <Tab value="default-pages" label="Default pages" />
               <Tab value="request-routing" label="Request routing" />
-              <Tab value="routines" label="Routines" />
-              <Tab value="skills" label="Skills" />
+              <Tab value="legacy-automations" label="Legacy Automations" />
               <Tab value="privacy-storage" label="Privacy & storage" />
               <Tab value="ai" label="AI providers" />
             </Tabs>
@@ -479,8 +477,7 @@ export default function SettingsPage() {
 
               {/* AI Providers */}
               {activeTab === 'ai' && <AiProvidersSection />}
-              {activeTab === 'routines' && <RoutinesSettingsSection />}
-              {activeTab === 'skills' && <SkillsSettingsSection />}
+              {activeTab === 'legacy-automations' && <LegacyAutomationsSection />}
             </>
           )}
         </Stack>
