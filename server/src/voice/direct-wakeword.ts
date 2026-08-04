@@ -640,6 +640,24 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     const finalReply = 'reply' in result ? (result.reply as string ?? '') : (hermesResult?.speech ?? hermesResult?.text ?? '');
     const show_url = 'show_url' in result ? (result.show_url as string | undefined) : undefined;
     setVoiceStateDone(correlationId, transcript, finalReply, show_url);
+
+    // If the intent was timer_set, push the timer command to the local display server
+    const intentStr = 'intent' in result ? (result.intent as { intent?: string } | undefined)?.intent : undefined;
+    if (intentStr === 'timer_set') {
+      const toolArgs = 'intent' in result
+        ? (result.intent as { tool_calls?: Array<{ arguments?: { duration_minutes?: number } }> } | undefined)?.tool_calls?.[0]?.arguments
+        : undefined;
+      const durationMinutes = toolArgs?.duration_minutes;
+      if (durationMinutes && durationMinutes > 0) {
+        const localPort = process.env.PORT ?? '3100';
+        void fetch(`http://127.0.0.1:${localPort}/api/commands/timer`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ duration_seconds: Math.round(durationMinutes * 60), label: 'Timer' }),
+        }).catch((err: Error) => console.warn('[wakeword:direct] Failed to set timer command:', err.message));
+      }
+    }
+
     state.status = 'running';
     state.lastError = undefined;
   } catch (err) {

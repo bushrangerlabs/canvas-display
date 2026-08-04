@@ -38,4 +38,5 @@ export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.Com
   announcement: lazy(() => import('./widgets/AnnouncementWidget')),
   nowplaying: lazy(() => import('./widgets/NowPlayingWidget')),
   countdowntimer: lazy(() => import('./widgets/CountdownTimerWidget')),
+  energymonitor: lazy(() => import('./widgets/EnergyMonitorWidget')),
 };

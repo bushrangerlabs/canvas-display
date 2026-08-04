@@ -57,6 +57,26 @@ const CountdownTimerWidget: React.FC<WidgetProps> = ({ config }) => {
     setDone(false);
   }, [duration]);
 
+  // Poll for voice-set timer commands
+  useEffect(() => {
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/timer/pending', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json() as { pending: boolean; duration_seconds?: number; label?: string };
+        if (!stopped && data.pending && data.duration_seconds) {
+          setRemaining(data.duration_seconds);
+          setDone(false);
+          setRunning(true);
+        }
+      } catch { /* ignore */ }
+      if (!stopped) setTimeout(poll, 2000);
+    };
+    void poll();
+    return () => { stopped = true; };
+  }, []);
+
   const tick = useCallback(() => {
     setRemaining(prev => {
       if (prev <= 1) {

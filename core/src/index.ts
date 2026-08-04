@@ -1029,6 +1029,59 @@ async function main(): Promise<void> {
     }
   }
 
+  // --- Device-to-device Intercom -------------------------------------------
+  // Any device (or admin) can broadcast audio to one or all display devices.
+  {
+    type PendingIntercom = { audioBase64: string; from: string; timestamp: string };
+    const pendingIntercom = new Map<string, PendingIntercom>();
+    const ALL_INTERCOM = '__all__';
+
+    fastify.post<{ Body: { audioBase64?: string; text?: string; from?: string; targetDeviceIds?: string[] } }>(
+      '/api/edge/intercom/broadcast',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const { audioBase64, text, from = 'system', targetDeviceIds } = request.body ?? {};
+        let audio = audioBase64;
+        if (!audio && text) {
+          const speech = intelligence.providers.tts;
+          if (!speech) return reply.code(503).send({ error: 'TTS not configured' });
+          const buf = await speech.synthesize(text);
+          audio = buf.toString('base64');
+        }
+        if (!audio) return reply.code(400).send({ error: 'audioBase64 or text required' });
+        const timestamp = new Date().toISOString();
+        const entry: PendingIntercom = { audioBase64: audio, from, timestamp };
+        const targets = targetDeviceIds?.length ? targetDeviceIds : [ALL_INTERCOM];
+        for (const id of targets) pendingIntercom.set(id, entry);
+        console.log(`[core][intercom] queued audio from=${from} targets=${targets.join(',')}`);
+        return reply.send({ ok: true, targets, timestamp });
+      },
+    );
+
+    fastify.get<{ Querystring: { deviceId?: string } }>(
+      '/api/edge/intercom/pending',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const deviceId = request.query.deviceId ?? 'unknown';
+        const entry = pendingIntercom.get(deviceId) ?? pendingIntercom.get(ALL_INTERCOM);
+        if (!entry) return reply.send({ empty: true });
+        pendingIntercom.delete(deviceId);
+        if (pendingIntercom.get(ALL_INTERCOM) === entry) pendingIntercom.delete(ALL_INTERCOM);
+        return reply.send(entry);
+      },
+    );
+  }
+
   // --- Skill suggestions (pattern-based self-learning) ---------------------
   fastify.get<{ Querystring: { limit?: string } }>(
     '/api/skills/suggestions',

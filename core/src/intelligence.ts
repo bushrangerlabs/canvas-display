@@ -720,6 +720,13 @@ export function createIntelligence(
     } else if (intent.intent === 'time_query' || intent.intent === 'date_query') {
       reply = temporalReply(intent.intent);
       toolResult = { ok: true, message: reply };
+    } else if (intent.intent === 'timer_set') {
+      // Timer is handled client-side via the display command endpoint; just confirm
+      const minutes = (intent.slots?.duration_minutes as number | undefined) ?? 0;
+      const toolCallArgs = intent.tool_calls?.[0]?.arguments as { duration_minutes?: number } | undefined;
+      const durMin = toolCallArgs?.duration_minutes ?? minutes;
+      reply = durMin > 0 ? `Setting a timer for ${durMin} minute${durMin !== 1 ? 's' : ''}.` : 'Starting your timer.';
+      toolResult = { ok: true, message: reply };
     } else if (intent.intent === 'unknown' || intent.intent === 'error' || homeAutomationIntents.has(intent.intent)) {
       // Unknown deterministic intents may still be answerable through a
       // relevant read-only MCP tool. Mutating MCP calls pause for confirmation.

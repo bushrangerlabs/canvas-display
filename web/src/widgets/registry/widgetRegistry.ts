@@ -39,6 +39,7 @@ import { KnowledgeCardWidgetMetadata } from '../widgets/KnowledgeCardWidget';
 import { AnnouncementWidgetMetadata } from '../widgets/AnnouncementWidget';
 import { NowPlayingWidgetMetadata } from '../widgets/NowPlayingWidget';
 import { CountdownTimerWidgetMetadata } from '../widgets/CountdownTimerWidget';
+import { EnergyMonitorWidgetMetadata } from '../widgets/EnergyMonitorWidget';
 
 export interface WidgetRegistryEntry {
   type: string;
@@ -82,6 +83,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   announcement: AnnouncementWidgetMetadata,
   nowplaying: NowPlayingWidgetMetadata,
   countdowntimer: CountdownTimerWidgetMetadata,
+  energymonitor: EnergyMonitorWidgetMetadata,
 };
 
 /**

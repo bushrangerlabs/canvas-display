@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { coreApi } from '../api/client';
@@ -11,13 +11,27 @@ export default function SceneDisplayPage() {
   const { sceneId = '' } = useParams();
   const [searchParams] = useSearchParams();
   const playlistSelectionId = searchParams.get('playlist_selection_id') ?? '';
-  const [widgets, setWidgets] = useState<EditorWidget[] | null>(null);
+  const [displayWidgets, setDisplayWidgets] = useState<EditorWidget[] | null>(null);
   const [error, setError] = useState('');
+  const [transitioning, setTransitioning] = useState(false);
+  const prevSceneId = useRef<string>('');
+
   useEffect(() => {
     coreApi.publishedScene(sceneId)
       .then(({ scene }) => {
         const manifest = scene.manifest as { widgets?: EditorWidget[] };
-        setWidgets(Array.isArray(manifest?.widgets) ? manifest.widgets : []);
+        const newWidgets = Array.isArray(manifest?.widgets) ? manifest.widgets : [];
+        // Animate transition when switching between scenes
+        if (prevSceneId.current && prevSceneId.current !== sceneId) {
+          setTransitioning(true);
+          setTimeout(() => {
+            setDisplayWidgets(newWidgets);
+            setTimeout(() => setTransitioning(false), 50);
+          }, 300);
+        } else {
+          setDisplayWidgets(newWidgets);
+        }
+        prevSceneId.current = sceneId;
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [sceneId]);
@@ -49,10 +63,15 @@ export default function SceneDisplayPage() {
   }, [playlistSelectionId]);
 
   if (error) return <Box sx={{ p: 2, color: 'error.main' }}>{error}</Box>;
-  if (!widgets) return <Box sx={{ width: '100vw', height: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress /></Box>;
+  if (!displayWidgets) return <Box sx={{ width: '100vw', height: '100vh', display: 'grid', placeItems: 'center' }}><CircularProgress /></Box>;
   return (
     <Box sx={{ position: 'fixed', inset: 0, overflow: 'hidden', bgcolor: '#0a0a12' }}>
-      {[...widgets].sort((a, b) => a.zIndex - b.zIndex).filter(widget => !widget.hidden).map(widget => {
+      <Box sx={{
+        position: 'absolute', inset: 0,
+        opacity: transitioning ? 0 : 1,
+        transition: 'opacity 0.3s ease',
+      }}>
+      {[...displayWidgets].sort((a, b) => a.zIndex - b.zIndex).filter(widget => !widget.hidden).map(widget => {
         const Component = WIDGET_LAZY_MAP[widget.type];
         if (!Component) return <Typography key={widget.id}>{widget.type}</Typography>;
         const config: WidgetConfig = {
@@ -75,6 +94,7 @@ export default function SceneDisplayPage() {
           </Box>
         );
       })}
+      </Box>
       <VoiceStateOverlay />
     </Box>
   );

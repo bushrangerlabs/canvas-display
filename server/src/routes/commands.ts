@@ -129,4 +129,36 @@ export async function commandRoutes(app: FastifyInstance) {
     broadcast({ type: 'screen_off' }, 'browser');
     return { success: true };
   });
+
+  // POST /api/commands/timer — set or start a countdown timer on the display
+  // Body: { duration_seconds: number, label?: string }
+  app.post<{ Body: any }>('/commands/timer', async (req, reply) => {
+    const body: Record<string, any> = req.body ?? {};
+    const durationSeconds = Number(body.duration_seconds);
+    if (!Number.isFinite(durationSeconds) || durationSeconds < 1) {
+      reply.code(400); return { error: 'duration_seconds must be a positive number' };
+    }
+    const label = typeof body.label === 'string' ? body.label.slice(0, 80) : undefined;
+    setPendingTimerCommand({ duration_seconds: Math.round(durationSeconds), label });
+    broadcast({ type: 'command', action: 'set_timer', payload: { duration_seconds: Math.round(durationSeconds), label } }, 'browser');
+    return { success: true, duration_seconds: Math.round(durationSeconds) };
+  });
+
+  // GET /api/timer/pending — consume the pending timer command (one-shot delivery)
+  app.get('/timer/pending', async (_req, _reply) => {
+    const cmd = consumePendingTimerCommand();
+    if (!cmd) return { pending: false };
+    return { pending: true, ...cmd };
+  });
+}
+
+// In-memory pending timer command store
+let _pendingTimer: { duration_seconds: number; label?: string } | null = null;
+export function setPendingTimerCommand(cmd: { duration_seconds: number; label?: string }) {
+  _pendingTimer = cmd;
+}
+export function consumePendingTimerCommand(): { duration_seconds: number; label?: string } | null {
+  const cmd = _pendingTimer;
+  _pendingTimer = null;
+  return cmd;
 }
