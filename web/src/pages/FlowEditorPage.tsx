@@ -99,6 +99,26 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     group: 'Triggers', icon: '▶️',
     configFields: [],
   },
+  trigger_intent: {
+    label: 'AI Intent Detected', color: '#c05621', textColor: '#fff',
+    group: 'Triggers', icon: '🧠',
+    configFields: [
+      {
+        key: 'intents',
+        label: 'Match intents (one per line, blank = any)',
+        type: 'textarea',
+        placeholder: 'weather_query\nmedia_play\nlight_set',
+        hint: 'Fires when AI classifies the request as any of these intents',
+      },
+      {
+        key: 'domains',
+        label: 'Limit to domains (one per line, optional)',
+        type: 'textarea',
+        placeholder: 'media\nlight\nclimate',
+        hint: 'Optional extra filter: intent must start with one of these prefixes',
+      },
+    ],
+  },
 
   // ── Actions ───────────────────────────────────────────────────────────────
   action_ha_service: {
@@ -698,6 +718,29 @@ export default function FlowEditorPage() {
                     Each case value routes to edges whose sourceHandle matches. Draw edges from this node and set their handle to the case value.
                   </Typography>
                 </Box>
+              )}
+
+              {selectedNode.type === 'trigger_intent' && (
+                <Paper sx={{ p: 1.5, bgcolor: '#0d1117', border: '1px solid #30363d', borderRadius: 1.5, mt: 1 }}>
+                  <Typography sx={{ fontSize: '0.7rem', color: '#8b949e', mb: 0.5, fontWeight: 600 }}>
+                    Available intents
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', lineHeight: 1.8, fontFamily: 'monospace' }}>
+                    {[
+                      'light_set', 'lock_set', 'climate_set', 'climate_query',
+                      'weather_query', 'device_query',
+                      'media_play', 'media_pause', 'media_resume', 'media_stop',
+                      'media_next', 'media_select',
+                      'scene_activate', 'navigation',
+                      'timer_set', 'time_query', 'date_query',
+                      'unknown',
+                    ].join(' · ')}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', mt: 0.5 }}>
+                    Intent flows run as side effects — they don't replace the AI's main response.
+                    Context variables available: <code>intent</code>, <code>transcript</code>, <code>deviceId</code>, <code>slots</code>
+                  </Typography>
+                </Paper>
               )}
             </Box>
           ) : (

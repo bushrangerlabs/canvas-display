@@ -57,6 +57,8 @@ export interface ToolContext {
     deviceName?: string; areaName?: string;
   }>>;
   invokeVoiceFlow?: (transcript: string, deviceId?: string) => Promise<{ matched: boolean; flowName?: string; executionId?: string }>;
+  /** Fire all flows whose trigger_intent matches the resolved AI intent (non-blocking side effects). */
+  invokeIntentFlows?: (intent: string, deviceId?: string, slots?: Record<string, unknown>) => Promise<void>;
   /** Intelligence instance for media operations. */
   intelligence?: Intelligence;
   /** Device that originated the current request. Never infer this from a browser session. */

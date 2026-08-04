@@ -43,7 +43,7 @@ import type { FastifyInstance } from 'fastify';
 export type NodeType =
   // triggers
   | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state'
-  | 'trigger_webhook' | 'trigger_manual'
+  | 'trigger_webhook' | 'trigger_manual' | 'trigger_intent'
   // actions
   | 'action_ha_service' | 'action_tts' | 'action_scene'
   | 'action_delay' | 'action_http' | 'action_set_variable'
@@ -237,6 +237,50 @@ export class FlowExecutor {
     return null;
   }
 
+  /**
+   * Find ALL flows whose intent trigger matches the resolved AI intent.
+   * Returns every matching flow so they all run as side effects.
+   */
+  async matchIntentTriggers(
+    intent: string,
+    slots?: Record<string, unknown>,
+  ): Promise<Array<{ flow: FlowRow; triggerData: Record<string, unknown> }>> {
+    const flows = await this.repo.listEnabled();
+    const results: Array<{ flow: FlowRow; triggerData: Record<string, unknown> }> = [];
+    for (const flow of flows) {
+      for (const node of flow.definition.nodes) {
+        if (node.type !== 'trigger_intent') continue;
+
+        // intents: comma or newline separated list of intent names to match
+        const raw = String(node.config.intents ?? '');
+        const allowed = raw
+          .split(/[\n,]+/)
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean);
+
+        // Empty list = match ANY intent; otherwise check membership
+        const domainRaw = String(node.config.domains ?? '').trim();
+        const domains = domainRaw
+          ? domainRaw.split(/[\n,]+/).map(s => s.trim().toLowerCase()).filter(Boolean)
+          : [];
+
+        const intentLower = intent.toLowerCase();
+        const intentMatches = allowed.length === 0 || allowed.includes(intentLower);
+        // Domain matching: if domains specified, intent must start with one of them
+        const domainMatches = domains.length === 0 || domains.some(d => intentLower.startsWith(d));
+
+        if (intentMatches && domainMatches) {
+          results.push({
+            flow,
+            triggerData: { intent, slots: slots ?? {} },
+          });
+          break; // one trigger_intent node per flow is enough
+        }
+      }
+    }
+    return results;
+  }
+
   /** Execute a flow by ID, returning the execution ID. */
   async execute(flowId: string, triggerData: Record<string, unknown> = {}): Promise<string> {
     const flow = await this.repo.get(flowId);
@@ -352,6 +396,7 @@ export class FlowExecutor {
       case 'trigger_ha_state':
       case 'trigger_webhook':
       case 'trigger_manual':
+      case 'trigger_intent':
         return 'any';
 
       case 'action_ha_service': {

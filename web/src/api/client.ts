@@ -439,7 +439,7 @@ export interface HaEntityCatalogueResponse {
 // ── Visual Automation Flows ─────────────────────────────────────────────────
 
 export type FlowNodeType =
-  | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state' | 'trigger_webhook' | 'trigger_manual'
+  | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state' | 'trigger_webhook' | 'trigger_manual' | 'trigger_intent'
   | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_delay' | 'action_http'
   | 'action_set_variable' | 'action_ai_reply' | 'action_knowledge_card'
   | 'action_device_command' | 'action_log'

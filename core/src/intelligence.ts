@@ -725,6 +725,10 @@ export function createIntelligence(
     const planningStartedAt = performance.now();
     const flowMatch = await toolContext.invokeVoiceFlow?.(transcript, input.originDeviceId);
 
+    // Fire intent-triggered flows as non-blocking side effects (after voice flow check)
+    void toolContext.invokeIntentFlows?.(intent.intent, input.originDeviceId, intent.slots as Record<string, unknown> | undefined)
+      .catch(err => console.warn('[intel] intent flows failed:', (err as Error).message));
+
     // 5) Tool execution (if intent is known and actionable)
     let toolResult: ToolResult | undefined;
     let requiresConfirmation = false;

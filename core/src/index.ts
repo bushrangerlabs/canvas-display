@@ -1695,6 +1695,15 @@ async function main(): Promise<void> {
       const executionId = await flowExecutor.execute(flow.id, { transcript, deviceId });
       return { matched: true, flowName: flow.name, executionId };
     },
+    invokeIntentFlows: async (intent, deviceId, slots) => {
+      if (!flowExecutor) return;
+      const matches = await flowExecutor.matchIntentTriggers(intent, slots);
+      for (const { flow, triggerData } of matches) {
+        void flowExecutor.execute(flow.id, { ...triggerData, deviceId }).catch(err =>
+          console.warn(`[flows] intent trigger "${flow.name}" failed:`, (err as Error).message)
+        );
+      }
+    },
   });
 
   await registerLegacyRoutes(fastify, {
