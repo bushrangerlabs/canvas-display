@@ -7,12 +7,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, IconButton, Typography, Fade } from '@mui/material';
+import { Box, Button, IconButton, Typography, Fade } from '@mui/material';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import MicIcon from '@mui/icons-material/Mic';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import ErrorOutlineIcon from '@mui/icons-material/Error';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import CloseIcon from '@mui/icons-material/Close';
 
 interface VoiceDisplayState {
   status:      'idle' | 'listening' | 'processing' | 'done' | 'error';
@@ -20,12 +22,14 @@ interface VoiceDisplayState {
   transcript?: string;
   reply?:      string;
   error?:      string;
+  show_url?:   string;
   updatedAt:   string;
 }
 
 export default function VoiceStateOverlay() {
   const [vstate, setVstate] = useState<VoiceDisplayState | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<1 | -1 | null>(null);
+  const [iframeUrl, setIframeUrl] = useState<string | null>(null);
   const lastUpdatedAt = useRef('');
   const pollRef = useRef<number | null>(null);
 
@@ -68,6 +72,7 @@ export default function VoiceStateOverlay() {
   if (!vstate || vstate.status === 'idle') return null;
 
   return (
+    <>
     <Fade in={true}>
       <Box sx={{
         position: 'fixed',
@@ -118,23 +123,35 @@ export default function VoiceStateOverlay() {
                 {vstate.reply.length > 140 ? vstate.reply.slice(0, 137) + '…' : vstate.reply}
               </Typography>
             )}
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5, mt: 0.5 }}>
-              <IconButton
-                size="small"
-                onClick={() => void sendFeedback(1)}
-                disabled={feedbackSent !== null}
-                sx={{ color: feedbackSent === 1 ? '#66bb6a' : 'rgba(255,255,255,0.5)', '&:hover': { color: '#66bb6a' } }}
-              >
-                <ThumbUpIcon fontSize="small" />
-              </IconButton>
-              <IconButton
-                size="small"
-                onClick={() => void sendFeedback(-1)}
-                disabled={feedbackSent !== null}
-                sx={{ color: feedbackSent === -1 ? '#ef5350' : 'rgba(255,255,255,0.5)', '&:hover': { color: '#ef5350' } }}
-              >
-                <ThumbDownIcon fontSize="small" />
-              </IconButton>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.5 }}>
+              {vstate.show_url && (
+                <Button
+                  size="small"
+                  startIcon={<OpenInNewIcon />}
+                  onClick={() => setIframeUrl(vstate.show_url!)}
+                  sx={{ color: '#4fc3f7', fontSize: 12, textTransform: 'none', p: '2px 8px' }}
+                >
+                  View page
+                </Button>
+              )}
+              <Box sx={{ display: 'flex', gap: 0.5, ml: 'auto' }}>
+                <IconButton
+                  size="small"
+                  onClick={() => void sendFeedback(1)}
+                  disabled={feedbackSent !== null}
+                  sx={{ color: feedbackSent === 1 ? '#66bb6a' : 'rgba(255,255,255,0.5)', '&:hover': { color: '#66bb6a' } }}
+                >
+                  <ThumbUpIcon fontSize="small" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => void sendFeedback(-1)}
+                  disabled={feedbackSent !== null}
+                  sx={{ color: feedbackSent === -1 ? '#ef5350' : 'rgba(255,255,255,0.5)', '&:hover': { color: '#ef5350' } }}
+                >
+                  <ThumbDownIcon fontSize="small" />
+                </IconButton>
+              </Box>
             </Box>
           </Box>
         )}
@@ -150,5 +167,30 @@ export default function VoiceStateOverlay() {
         )}
       </Box>
     </Fade>
+
+    {/* Full-screen iframe overlay — shown when user taps "View page" */}
+    {iframeUrl && (
+      <Box sx={{
+        position: 'fixed', inset: 0, zIndex: 10000,
+        bgcolor: 'rgba(0,0,0,0.95)',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 1, bgcolor: '#111' }}>
+          <Typography sx={{ color: '#90caf9', fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {iframeUrl}
+          </Typography>
+          <IconButton size="small" onClick={() => setIframeUrl(null)} sx={{ color: '#fff' }}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+        <iframe
+          src={iframeUrl}
+          title="AI result page"
+          style={{ flex: 1, border: 'none', width: '100%' }}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        />
+      </Box>
+    )}
+  </>
   );
 }

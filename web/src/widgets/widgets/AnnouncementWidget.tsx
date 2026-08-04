@@ -30,6 +30,7 @@ interface AlertData {
   type: 'info' | 'warning' | 'danger' | 'success';
   icon?: string;
   duration?: number;
+  camera_entity?: string;
   timestamp?: string;
   empty?: boolean;
 }
@@ -154,6 +155,20 @@ export default function AnnouncementWidget({ config, isEditMode }: WidgetProps) 
         } as CSSProperties}>
           {displayAlert.message}
         </div>
+        {displayAlert.camera_entity && (
+          <img
+            src={`/api/ha/camera_proxy/${encodeURIComponent(displayAlert.camera_entity)}?t=${displayAlert.timestamp ?? Date.now()}`}
+            alt="Camera"
+            style={{
+              marginTop: 8,
+              width: '100%',
+              maxHeight: height - 80,
+              objectFit: 'cover',
+              borderRadius: 8,
+              display: 'block',
+            }}
+          />
+        )}
       </div>
     </div>
   );

@@ -24,6 +24,7 @@ import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index
 import { startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
 import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
 import { startTtsBroadcastPoller, stopTtsBroadcastPoller } from './voice/tts-broadcast-poller';
+import { startAlertBroadcastPoller, stopAlertBroadcastPoller } from './voice/alert-broadcast-poller';
 
 function useDirectCoreVoice(): boolean {
   return process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
@@ -116,14 +117,16 @@ async function main() {
     }
     // Start TTS broadcast poller if Core URL is configured (polls for server-pushed TTS)
     startTtsBroadcastPoller();
+    // Start alert broadcast poller (polls Core for doorbell/admin alerts)
+    startAlertBroadcastPoller(config.port);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
 
-process.on('SIGTERM', async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); stopAlertBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); stopAlertBroadcastPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

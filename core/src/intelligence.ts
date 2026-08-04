@@ -148,7 +148,7 @@ export interface IntelligentPipelineResult {
   /** Millisecond stage durations for operational latency analysis. */
   timings?: VoicePipelineTimings;
   /** Knowledge card extracted from a web-search or wikipedia tool call, if any. */
-  knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string };
+  knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string };
 }
 
 export interface VoicePipelineTimings {
@@ -353,7 +353,7 @@ export function createIntelligence(
   async function runToolAwareConversation(
     transcript: string,
     input: VoicePipelineInput,
-  ): Promise<{ reply: string; toolResult?: ToolResult; requiresConfirmation?: boolean; confirmationDigest?: string; knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string } }> {
+  ): Promise<{ reply: string; toolResult?: ToolResult; requiresConfirmation?: boolean; confirmationDigest?: string; knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } }> {
     const deviceKey = input.originDeviceId ?? 'unknown';
     const pending = pendingVoiceConfirmations.get(deviceKey);
     if (pending && pending.expiresAt <= Date.now()) pendingVoiceConfirmations.delete(deviceKey);
@@ -414,7 +414,7 @@ export function createIntelligence(
     let finalContent = '';
     const executedCalls:Array<{tool:string;args:Record<string,unknown>}>=[];
     let executionFailed=false;
-    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string } | undefined;
+    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } | undefined;
     for (let iteration = 0; iteration < 3; iteration++) {
       const response = await conversationLlm().chatWithTools(messages, definitions);
       if (response.content) finalContent = response.content;
@@ -460,13 +460,23 @@ export function createIntelligence(
               const titleArg = toolBaseName === 'wikipedia_lookup'
                 ? String(params.topic ?? params.query ?? 'Wikipedia')
                 : String(params.query ?? 'Web Search');
+              // Try to extract a source URL from structured JSON results
+              let show_url: string | undefined;
+              if (toolBaseName === 'web_search') {
+                try {
+                  const parsed = JSON.parse(text) as { results?: Array<{ url?: string }> };
+                  const firstUrl = parsed?.results?.[0]?.url;
+                  if (firstUrl && /^https?:\/\//.test(firstUrl)) show_url = firstUrl;
+                } catch { /* text wasn't JSON */ }
+              }
               knowledgeCard = {
                 title: titleArg.charAt(0).toUpperCase() + titleArg.slice(1),
                 body: text.slice(0, 800),
                 source_url: toolBaseName === 'wikipedia_lookup'
                   ? `https://en.wikipedia.org/wiki/${encodeURIComponent(String(params.topic ?? params.query ?? ''))}`
-                  : undefined,
+                  : show_url,
                 source_label: toolBaseName === 'wikipedia_lookup' ? 'Wikipedia' : 'Web Search',
+                show_url,
               };
             }
           }
@@ -678,7 +688,7 @@ export function createIntelligence(
     let requiresConfirmation = false;
     let confirmationDigest: string | undefined;
     let reply: string;
-    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string } | undefined;
+    let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } | undefined;
 
     const homeAutomationIntents = new Set(['light_set', 'lock_set', 'climate_set', 'climate_query', 'device_query', 'weather_query']);
     if (skillMatch?.matched) {

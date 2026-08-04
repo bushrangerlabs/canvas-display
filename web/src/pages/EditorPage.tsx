@@ -21,6 +21,7 @@ import {
   Accordion, AccordionSummary, AccordionDetails, Slider as MuiSlider,
   Checkbox, FormControlLabel, Switch as MuiSwitch, Avatar, List, ListItem,
   ListItemAvatar, ListItemText, ListItemButton, CircularProgress, Chip,
+  Menu as MuiMenu,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/DeleteOutlined';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -117,6 +118,7 @@ export default function EditorPage() {
   const [snap, setSnap] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [canvasPan, setCanvasPan] = useState<CanvasPan>({ panX: 0, panY: 0, zoom: 1 });
+  const [ctxMenu, setCtxMenu] = useState<{ mouseX: number; mouseY: number; widgetId: string } | null>(null);
 
   // Undo history
   const [history, setHistory] = useState<EditorWidget[][]>([]);
@@ -285,6 +287,47 @@ export default function EditorPage() {
   function toggleHidden(id: string) {
     pushHistory(widgets);
     updateWidget(id, { hidden: !widgets.find(w => w.id === id)?.hidden });
+  }
+
+  function bringToFront(id: string) {
+    pushHistory(widgets);
+    const maxZ = Math.max(...widgets.map(w => w.zIndex), 0);
+    setWidgets(prev => prev.map(w => w.id === id ? { ...w, zIndex: maxZ + 1 } : w));
+    setNextZ(maxZ + 2);
+  }
+
+  function sendToBack(id: string) {
+    pushHistory(widgets);
+    const minZ = Math.min(...widgets.map(w => w.zIndex), 0);
+    setWidgets(prev => prev.map(w => w.id === id ? { ...w, zIndex: minZ - 1 } : w));
+  }
+
+  function bringForward(id: string) {
+    pushHistory(widgets);
+    const w = widgets.find(widget => widget.id === id);
+    if (!w) return;
+    const above = widgets.filter(o => o.id !== id && o.zIndex > w.zIndex).sort((a, b) => a.zIndex - b.zIndex)[0];
+    if (above) {
+      setWidgets(prev => prev.map(o => {
+        if (o.id === id) return { ...o, zIndex: above.zIndex };
+        if (o.id === above.id) return { ...o, zIndex: w.zIndex };
+        return o;
+      }));
+    }
+  }
+
+  function sendBackward(id: string) {
+    pushHistory(widgets);
+    const w = widgets.find(widget => widget.id === id);
+    if (!w) return;
+    const below = widgets.filter(o => o.id !== id && o.zIndex < w.zIndex).sort((a, b) => b.zIndex - a.zIndex)[0];
+    if (below) {
+      setWidgets(prev => prev.map(o => {
+        if (o.id === id) return { ...o, zIndex: below.zIndex };
+        if (o.id === below.id) return { ...o, zIndex: w.zIndex };
+        return o;
+      }));
+    }
   }
 
   // ── Drag logic ────────────────────────────────────────────────────────────
@@ -683,6 +726,11 @@ export default function EditorPage() {
                   isSelected={selectedIds.includes(w.id)}
                   zoom={canvasPan.zoom}
                   onPointerDown={(e) => onPointerDown(e, w.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!selectedIds.includes(w.id)) setSelectedIds([w.id]);
+                    setCtxMenu({ mouseX: e.clientX, mouseY: e.clientY, widgetId: w.id });
+                  }}
                 />
               ))}
 
@@ -708,6 +756,45 @@ export default function EditorPage() {
             </IconButton>
           </Box>
         </Box>
+
+        {/* ── Context menu for z-index controls ── */}
+        <MuiMenu
+          open={Boolean(ctxMenu)}
+          onClose={() => setCtxMenu(null)}
+          anchorReference="anchorPosition"
+          anchorPosition={ctxMenu ? { top: ctxMenu.mouseY, left: ctxMenu.mouseX } : undefined}
+        >
+          <MenuItem dense onClick={() => { if (ctxMenu) bringToFront(ctxMenu.widgetId); setCtxMenu(null); }}>
+            Bring to Front
+          </MenuItem>
+          <MenuItem dense onClick={() => { if (ctxMenu) bringForward(ctxMenu.widgetId); setCtxMenu(null); }}>
+            Bring Forward
+          </MenuItem>
+          <MenuItem dense onClick={() => { if (ctxMenu) sendBackward(ctxMenu.widgetId); setCtxMenu(null); }}>
+            Send Backward
+          </MenuItem>
+          <MenuItem dense onClick={() => { if (ctxMenu) sendToBack(ctxMenu.widgetId); setCtxMenu(null); }}>
+            Send to Back
+          </MenuItem>
+          <Divider />
+          <MenuItem dense onClick={() => { if (ctxMenu) toggleLock(ctxMenu.widgetId); setCtxMenu(null); }}>
+            {widgets.find(w => w.id === ctxMenu?.widgetId)?.locked ? 'Unlock' : 'Lock'}
+          </MenuItem>
+          <MenuItem dense onClick={() => { if (ctxMenu) toggleHidden(ctxMenu.widgetId); setCtxMenu(null); }}>
+            {widgets.find(w => w.id === ctxMenu?.widgetId)?.hidden ? 'Show' : 'Hide'}
+          </MenuItem>
+          <Divider />
+          <MenuItem dense sx={{ color: 'error.main' }} onClick={() => {
+            if (ctxMenu) {
+              pushHistory(widgets);
+              setWidgets(prev => prev.filter(w => w.id !== ctxMenu.widgetId));
+              setSelectedIds(prev => prev.filter(id => id !== ctxMenu.widgetId));
+            }
+            setCtxMenu(null);
+          }}>
+            Delete
+          </MenuItem>
+        </MuiMenu>
 
         {/* ── Right sidebar: Inspector ── */}
         <RightInspector
@@ -831,17 +918,19 @@ function LeftPalette({ onAddWidget }: { onAddWidget: (type: string) => void }) {
 
 /** Single widget rendered on the canvas */
 function CanvasWidgetBox({
-  w, isSelected, onPointerDown,
+  w, isSelected, onPointerDown, onContextMenu,
 }: {
   w: EditorWidget;
   isSelected: boolean;
   zoom: number;
   onPointerDown: (e: React.PointerEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const meta = WIDGET_CATALOG[w.type];
   return (
     <Box
       onPointerDown={onPointerDown}
+      onContextMenu={onContextMenu}
       sx={{
         position: 'absolute',
         left: w.x,
@@ -1034,6 +1123,9 @@ function RightInspector({
                     onChange={e => onUpdate({ h: Math.max(20, Number(e.target.value)) })}
                     slotProps={{ htmlInput: { step: 20, min: 20 } }} sx={{ flex: 1 }} />
                 </Stack>
+                <TextField label="Layer (Z)" type="number" size="small" value={selected.zIndex}
+                  onChange={e => onUpdate({ zIndex: Number(e.target.value) })}
+                  slotProps={{ htmlInput: { step: 1 } }} />
                 <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                   <FormControlLabel
                     control={<MuiSwitch size="small" checked={!selected.locked} onChange={() => onLock(selected.id)} />}

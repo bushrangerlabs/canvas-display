@@ -791,7 +791,7 @@ async function main(): Promise<void> {
           emit({ type: 'audio', index: streamedChunks++, audioBase64: audio.toString('base64') });
         } : undefined,
       });
-      emit({ type: 'meta', turnId, transcript: result.transcript, reply: result.reply, intent: result.intent, timings: result.timings });
+      emit({ type: 'meta', turnId, transcript: result.transcript, reply: result.reply, intent: result.intent, timings: result.timings, knowledge_card: result.knowledge_card ?? null, show_url: result.knowledge_card?.show_url ?? null });
       // Save full voice turn asynchronously
       void pool.query(
         `INSERT INTO voice_turns (turn_id, device_id, transcript, reply, intent, knowledge_card)
@@ -923,7 +923,123 @@ async function main(): Promise<void> {
       return { turns: result.rows, total: result.rowCount ?? 0 };
     },
   );
-  // HA credentials live only in Core; these endpoints never forward the token to
+
+  // --- Alert Broadcast (push overlays to display devices) -------------------
+  // Display devices poll GET /api/edge/alert/pending, display shows AnnouncementWidget alert.
+  {
+    type PendingAlert = { title: string; message: string; type: string; camera_entity?: string; timestamp: string };
+    const pendingAlerts = new Map<string, PendingAlert>();
+    const ALL_ALERT_DEVICES = '__all__';
+
+    fastify.post<{ Body: { title?: string; message?: string; type?: string; camera_entity?: string; deviceIds?: string[] } }>(
+      '/api/edge/alert/broadcast',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const { title = 'Alert', message = '', type = 'info', camera_entity, deviceIds } = request.body ?? {};
+        if (!message) return reply.code(400).send({ error: 'message is required' });
+        const timestamp = new Date().toISOString();
+        const alert: PendingAlert = { title, message, type, camera_entity, timestamp };
+        const targets = deviceIds?.length ? deviceIds : [ALL_ALERT_DEVICES];
+        for (const id of targets) pendingAlerts.set(id, alert);
+        console.log(`[core][alert-broadcast] queued "${message.slice(0, 60)}" for ${targets.join(',')}`);
+        return reply.send({ ok: true, targets, timestamp });
+      },
+    );
+
+    fastify.get<{ Querystring: { deviceId?: string } }>(
+      '/api/edge/alert/pending',
+      async (request, reply) => {
+        const header = request.headers.authorization;
+        const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+        const expected = await resolveEdgeVoiceToken(presented);
+        if (!checkEdgeVoiceAuth(expected, presented)) {
+          return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+        }
+        const deviceId = request.query.deviceId ?? 'unknown';
+        const entry = pendingAlerts.get(deviceId) ?? pendingAlerts.get(ALL_ALERT_DEVICES);
+        if (!entry) return reply.send({ empty: true });
+        pendingAlerts.delete(deviceId);
+        if (pendingAlerts.get(ALL_ALERT_DEVICES) === entry) pendingAlerts.delete(ALL_ALERT_DEVICES);
+        return reply.send(entry);
+      },
+    );
+
+    // Doorbell automation: when a HA binary_sensor with device_class=doorbell
+    // transitions to 'on', broadcast TTS + alert to all connected display devices.
+    if (ha) {
+      const doorbellCooldownMs = 10_000;
+      const lastDoorbellFire = new Map<string, number>();
+      ha.onEntityChange((entityId, entity) => {
+        const attrs = entity.attributes as Record<string, unknown> | undefined ?? {};
+        const isDoorbellEntity =
+          (attrs.device_class === 'doorbell' || entityId.toLowerCase().includes('doorbell'))
+          && entity.state === 'on';
+        if (!isDoorbellEntity) return;
+        const now = Date.now();
+        const lastFire = lastDoorbellFire.get(entityId) ?? 0;
+        if (now - lastFire < doorbellCooldownMs) return; // debounce
+        lastDoorbellFire.set(entityId, now);
+
+        const friendlyName = (attrs.friendly_name as string | undefined) ?? entityId;
+        const title = 'Doorbell';
+        const message = `${friendlyName} — someone is at the door`;
+        const timestamp = new Date().toISOString();
+        const alert: PendingAlert = { title, message, type: 'warning', timestamp };
+        pendingAlerts.set(ALL_ALERT_DEVICES, alert);
+        console.log(`[core][doorbell] Detected: ${entityId}, broadcasting alert`);
+
+        // Also broadcast TTS
+        const speech = intelligence.providers.tts;
+        if (speech) {
+          void (async () => {
+            try {
+              const port = config.port ?? 3100;
+              const token = await resolveEdgeVoiceToken('');
+              if (!token) return;
+              await fetch(`http://127.0.0.1:${port}/api/edge/tts/broadcast`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ text: 'Someone is at the door' }),
+              });
+            } catch (err) {
+              console.warn('[core][doorbell] TTS broadcast failed:', (err as Error).message);
+            }
+          })();
+        }
+      });
+    }
+  }
+
+  // --- Skill suggestions (pattern-based self-learning) ---------------------
+  fastify.get<{ Querystring: { limit?: string } }>(
+    '/api/skills/suggestions',
+    { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) },
+    async (request) => {
+      const limit = Math.min(20, Math.max(1, parseInt(request.query.limit ?? '10', 10) || 10));
+      // Find intents that appear >= 3 times with no matching enabled skill
+      const result = await pool.query(`
+        SELECT intent, COUNT(*) AS count,
+               MAX(created_at) AS last_seen,
+               AVG(CASE WHEN feedback = 1 THEN 1 WHEN feedback = -1 THEN -1 ELSE 0 END) AS avg_feedback
+        FROM voice_turns
+        WHERE intent IS NOT NULL
+          AND intent NOT IN ('none', 'confirm', 'cancel', 'unknown', '')
+          AND intent NOT IN (
+            SELECT LOWER(name) FROM skills WHERE status = 'enabled'
+          )
+        GROUP BY intent
+        HAVING COUNT(*) >= 2
+        ORDER BY count DESC, last_seen DESC
+        LIMIT $1
+      `, [limit]);
+      return { suggestions: result.rows };
+    },
+  );
   // Edge. Reads are open to any authenticated admin; service calls are admin-only.
   fastify.get('/api/ha/entities', { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) }, async (_request, reply) => {
     const result = await pool.query(

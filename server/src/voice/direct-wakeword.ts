@@ -303,6 +303,7 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
   audioBase64?: string;
   timings?: { asrMs: number; routingMs: number; planningMs: number; ttsMs: number; totalMs: number };
   intent?: { intent?: string };
+  show_url?: string;
 }> {
   const { baseUrl, token } = getCoreBridgeConfig();
   if (!baseUrl || !token) {
@@ -328,7 +329,8 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
     error?: string;
     timings?: { asrMs: number; routingMs: number; planningMs: number; ttsMs: number; totalMs: number };
     intent?: { intent?: string };
-    knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; image_url?: string };
+    knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; image_url?: string; show_url?: string };
+    show_url?: string;
   };
   if (!response.ok) {
     throw new Error(result.detail ?? result.error ?? `Core voice returned HTTP ${response.status}`);
@@ -348,6 +350,7 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
     audioBase64: result.audioBase64,
     timings: result.timings,
     intent: result.intent,
+    show_url: result.show_url ?? result.knowledge_card?.show_url,
   };
 }
 
@@ -392,7 +395,7 @@ async function runCoreVoiceTurnStream(
         }
       }
       if (event.type === 'meta') {
-        meta = { transcript: String(event.transcript ?? ''), reply: String(event.reply ?? ''), intent: event.intent, timings: event.timings };
+        meta = { transcript: String(event.transcript ?? ''), reply: String(event.reply ?? ''), intent: event.intent, timings: event.timings, show_url: event.show_url ?? (event.knowledge_card as { show_url?: string } | undefined)?.show_url };
         if (meta.transcript.trim() && activeSettings.goodIntentEnabled && !goodCuePlayed) {
           await playCueSound(activeSettings.goodIntentSound);
           goodCuePlayed = true;
@@ -635,7 +638,8 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     console.log('[wakeword:direct] Transcript:', transcript || '(empty)');
     console.log('[wakeword:direct] Core reply:', 'reply' in result ? result.reply : (hermesResult?.speech ?? hermesResult?.text ?? '(no response)'));
     const finalReply = 'reply' in result ? (result.reply as string ?? '') : (hermesResult?.speech ?? hermesResult?.text ?? '');
-    setVoiceStateDone(correlationId, transcript, finalReply);
+    const show_url = 'show_url' in result ? (result.show_url as string | undefined) : undefined;
+    setVoiceStateDone(correlationId, transcript, finalReply, show_url);
     state.status = 'running';
     state.lastError = undefined;
   } catch (err) {

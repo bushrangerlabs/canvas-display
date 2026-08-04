@@ -18,6 +18,8 @@ export interface Alert {
   icon?: string;
   /** Seconds until auto-dismiss (0 = never) */
   duration?: number;
+  /** HA entity_id of a camera to show inline (e.g. camera.front_door) */
+  camera_entity?: string;
   timestamp: string;
 }
 
@@ -30,7 +32,7 @@ export async function alertRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   fastify.post<{ Body: Partial<Alert> }>('/alert', async (req, reply) => {
-    const { title, message, type, icon, duration } = req.body ?? {};
+    const { title, message, type, icon, duration, camera_entity } = req.body ?? {};
     if (!title || !message) {
       return reply.code(400).send({ error: 'title and message are required' });
     }
@@ -40,6 +42,7 @@ export async function alertRoutes(fastify: FastifyInstance): Promise<void> {
       type: (type as Alert['type']) || 'info',
       icon,
       duration: duration ?? 10,
+      camera_entity,
       timestamp: new Date().toISOString(),
     };
     // Auto-clear after duration if non-zero

@@ -30,6 +30,7 @@ export interface VoiceDisplayState {
   transcript?: string;
   reply?:      string;
   error?:      string;
+  show_url?:   string;
   updatedAt:   string;
 }
 
@@ -60,8 +61,8 @@ export function setVoiceStateProcessing(turnId: string) {
   _state = { status: 'processing', turnId, updatedAt: new Date().toISOString() };
 }
 
-export function setVoiceStateDone(turnId: string, transcript: string, reply: string) {
-  _state = { status: 'done', turnId, transcript, reply, updatedAt: new Date().toISOString() };
+export function setVoiceStateDone(turnId: string, transcript: string, reply: string, show_url?: string) {
+  _state = { status: 'done', turnId, transcript, reply, show_url, updatedAt: new Date().toISOString() };
   // Auto-return to idle after 12s (user has time to tap feedback)
   scheduleIdle(12_000);
 }
