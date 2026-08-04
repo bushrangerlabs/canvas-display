@@ -280,4 +280,18 @@ export async function audioRoutes(app: FastifyInstance) {
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
     return getAudioState();
   });
+
+  // POST /api/media/cast  { url, title?, volume? }
+  // Alias for /audio/play — used by HA services and Music Assistant integrations.
+  app.post<{ Body: { url?: string; media_content_id?: string; title?: string; media_title?: string; volume?: number } }>(
+    '/media/cast',
+    async (req, reply) => {
+      const url = req.body?.url ?? req.body?.media_content_id ?? '';
+      const title = req.body?.title ?? req.body?.media_title ?? url;
+      if (!url) return reply.code(400).send({ error: 'url or media_content_id is required' });
+      const state = await playAudio({ url, title, volume: req.body?.volume });
+      import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
+      return state;
+    },
+  );
 }

@@ -438,6 +438,25 @@ export async function migrate(pool: pg.Pool): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS voice_turns (
+      turn_id     TEXT PRIMARY KEY,
+      device_id   TEXT NOT NULL,
+      transcript  TEXT,
+      reply       TEXT,
+      intent      TEXT,
+      tool_calls  JSONB,
+      knowledge_card JSONB,
+      feedback    SMALLINT CHECK (feedback IN (-1, 1)),
+      feedback_at TIMESTAMPTZ,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_voice_turns_device_time
+      ON voice_turns (device_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_voice_turns_created
+      ON voice_turns (created_at DESC);
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS skills (
       id UUID PRIMARY KEY,
       name TEXT NOT NULL,

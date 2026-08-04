@@ -247,7 +247,9 @@ export function publishHaMediaPlayerDiscovery(): void {
     value_template: '{{ value_json.state }}',
     volume_template: '{{ value_json.volume | float(0) }}',
     muted_template: '{{ value_json.muted | lower }}',
-    supported_features: 1 | 2 | 4 | 8 | 16 | 64, // play|pause|stop|vol_set|vol_step|mute
+    media_title_template: '{{ value_json.media_title }}',
+    media_image_url_template: '{{ value_json.media_image_url }}',
+    supported_features: 1 | 2 | 4 | 8 | 16 | 64 | 131072, // play|pause|stop|vol_set|vol_step|mute|play_media
     device: {
       identifiers: [uniqueId],
       name: deviceName,
@@ -280,6 +282,9 @@ export function publishHaMediaPlayerState(): void {
     state: haState,
     volume: Math.round((audio.volume ?? 80) / 100 * 100) / 100,
     muted: audio.muted ?? false,
+    media_title: audio.title ?? null,
+    media_artist: null,
+    media_image_url: audio.artwork ?? null,
     source: audio.title ?? null,
   }, true);
 }
@@ -306,13 +311,19 @@ function handleCommandMessage(topic: string, payload: Buffer): void {
     let cmd: Record<string, unknown> = {};
     try { cmd = JSON.parse(payload.toString()); } catch { cmd = { command: payload.toString().trim() }; }
     const command = String(cmd.command ?? payload.toString().trim());
-    import('../routes/audio.js').then(({ pauseAudio, resumeAudio, stopAudio, setAudioVolume, setAudioMute }) => {
+    import('../routes/audio.js').then(({ pauseAudio, resumeAudio, stopAudio, setAudioVolume, setAudioMute, playAudio }) => {
       if (command === 'pause') void pauseAudio();
       else if (command === 'play' || command === 'media_play') void resumeAudio();
       else if (command === 'stop' || command === 'media_stop') void stopAudio();
       else if (command === 'volume_set' && typeof cmd.volume === 'number') void setAudioVolume(Math.round(cmd.volume * 100));
       else if (command === 'mute' || command === 'media_mute') void setAudioMute(true);
       else if (command === 'unmute' || command === 'media_unmute') void setAudioMute(false);
+      else if (command === 'play_media' || command === 'media_play_url') {
+        const url = String(cmd.media_content_id ?? cmd.url ?? '');
+        const title = String(cmd.media_title ?? cmd.title ?? url);
+        const volume = typeof cmd.volume === 'number' ? Math.round(cmd.volume * 100) : undefined;
+        if (url) void playAudio({ url, title, volume });
+      }
       publishHaMediaPlayerState();
     }).catch(err => console.error('[mqtt] ha media_player cmd error:', err));
     return;

@@ -9,6 +9,12 @@ import { MicCapture } from './mic';
 import { WakeWordDetector } from './wakeword-local';
 import { runVoiceTurn } from '../services/voice';
 import { EndOfSpeechDetector } from './end-of-speech';
+import {
+  setVoiceStateListening,
+  setVoiceStateProcessing,
+  setVoiceStateDone,
+  setVoiceStateError,
+} from '../routes/voice-state.js';
 
 /** Read Core bridge URL + token from server_settings DB, falling back to env vars. */
 function getCoreBridgeConfig(): { baseUrl: string; token: string } {
@@ -519,6 +525,7 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     );
     const coreRequestStartedAt = performance.now();
     const streamingEnabled = coreBridgeConfigured && process.env.CANVAS_CORE_STREAMING_TTS !== '0';
+    setVoiceStateProcessing(correlationId);
     const result = streamingEnabled
       ? await runCoreVoiceTurnStream(wav, correlationId, wakeStartedAt)
       : coreBridgeConfigured
@@ -627,12 +634,15 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
 
     console.log('[wakeword:direct] Transcript:', transcript || '(empty)');
     console.log('[wakeword:direct] Core reply:', 'reply' in result ? result.reply : (hermesResult?.speech ?? hermesResult?.text ?? '(no response)'));
+    const finalReply = 'reply' in result ? (result.reply as string ?? '') : (hermesResult?.speech ?? hermesResult?.text ?? '');
+    setVoiceStateDone(correlationId, transcript, finalReply);
     state.status = 'running';
     state.lastError = undefined;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     state.status = 'error';
     state.lastError = message;
+    setVoiceStateError(message);
     console.error('[wakeword:direct] Voice turn failed:', message);
     if (activeSettings.noIntentEnabled) {
       await playCueSound(activeSettings.noIntentSound);
@@ -680,6 +690,7 @@ async function handleWakewordDetected(): Promise<void> {
   processing = true;
   state.status = 'processing';
   state.lastDetectionAt = new Date().toISOString();
+  setVoiceStateListening();
   captureChunks = [];
   captureDecision = 'continue';
   captureActive = false;

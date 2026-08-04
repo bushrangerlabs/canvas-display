@@ -792,6 +792,15 @@ async function main(): Promise<void> {
         } : undefined,
       });
       emit({ type: 'meta', turnId, transcript: result.transcript, reply: result.reply, intent: result.intent, timings: result.timings });
+      // Save full voice turn asynchronously
+      void pool.query(
+        `INSERT INTO voice_turns (turn_id, device_id, transcript, reply, intent, knowledge_card)
+         VALUES($1,$2,$3,$4,$5,$6)
+         ON CONFLICT(turn_id) DO NOTHING`,
+        [turnId, deviceId, result.transcript ?? null, result.reply ?? null,
+         result.intent?.intent ?? null,
+         result.knowledge_card ? JSON.stringify(result.knowledge_card) : null],
+      ).catch((err: Error) => console.warn('[core][voice] Failed to save voice turn:', err.message));
       const mediaStarted = ['media_play', 'media_select', 'media_resume', 'media_next'].includes(result.intent.intent)
         && result.toolResult?.ok === true;
       let ttsMs = streamedTtsMs;
@@ -868,7 +877,52 @@ async function main(): Promise<void> {
     );
   }
 
-  // --- Phase 2 Home Assistant integration routes (D-012) -------------------
+  // --- Voice turns: interaction memory + feedback --------------------------
+
+  // POST /api/voice/feedback — record user rating for a voice turn
+  fastify.post<{ Body: { turnId?: string; deviceId?: string; rating?: number } }>(
+    '/api/voice/feedback',
+    async (request, reply) => {
+      const header = request.headers.authorization;
+      const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+      const expected = await resolveEdgeVoiceToken(presented);
+      if (!checkEdgeVoiceAuth(expected, presented)) {
+        return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+      }
+      const { turnId, rating } = request.body ?? {};
+      if (!turnId || (rating !== 1 && rating !== -1)) {
+        return reply.code(400).send({ error: 'Provide turnId and rating (1 or -1)' });
+      }
+      await pool.query(
+        `UPDATE voice_turns SET feedback=$1, feedback_at=now() WHERE turn_id=$2`,
+        [rating, turnId],
+      );
+      console.log(`[core][voice] Feedback turn=${turnId} rating=${rating}`);
+      return { ok: true };
+    },
+  );
+
+  // GET /api/voice/turns — recent voice turns (admin)
+  fastify.get<{ Querystring: { deviceId?: string; limit?: string } }>(
+    '/api/voice/turns',
+    { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) },
+    async (request) => {
+      const deviceId = request.query.deviceId;
+      const limit = Math.min(200, Math.max(1, parseInt(request.query.limit ?? '50', 10) || 50));
+      const result = deviceId
+        ? await pool.query(
+            `SELECT turn_id, device_id, transcript, reply, intent, knowledge_card, feedback, feedback_at, created_at
+             FROM voice_turns WHERE device_id=$1 ORDER BY created_at DESC LIMIT $2`,
+            [deviceId, limit],
+          )
+        : await pool.query(
+            `SELECT turn_id, device_id, transcript, reply, intent, knowledge_card, feedback, feedback_at, created_at
+             FROM voice_turns ORDER BY created_at DESC LIMIT $1`,
+            [limit],
+          );
+      return { turns: result.rows, total: result.rowCount ?? 0 };
+    },
+  );
   // HA credentials live only in Core; these endpoints never forward the token to
   // Edge. Reads are open to any authenticated admin; service calls are admin-only.
   fastify.get('/api/ha/entities', { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) }, async (_request, reply) => {

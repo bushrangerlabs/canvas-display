@@ -5,6 +5,7 @@ import { coreApi } from '../api/client';
 import { WIDGET_LAZY_MAP } from '../widgets/WidgetRenderer';
 import type { EditorWidget } from '../types/widget';
 import type { WidgetConfig } from '../widgets/types/index';
+import VoiceStateOverlay from '../components/VoiceStateOverlay';
 
 export default function SceneDisplayPage() {
   const { sceneId = '' } = useParams();
@@ -74,6 +75,7 @@ export default function SceneDisplayPage() {
           </Box>
         );
       })}
+      <VoiceStateOverlay />
     </Box>
   );
 }
