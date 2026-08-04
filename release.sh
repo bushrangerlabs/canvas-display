@@ -29,6 +29,13 @@ echo "✓ web built"
 cp -r "$REPO_ROOT/web/dist/." "$REPO_ROOT/core/public/"
 echo "✓ web assets copied → core/public/"
 
+# ── 2c. Build Core TypeScript → dist/ (Docker image copies this) ─────────────
+echo "Building Core TypeScript…"
+cd "$REPO_ROOT/core"
+npm run build
+cd "$REPO_ROOT"
+echo "✓ Core TypeScript built → core/dist/"
+
 # ── 3. Build server sidecar binary ───────────────────────────────────────────
 echo "Building server sidecar…"
 cd "$REPO_ROOT/server"
