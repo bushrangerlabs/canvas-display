@@ -469,6 +469,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
               '/api/voice/wakeword-test',
               '/api/media/play',
               '/api/media/control',
+              '/api/knowledge-card',
             ]);
             if (!allowed.has(path)) throw new Error(`Device HTTP path is not allowed: ${path}`);
             const response = await fetch(`http://127.0.0.1:3100${path}`, {
@@ -503,6 +504,13 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
                 await invoke('close_webview', { label: 'floating' }).catch(console.error);
               }
             }
+          } else if (cmd.action === 'navigate_scene') {
+            // Core flow: switch the main display to a scene URL
+            const url = String(cmd.payload?.url ?? '');
+            if (url) {
+              await invoke('navigate_webview', { label: 'main', url }).catch(console.error);
+            }
+            result = { navigated: !!url, url };
           } else {
             throw new Error(`Unsupported device action: ${cmd.action}`);
           }

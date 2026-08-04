@@ -1654,15 +1654,21 @@ async function main(): Promise<void> {
       if (flowEnqueueTts) await flowEnqueueTts(text, deviceId);
     },
     switchScene: async (sceneName, deviceId) => {
-      // Look up scene by name and navigate the device to it
       const r = await pool.query<{ id: string }>(
         `SELECT id FROM scenes WHERE lower(name) = lower($1) AND status='published' LIMIT 1`,
         [sceneName]
       );
-      if (r.rows[0] && deviceId) {
-        await requestDeviceAction(deviceId, 'navigate_panel', {
-          url: `/display/scenes/${encodeURIComponent(r.rows[0].id)}`,
-        }).catch(err => console.warn('[flows] switchScene failed:', (err as Error).message));
+      if (!r.rows[0]) {
+        console.warn(`[flows] switchScene: no published scene named "${sceneName}"`);
+        return;
+      }
+      const url = `/display/scenes/${encodeURIComponent(r.rows[0].id)}`;
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(row => row.device_id);
+      for (const dId of targets) {
+        await requestDeviceAction(dId, 'navigate_scene', { url })
+          .catch(err => console.warn(`[flows] switchScene failed for ${dId}:`, (err as Error).message));
       }
     },
     askAi: async (prompt) => {
@@ -1673,8 +1679,16 @@ async function main(): Promise<void> {
       return result.reply ?? '';
     },
     pushKnowledgeCard: async (card, deviceId) => {
-      // Push card to display device (best-effort, device must be running display server)
-      console.log(`[flows] knowledge card: ${card.title} → ${deviceId ?? 'all'}`);
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(row => row.device_id);
+      for (const dId of targets) {
+        await requestDeviceAction(dId, 'device_http', {
+          path: '/api/knowledge-card',
+          http_method: 'POST',
+          body: { title: card.title, body: card.body, source_label: card.source_label },
+        }).catch(err => console.warn(`[flows] pushKnowledgeCard failed for ${dId}:`, (err as Error).message));
+      }
     },
     sendDeviceCommand: async (deviceId, command, payload) => {
       const devices = deviceId
