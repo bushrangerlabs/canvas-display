@@ -51,3 +51,19 @@ ${NOTES}}"
 git tag "v${VERSION}"
 git push origin main --tags
 echo "✓ pushed v${VERSION}"
+
+# ── 6. Deploy Core to 192.168.1.108 ──────────────────────────────────────────
+CORE_HOST="192.168.1.108"
+CORE_PATH="/home/spetchal/canvas-core"
+
+if ssh -o ConnectTimeout=5 -o BatchMode=yes "$CORE_HOST" true 2>/dev/null; then
+  echo "Deploying core to ${CORE_HOST}…"
+  rsync -a --delete --exclude 'node_modules' --exclude '.git' \
+    "$REPO_ROOT/core/" "${CORE_HOST}:${CORE_PATH}/core/"
+  ssh "$CORE_HOST" "cd ${CORE_PATH} && docker compose up --build -d 2>&1 | tail -5"
+  echo "✓ Core deployed and restarted on ${CORE_HOST}"
+else
+  echo "⚠ Core host ${CORE_HOST} unreachable — skipping auto-deploy. Run manually:"
+  echo "  rsync -a --delete --exclude node_modules ${REPO_ROOT}/core/ ${CORE_HOST}:${CORE_PATH}/core/"
+  echo "  ssh ${CORE_HOST} 'cd ${CORE_PATH} && docker compose up --build -d'"
+fi
