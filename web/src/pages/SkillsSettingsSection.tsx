@@ -8,7 +8,13 @@ import {
   Paper,
   Select,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -18,6 +24,8 @@ import {
   type SkillPlan,
   type SkillRecord,
 } from "../api/client";
+
+type SkillSuggestion = { intent: string; count: number; last_seen: string; avg_feedback: number | null };
 const blank = (): SkillDefinition => ({
   schemaVersion: 1,
   name: "New skill",
@@ -43,10 +51,12 @@ export default function SkillsSettingsSection() {
     [message, setMessage] = useState<string | null>(null),
     [error, setError] = useState<string | null>(null),
     [busy, setBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState<SkillSuggestion[]>([]);
   const load = useCallback(async () => {
     const [s, r] = await Promise.all([coreApi.skills(), coreApi.routines()]);
     setSkills(s.skills);
     setRoutines(r.routines);
+    coreApi.skillSuggestions().then(r => setSuggestions(r.suggestions)).catch(() => {/* not fatal */});
   }, []);
   useEffect(() => {
     void load().catch((e) => setError(String(e)));
@@ -92,6 +102,59 @@ export default function SkillsSettingsSection() {
     <Stack spacing={2}>
       {error && <Alert severity="error">{error}</Alert>}
       {message && <Alert severity="success">{message}</Alert>}
+      {suggestions.length > 0 && (
+        <Paper sx={{ p: 2 }}>
+          <Typography variant="h6">Suggested Skills</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Intents seen ≥2 times with no matching skill. Click "Create" to pre-fill the skill editor.
+          </Typography>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Intent</TableCell>
+                <TableCell align="right">Requests</TableCell>
+                <TableCell>Last seen</TableCell>
+                <TableCell align="right">Avg feedback</TableCell>
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {suggestions.map((s) => (
+                <TableRow key={s.intent}>
+                  <TableCell><code>{s.intent}</code></TableCell>
+                  <TableCell align="right">{s.count}</TableCell>
+                  <TableCell>{new Date(s.last_seen).toLocaleDateString()}</TableCell>
+                  <TableCell align="right">
+                    {s.avg_feedback != null ? (s.avg_feedback > 0 ? '👍' : s.avg_feedback < 0 ? '👎' : '—') : '—'}
+                  </TableCell>
+                  <TableCell>
+                    <Tooltip title="Pre-fill skill editor with AI plan for this intent">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(async () => {
+                            const r = await coreApi.planSkill(`Handle "${s.intent}" intent: ${s.intent.replace(/_/g, ' ')}`);
+                            setPlan(r.plan);
+                            if (r.plan.definition) {
+                              setDefinition(structuredClone(r.plan.definition));
+                              setSelected("new");
+                            }
+                            setMessage(`Skill planned for intent "${s.intent}"; review in editor below.`);
+                          })
+                        }
+                      >
+                        Create
+                      </Button>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      )}
       <Paper sx={{ p: 2 }}>
         <Typography variant="h6">Create a skill with AI</Typography>
         <Typography variant="body2" color="text.secondary">

@@ -486,6 +486,7 @@ export const coreApi = {
   reviseSkill:(id:string,definition:SkillDefinition)=>api.post<{ok:boolean;revision:SkillRevision}>(`/api/admin/skills/${encodeURIComponent(id)}/revisions`,{definition}),
   enableSkill:(id:string,revision?:number)=>api.post<{ok:boolean;skill:SkillRecord}>(`/api/admin/skills/${encodeURIComponent(id)}/enable`,{revision}),
   setSkillStatus:(id:string,action:'disable'|'archive')=>api.post<{ok:boolean;skill:SkillRecord}>(`/api/admin/skills/${encodeURIComponent(id)}/${action}`),
+  skillSuggestions:()=>api.get<{suggestions:Array<{intent:string;count:number;last_seen:string;avg_feedback:number|null}>}>('/api/skills/suggestions'),
 
   // Auth
   login: (username: string, password: string) =>

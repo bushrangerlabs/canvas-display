@@ -37,6 +37,8 @@ import { weatherWidgetMetadata } from '../widgets/WeatherWidget';
 import { PlaylistResultWidgetMetadata } from '../widgets/PlaylistResultWidget';
 import { KnowledgeCardWidgetMetadata } from '../widgets/KnowledgeCardWidget';
 import { AnnouncementWidgetMetadata } from '../widgets/AnnouncementWidget';
+import { NowPlayingWidgetMetadata } from '../widgets/NowPlayingWidget';
+import { CountdownTimerWidgetMetadata } from '../widgets/CountdownTimerWidget';
 
 export interface WidgetRegistryEntry {
   type: string;
@@ -78,6 +80,8 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   playlistresult: PlaylistResultWidgetMetadata,
   knowledgecard: KnowledgeCardWidgetMetadata,
   announcement: AnnouncementWidgetMetadata,
+  nowplaying: NowPlayingWidgetMetadata,
+  countdowntimer: CountdownTimerWidgetMetadata,
 };
 
 /**

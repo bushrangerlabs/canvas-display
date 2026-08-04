@@ -702,6 +702,12 @@ async function main(): Promise<void> {
       : 'untracked';
     try {
       console.log(`[core][voice:${deviceId}] turn received turn=${turnId}`);
+      // Load last 5 turns for conversational context
+      const historyRows = await pool.query<{ transcript: string; reply: string }>(
+        `SELECT transcript, reply FROM voice_turns WHERE device_id=$1 AND transcript IS NOT NULL AND reply IS NOT NULL ORDER BY created_at DESC LIMIT 5`,
+        [deviceId],
+      );
+      const conversationHistory = historyRows.rows.reverse();
       const result = await intelligence.runIntelligentPipeline({
         audio: typeof body.audioBase64 === 'string' ? Buffer.from(body.audioBase64, 'base64') : undefined,
         transcript: typeof body.transcript === 'string' ? body.transcript : undefined,
@@ -709,6 +715,7 @@ async function main(): Promise<void> {
         language: body.language,
         skipTts: body.skipTts,
         originDeviceId: deviceId,
+        conversationHistory,
       });
       console.log(
         `[core][voice:${deviceId}] turn complete turn=${turnId} intent=${result.intent.intent} ` +
@@ -778,11 +785,18 @@ async function main(): Promise<void> {
       let streamedChunks = 0;
       let streamedTtsMs = 0;
       const speech = intelligence.providers.tts;
+      // Load last 5 turns for conversational context
+      const historyRows = await pool.query<{ transcript: string; reply: string }>(
+        `SELECT transcript, reply FROM voice_turns WHERE device_id=$1 AND transcript IS NOT NULL AND reply IS NOT NULL ORDER BY created_at DESC LIMIT 5`,
+        [deviceId],
+      );
+      const conversationHistory = historyRows.rows.reverse();
       const result = await intelligence.runIntelligentPipeline({
         audio: typeof body.audioBase64 === 'string' ? Buffer.from(body.audioBase64, 'base64') : undefined,
         transcript: typeof body.transcript === 'string' ? body.transcript : undefined,
         originDeviceId: deviceId,
         skipTts: true,
+        conversationHistory,
         onTranscript: (transcript) => { emit({ type: 'transcript', transcript }); },
         onReplyChunk: speech ? async (text) => {
           const started = performance.now();

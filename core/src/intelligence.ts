@@ -104,6 +104,11 @@ export interface Intelligence {
   getToolContext(): Partial<ToolContext>;
 }
 
+export interface ConversationTurn {
+  transcript: string;
+  reply: string;
+}
+
 export interface VoicePipelineInput {
   /** Raw audio bytes (e.g. decoded from base64). */
   audio?: Buffer;
@@ -117,6 +122,8 @@ export interface VoicePipelineInput {
   skipTts?: boolean;
   /** Authenticated/validated device that originated this turn. */
   originDeviceId?: string;
+  /** Recent conversation history for multi-turn context (max 5 turns). */
+  conversationHistory?: ConversationTurn[];
   onTranscript?: (transcript: string) => void | Promise<void>;
   onReplyChunk?: (text: string) => void | Promise<void>;
 }
@@ -374,9 +381,15 @@ export function createIntelligence(
 
     const candidates = selectToolsForRequest(toolRegistry.listTools('voice'), transcript);
     const mcpCandidates = candidates.filter(tool => tool.name.startsWith('mcp.'));
+    // Build conversation history messages from recent turns
+    const historyMessages: ChatMessage[] = (input.conversationHistory ?? []).flatMap(turn => ([
+      { role: 'user' as const, content: turn.transcript },
+      { role: 'assistant' as const, content: turn.reply },
+    ]));
     if (mcpCandidates.length === 0) {
       const messages: ChatMessage[] = [
         { role: 'system', content: currentTimeSystemPrompt(input.systemPrompt) },
+        ...historyMessages,
         { role: 'user', content: transcript },
       ];
       const provider = conversationLlm();
@@ -409,6 +422,7 @@ export function createIntelligence(
       : '';
     const messages: ChatMessage[] = [
       { role: 'system', content: `${currentTimeSystemPrompt(input.systemPrompt)}\nUse the provided MCP tools whenever they can answer or perform the request. You can access and control Home Assistant through these tools; never claim that you cannot access the smart home when an applicable tool is provided. Base factual answers on tool results.${entityContext}` },
+      ...historyMessages,
       { role: 'user', content: transcript },
     ];
     let finalContent = '';
@@ -746,6 +760,10 @@ export function createIntelligence(
         // No matching tool — use LLM for reply
         const messages: ChatMessage[] = [];
         messages.push({ role: 'system', content: currentTimeSystemPrompt(input.systemPrompt) });
+        (input.conversationHistory ?? []).forEach(turn => {
+          messages.push({ role: 'user', content: turn.transcript });
+          messages.push({ role: 'assistant', content: turn.reply });
+        });
         messages.push({ role: 'user', content: transcript });
         reply = await conversationLlm().chat(messages);
       }

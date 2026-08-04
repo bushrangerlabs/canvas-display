@@ -36,4 +36,6 @@ export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.Com
   playlistresult: lazy(() => import('./widgets/PlaylistResultWidget')),
   knowledgecard: lazy(() => import('./widgets/KnowledgeCardWidget')),
   announcement: lazy(() => import('./widgets/AnnouncementWidget')),
+  nowplaying: lazy(() => import('./widgets/NowPlayingWidget')),
+  countdowntimer: lazy(() => import('./widgets/CountdownTimerWidget')),
 };
