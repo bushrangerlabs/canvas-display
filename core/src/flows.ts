@@ -45,7 +45,7 @@ export type NodeType =
   | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state'
   | 'trigger_webhook' | 'trigger_manual' | 'trigger_intent'
   // actions
-  | 'action_ha_service' | 'action_tts' | 'action_scene'
+  | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_switch_page'
   | 'action_delay' | 'action_http' | 'action_set_variable'
   | 'action_ai_reply' | 'action_knowledge_card'
   | 'action_device_command' | 'action_log'
@@ -208,6 +208,8 @@ export interface FlowExecutorDeps {
   speakTts: (text: string, deviceId?: string) => Promise<void>;
   /** Switch a display device to a scene by name */
   switchScene: (sceneName: string, deviceId?: string) => Promise<void>;
+  /** Switch a display device to a legacy page by name or ID */
+  switchPage: (pageName: string, deviceId?: string) => Promise<void>;
   /** Ask the AI for a plain text reply */
   askAi: (prompt: string) => Promise<string>;
   /** Push a knowledge card to a display device */
@@ -418,6 +420,13 @@ export class FlowExecutor {
         const sceneName = String(cfg.scene ?? '');
         const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
         await this.deps.switchScene(sceneName, deviceId);
+        return 'any';
+      }
+
+      case 'action_switch_page': {
+        const pageName = String(this._resolve(cfg.page, ctx) ?? '');
+        const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
+        await this.deps.switchPage(pageName, deviceId);
         return 'any';
       }
 

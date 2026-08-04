@@ -1699,6 +1699,55 @@ async function main(): Promise<void> {
           .catch(err => console.warn(`[flows] device command "${command}" failed for ${dId}:`, (err as Error).message));
       }
     },
+    switchPage: async (pageName, deviceId) => {
+      // Resolve page by name or ID
+      const pageIdRow = await pool.query<{ id: string }>(
+        `SELECT id FROM pages WHERE LOWER(name) = LOWER($1) OR id = $1 LIMIT 1`,
+        [pageName]
+      );
+      if (!pageIdRow.rows[0]) {
+        console.warn(`[flows] switchPage: page not found: "${pageName}"`);
+        return;
+      }
+      const pageId = pageIdRow.rows[0].id;
+      const pageRow = await pool.query(`SELECT * FROM pages WHERE id = $1`, [pageId]);
+      const panelsRow = await pool.query(
+        `SELECT * FROM page_panels WHERE page_id = $1 ORDER BY position, id`,
+        [pageId]
+      );
+      const page: import('./legacy-routes.js').PageRow = {
+        id: pageId,
+        name: String(pageRow.rows[0]?.name ?? pageName),
+        floating_config: (pageRow.rows[0]?.floating_config as import('./legacy-routes.js').PageRow['floating_config']) ?? null,
+        panels: panelsRow.rows.map(r => ({
+          id: String(r.id),
+          page_id: pageId,
+          name: r.name ? String(r.name) : '',
+          x: Number(r.x ?? 0),
+          y: Number(r.y ?? 0),
+          w: Number(r.w ?? 0),
+          h: Number(r.h ?? 0),
+          view_id: r.view_id ? String(r.view_id) : null,
+          content_type: (r.content_type as 'url' | 'scene') ?? 'url',
+          url: r.url ? String(r.url) : null,
+          scene_id: r.scene_id ? String(r.scene_id) : null,
+          z_index: Number(r.z_index ?? 0),
+          visible: Boolean(r.visible ?? true),
+          opacity: Number(r.opacity ?? 1),
+          position: Number(r.position ?? 0),
+        })),
+        assigned_device_ids: [],
+        created_at: String(pageRow.rows[0]?.created_at ?? ''),
+        updated_at: String(pageRow.rows[0]?.updated_at ?? ''),
+      };
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(r => r.device_id);
+      for (const dId of targets) {
+        await deliverPageToDevice(page, dId)
+          .catch(err => console.warn(`[flows] switchPage failed for ${dId}:`, (err as Error).message));
+      }
+    },
   });
   registerFlowRoutes(fastify, flowRepo, flowExecutor, requireAdmin);
   intelligence.setToolContext({

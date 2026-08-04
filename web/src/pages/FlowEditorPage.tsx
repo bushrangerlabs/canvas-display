@@ -152,6 +152,14 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
       { key: 'device_id', label: 'Device', type: 'device_picker' },
     ],
   },
+  action_switch_page: {
+    label: 'Switch Page', color: '#2b6cb0', textColor: '#fff',
+    group: 'Actions', icon: '📄',
+    configFields: [
+      { key: 'page', label: 'Page Name or ID', type: 'text', placeholder: 'Home' },
+      { key: 'device_id', label: 'Device', type: 'device_picker' },
+    ],
+  },
   action_delay: {
     label: 'Delay', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '⏳',
