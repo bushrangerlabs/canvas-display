@@ -370,6 +370,7 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 | Version | Key Changes |
 |---|---|
+| 0.2.32 | Energy Monitor widget (solar/grid/battery/house power flow diagram); Voice timer control (say "set a 5 minute timer" → CountdownTimer widget starts automatically); Scene fade transition animation on page change; Device-to-device intercom (Core POST /api/edge/intercom/broadcast + display polling + audio playback); Countdown Timer polls /api/timer/pending for voice-set commands; Intercom poller on display |
 | 0.2.31 | Conversational memory (last 5 turns passed as context to LLM on every voice turn); Skill suggestions UI in admin (table of high-frequency unhandled intents with one-click AI plan + create); Now Playing widget (album art, title, artist, playback controls, live progress bar, calls HA media_player services); Countdown Timer widget (circular SVG ring, configurable duration/label/colour, click to start/pause/reset, auto-restart) |
 | 0.2.30 | Doorbell HA entity auto-detection (TTS broadcast + alert to all displays with camera entity inline); alert broadcast poller; AnnouncementWidget camera feed inline; "show me" page nav (voice overlay "View page" button + iframe overlay); skill suggestions endpoint (`GET /api/skills/suggestions`); Z-index editor (right-click context menu, Layer field in Inspector) |
 | 0.2.29 | Cast/stream receiver (`POST /api/media/cast` + MQTT `play_media`); enriched HA media_player now-playing state (title, artwork); voice state overlay on display (listening/processing/done/error); 👍/👎 feedback UI; interaction memory (`voice_turns` table saves full turns); feedback endpoint on Core |
@@ -387,20 +388,19 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 ### Immediate
 1. **Verify voice loop end-to-end** — Trigger wake word, confirm state overlay appears, confirm 👍/👎 works, confirm multi-turn follow-up questions retain context
-2. **Test doorbell** — Trigger a doorbell binary_sensor in HA, verify TTS plays + overlay shows with camera
+2. **Test timer control** — Say "set a 5 minute timer" → confirm CountdownTimer widget starts
+3. **Test intercom** — POST to `/api/edge/intercom/broadcast` with text → confirm other display plays audio
 
 ### Short-term
-3. **Music Assistant integration** — Connect displays as MA players; Now Playing widget picks up MA media state automatically via MQTT-published media_player state
-4. **Auto-skill generation + approval flow** — AI proposes skills from patterns; admin approves (suggestions UI done, full loop needs Core scheduled job)
-5. **Scene transition animations** — Smooth page navigation
-6. **Device-to-device audio / intercom** — Audio from one display to another
-7. **Energy monitor widget** — Solar generation, grid import/export, battery SoC from HA energy entities
-8. **Voice timer control** — Intent to start/reset Countdown Timer widget via voice ("set a 10-minute timer" → Core finds CountdownTimer widget on active page and sets its duration + starts it)
+4. **Music Assistant integration** — Register displays as MA players; Now Playing widget already handles HA media_player state  
+5. **Auto-skill generation + approval flow** — Suggestions UI exists; Core needs a scheduled job to periodically generate skill proposals from pattern data
+6. **Shopping list widget** — HA shopping list integration with voice add/remove
+7. **Traffic / commute widget** — Google Maps travel time to a saved destination
+8. **Production PKI mode** — Proper enrollment gate; disable open pairing
 
 ### Longer-term (polish & scale)
-9. **Production PKI mode** — Proper enrollment gate; disable open pairing
-10. **Scene preview thumbnails** — Mini canvas previews in scene list
-11. **Refactor `core/src/index.ts`** — 1970+ lines; extract route groups into separate files
-12. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
-13. **Offline graceful degradation** — Useful fallback when Core is unreachable
-14. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
+9. **Refactor `core/src/index.ts`** — 2000+ lines; needs context object pattern for route extraction
+10. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
+11. **Offline graceful degradation** — Useful fallback when Core is unreachable
+12. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
+13. **Scene preview thumbnails** — Mini canvas previews in scene list
