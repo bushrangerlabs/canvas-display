@@ -380,21 +380,37 @@ export function createIntelligence(
     }
 
     const candidates = selectToolsForRequest(toolRegistry.listTools('voice'), transcript);
-    const mcpCandidates = candidates.filter(tool => tool.name.startsWith('mcp.'));
+    let mcpCandidates = candidates.filter(tool => tool.name.startsWith('mcp.'));
     // Build conversation history messages from recent turns
     const historyMessages: ChatMessage[] = (input.conversationHistory ?? []).flatMap(turn => ([
       { role: 'user' as const, content: turn.transcript },
       { role: 'assistant' as const, content: turn.reply },
     ]));
+
+    // When keyword scoring found no MCP tools, inject web search/wikipedia tools so the LLM
+    // can look up factual answers for general knowledge questions.
     if (mcpCandidates.length === 0) {
+      const webSearchTools = toolRegistry.listTools('voice').filter(tool =>
+        tool.name.startsWith('mcp.') &&
+        /search|web|wiki|knowledge|lookup|fetch/i.test(tool.name + ' ' + (tool.description ?? '')),
+      );
+      if (webSearchTools.length > 0) {
+        mcpCandidates = webSearchTools;
+      }
+    }
+
+    if (mcpCandidates.length === 0) {
+      // Pure LLM path — no MCP tools at all; generate reply and synthesize a knowledge card
+      // from the transcript + reply so the display can show the answer.
       const messages: ChatMessage[] = [
         { role: 'system', content: currentTimeSystemPrompt(input.systemPrompt) },
         ...historyMessages,
         { role: 'user', content: transcript },
       ];
       const provider = conversationLlm();
+      let reply = '';
       if (input.onReplyChunk && provider.streamChat) {
-        let reply = ''; let sentence = '';
+        let sentence = '';
         for await (const delta of provider.streamChat(messages)) {
           reply += delta; sentence += delta;
           for (;;) {
@@ -405,9 +421,14 @@ export function createIntelligence(
           }
         }
         if (sentence.trim()) await input.onReplyChunk(sentence.trim());
-        return { reply };
+      } else {
+        reply = await provider.chat(messages);
       }
-      return { reply: await provider.chat(messages) };
+      // Synthesize knowledge card from Q&A when the reply is substantive (not a short command ack)
+      const syntheticCard = reply.trim().length > 60
+        ? { title: transcript.length > 80 ? transcript.slice(0, 77) + '…' : transcript, body: reply.trim(), source_label: 'AI' }
+        : undefined;
+      return { reply, ...(syntheticCard ? { knowledge_card: syntheticCard } : {}) };
     }
 
     const definitions = mcpCandidates.map(tool => ({
@@ -434,6 +455,15 @@ export function createIntelligence(
       if (response.content) finalContent = response.content;
       if (response.toolCalls.length === 0) {
         if(executedCalls.length&&!executionFailed)await toolContext.recordSuccessfulPlan?.(transcript,executedCalls,input.originDeviceId);
+        // When LLM chose not to call any tools and gave a substantive reply,
+        // synthesize a knowledge card so the display can show the answer.
+        if (!knowledgeCard && finalContent.trim().length > 60 && executedCalls.length === 0) {
+          knowledgeCard = {
+            title: transcript.length > 80 ? transcript.slice(0, 77) + '…' : transcript,
+            body: finalContent.trim(),
+            source_label: 'AI',
+          };
+        }
         return { reply: finalContent, ...(knowledgeCard ? { knowledge_card: knowledgeCard } : {}) };
       }
       messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls });

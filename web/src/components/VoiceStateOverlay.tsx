@@ -32,6 +32,16 @@ export default function VoiceStateOverlay() {
   const [iframeUrl, setIframeUrl] = useState<string | null>(null);
   const lastUpdatedAt = useRef('');
   const pollRef = useRef<number | null>(null);
+  const iframeTimerRef = useRef<number | null>(null);
+
+  // Auto-close iframe after 60s
+  useEffect(() => {
+    if (iframeUrl) {
+      if (iframeTimerRef.current) window.clearTimeout(iframeTimerRef.current);
+      iframeTimerRef.current = window.setTimeout(() => setIframeUrl(null), 60_000);
+    }
+    return () => { if (iframeTimerRef.current) window.clearTimeout(iframeTimerRef.current); };
+  }, [iframeUrl]);
 
   useEffect(() => {
     let stopped = false;
@@ -45,6 +55,14 @@ export default function VoiceStateOverlay() {
           setVstate(data);
           if (data.status === 'done' || data.status === 'idle') {
             setFeedbackSent(null);
+          }
+          // Auto-open the source URL in the iframe when a web search result is available
+          if (data.status === 'done' && data.show_url) {
+            setIframeUrl(data.show_url);
+          }
+          // Clear iframe when voice becomes idle/listening again
+          if (data.status === 'idle' || data.status === 'listening') {
+            setIframeUrl(null);
           }
         }
       } catch { /* ignore */ }

@@ -304,6 +304,7 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
   timings?: { asrMs: number; routingMs: number; planningMs: number; ttsMs: number; totalMs: number };
   intent?: { intent?: string };
   show_url?: string;
+  knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; image_url?: string; show_url?: string };
 }> {
   const { baseUrl, token } = getCoreBridgeConfig();
   if (!baseUrl || !token) {
@@ -350,6 +351,7 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
     audioBase64: result.audioBase64,
     timings: result.timings,
     intent: result.intent,
+    knowledge_card: result.knowledge_card,
     show_url: result.show_url ?? result.knowledge_card?.show_url,
   };
 }
@@ -395,7 +397,24 @@ async function runCoreVoiceTurnStream(
         }
       }
       if (event.type === 'meta') {
-        meta = { transcript: String(event.transcript ?? ''), reply: String(event.reply ?? ''), intent: event.intent, timings: event.timings, show_url: event.show_url ?? (event.knowledge_card as { show_url?: string } | undefined)?.show_url };
+        const kc = event.knowledge_card as { title: string; body: string; source_url?: string; source_label?: string; image_url?: string; show_url?: string } | null | undefined;
+        meta = {
+          transcript: String(event.transcript ?? ''),
+          reply: String(event.reply ?? ''),
+          intent: event.intent,
+          timings: event.timings,
+          show_url: event.show_url ?? kc?.show_url,
+          knowledge_card: kc ?? undefined,
+        };
+        // Push knowledge card to local display server immediately on receipt
+        if (kc?.title && kc?.body) {
+          const localPort = process.env.PORT ?? '3100';
+          void fetch(`http://127.0.0.1:${localPort}/api/knowledge-card`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(kc),
+          }).catch(() => undefined);
+        }
         if (meta.transcript.trim() && activeSettings.goodIntentEnabled && !goodCuePlayed) {
           await playCueSound(activeSettings.goodIntentSound);
           goodCuePlayed = true;
