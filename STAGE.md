@@ -370,7 +370,8 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 | Version | Key Changes |
 |---|---|
-| 0.2.25 | Core bridge settings in-app (Settings > Integrations): configure Core URL + voice token, test connection button |
+| 0.2.29 | Cast/stream receiver (`POST /api/media/cast` + MQTT `play_media`); enriched HA media_player now-playing state (title, artwork); voice state overlay on display (listening/processing/done/error); 👍/👎 feedback UI; interaction memory (`voice_turns` table saves full turns); feedback endpoint on Core |
+| 0.2.28 | SearXNG integration (web search uses local SearXNG, falls back to DuckDuckGo) |
 | 0.2.27 | Announcement widget; alert API; TTS broadcast (Core→display polling); HA media_player MQTT auto-discovery |
 | 0.2.26 | Knowledge Card widget; web search + Wikipedia MCP; core MCP stdio fix (all 6/6 MCPs up); knowledge cards extracted from voice turns |
 | 0.2.25 | Canvas Core bridge settings in-app (Settings > Integrations); voice token UI; test connection button |
@@ -382,35 +383,26 @@ When the AI answers a general knowledge question, it should be able to fetch sup
 
 ## Recommended Next Steps (Priority Order)
 
-### Immediate (fix what's broken)
-1. **Verify voice loop end-to-end** — Trigger wake word, confirm auto-provision, confirm TTS plays back
-2. **Voice settings in-app** — Add Core URL + voice token to Settings > Integrations (remove need for HA addon config UI)
+### Immediate
+1. **Verify voice loop end-to-end** — Trigger wake word, confirm state overlay appears, confirm 👍/👎 works
 
-### Short-term (complete the core experience)
-3. **Multi-room TTS broadcast** — Push spoken announcements to all display devices via Core
-4. **HA media player registration** — Register each display as a `media_player` entity in HA
-5. **Web search MCP tool** — Give the AI a built-in web search + Wikipedia lookup tool
-6. **Knowledge card / web result widget** — New widget to display AI-fetched web content on screen
-7. **Push notification / alert overlay** — Allow HA automations to push timed overlays to displays
-8. **Voice settings in-app** — Add Core URL + edge token configuration to the in-app Settings UI
+### Short-term
+2. **Pattern-based skill suggestions** — Query `voice_turns` for repeated intents; surface skill candidates in admin UI
+3. **Auto-skill generation + approval flow** — AI proposes skills from patterns; admin approves
+4. **"Show me" / AI page navigation** — AI triggers iframe widget to open a URL based on web search result
+5. **Music Assistant integration** — Connect displays as MA players; voice music control
+6. **Doorbell integration** — Camera feed auto-display + TTS chime on doorbell trigger via HA automation → `POST /api/alert`
 
-### Medium-term (self-learning AI)
-9. **Interaction log persistence** — Store full turn context for every voice turn
-10. **Pattern-based skill suggestions** — Identify repeated patterns and surface skill candidates
-11. **Auto-skill generation + approval flow** — AI proposes skills; admin approves before enabling
-12. **User feedback loop (thumbs up/down)** — Post-response feedback stored and fed back to routing
-
-### Medium-term (audio & media)
-13. **Audio broadcast / intercom** — Device-to-device and whole-home audio via Core broker
-14. **Music Assistant integration** — Connect displays as MA players; voice music control
-15. **Multi-room audio sync** — Join/unjoin display audio groups via voice or UI
+### Medium-term
+7. **Audio broadcast / intercom** — Device-to-device and whole-home audio via Core broker
+8. **Multi-room audio sync** — Join/unjoin display audio groups via voice or UI
+9. **Scene transition animations** — Smooth page navigation
+10. **Widget Z-index + grouping** — Complete canvas editor feature set
 
 ### Longer-term (polish & scale)
-16. **Production PKI mode** — Proper enrollment gate; disable open pairing
-17. **Widget Z-index + grouping** — Complete canvas editor feature set
-18. **Scene transition animations** — Smooth page navigation
-19. **Scene preview thumbnails** — Mini canvas previews in scene list
-20. **Refactor `index.ts`** — Extract route groups into separate files
-21. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
-22. **Offline graceful degradation** — Useful fallback when Core is unreachable
+11. **Production PKI mode** — Proper enrollment gate; disable open pairing
+12. **Scene preview thumbnails** — Mini canvas previews in scene list
+13. **Refactor `index.ts`** — Extract route groups into separate files
+14. **Integration test suite** — Voice pipeline, intent routing, scene push end-to-end
+15. **Offline graceful degradation** — Useful fallback when Core is unreachable
 23. **Dashboard analytics** — Scene usage, voice trigger frequency, skill hit rates
