@@ -28,6 +28,9 @@ export async function knowledgeCardRoutes(fastify: FastifyInstance): Promise<voi
   /** Widget polls this endpoint */
   fastify.get('/knowledge-card/latest', async (_req, reply) => {
     if (!currentCard) return reply.send({ empty: true });
+    // Don't serve stale cards after 90 seconds
+    const age = Date.now() - new Date(currentCard.timestamp).getTime();
+    if (age > 90_000) return reply.send({ empty: true });
     return reply.send(currentCard);
   });
 

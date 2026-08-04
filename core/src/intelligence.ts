@@ -425,7 +425,7 @@ export function createIntelligence(
         reply = await provider.chat(messages);
       }
       // Synthesize knowledge card from Q&A when the reply is substantive (not a short command ack)
-      const syntheticCard = reply.trim().length > 60
+      const syntheticCard = reply.trim().length > 10
         ? { title: transcript.length > 80 ? transcript.slice(0, 77) + '…' : transcript, body: reply.trim(), source_label: 'AI' }
         : undefined;
       return { reply, ...(syntheticCard ? { knowledge_card: syntheticCard } : {}) };
@@ -457,7 +457,7 @@ export function createIntelligence(
         if(executedCalls.length&&!executionFailed)await toolContext.recordSuccessfulPlan?.(transcript,executedCalls,input.originDeviceId);
         // When LLM chose not to call any tools and gave a substantive reply,
         // synthesize a knowledge card so the display can show the answer.
-        if (!knowledgeCard && finalContent.trim().length > 60 && executedCalls.length === 0) {
+        if (!knowledgeCard && finalContent.trim().length > 10 && executedCalls.length === 0) {
           knowledgeCard = {
             title: transcript.length > 80 ? transcript.slice(0, 77) + '…' : transcript,
             body: finalContent.trim(),
