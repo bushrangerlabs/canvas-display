@@ -16,7 +16,6 @@ type ControlMedia = (
   action: 'pause' | 'resume' | 'stop' | 'next',
   source: string,
 ) => Promise<unknown>;
-type TriggerRoutine = (routineId:string, body:Record<string,unknown>) => Promise<unknown>;
 
 function parseJson(payload: Buffer): Record<string, unknown> {
   const parsed = JSON.parse(payload.toString('utf8')) as unknown;
@@ -40,7 +39,6 @@ export class MqttNavigationService {
     private readonly pool: Pool,
     private readonly deliverPage: DeliverPage,
     private readonly controlMedia?: ControlMedia,
-    private readonly triggerRoutine?: TriggerRoutine,
   ) {}
 
   getStatus(): MqttNavigationStatus {
@@ -87,7 +85,6 @@ export class MqttNavigationService {
         'canvas/devices/+/commands/panel',
         'canvas/devices/+/commands/media',
         'canvas/devices/+/panels/+/commands',
-        'canvas/routines/+/trigger',
       ], error => {
         if (error) this.status.lastError = error.message;
       });
@@ -130,12 +127,6 @@ export class MqttNavigationService {
 
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
     const parts = topic.split('/');
-    if(parts[1]==='routines'&&parts[3]==='trigger'){
-      const routineId=parts[2];if(!routineId||!this.triggerRoutine)return;
-      try{const body=parseJson(payload);const result=await this.triggerRoutine(routineId,body);this.publish(`canvas/routines/${routineId}/state`,{ok:true,result});}
-      catch(error){this.publish(`canvas/routines/${routineId}/state`,{ok:false,error:error instanceof Error?error.message:String(error)});}
-      return;
-    }
     const deviceId = parts[2];
     if (!deviceId) return;
     const stateTopic = `canvas/devices/${deviceId}/state/navigation`;

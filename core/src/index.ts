@@ -71,10 +71,6 @@ import type { LogLevel } from './logger.js';
 import { registerLogRoutes } from './log-routes.js';
 import { policyFromSettings } from './request-routing.js';
 import { confirmationDigest, mcpCallRequiresConfirmation, selectToolsForRequest } from './mcp-policy.js';
-import { registerRoutineRoutes, type RoutineEngine } from './routines.js';
-import { RoutinePlanner } from './routine-planner.js';
-import { RoutineLearningService, registerRoutineLearningRoutes } from './routine-learning.js';
-import { SkillService, registerSkillRoutes } from './skills.js';
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 
 /**
@@ -161,9 +157,6 @@ async function main(): Promise<void> {
     intelligence.intentRouter.setPolicy(policyFromSettings(settings));
   };
   await reloadRequestRoutingPolicy();
-  let routineEngine: RoutineEngine | null = null;
-  let skillService: SkillService | null = null;
-  let routineTriggerTimer: ReturnType<typeof setInterval> | null = null;
   let flowExecutor: FlowExecutor | null = null;
 
   const cacheHaEntity = async (entity: {
@@ -264,11 +257,6 @@ async function main(): Promise<void> {
 
   if (ha) {
     ha.onEntityChange((entityId, entity) => {
-      if (routineEngine) {
-        void routineEngine.invokeHaState(entityId, entity.state).catch((err) =>
-          console.warn('[core][routines] HA trigger failed:', (err as Error).message),
-        );
-      }
       void cacheHaEntity(entity).catch((err) => {
         console.warn('[core][ha] failed to persist entity cache update:', (err as Error).message);
       });
@@ -387,7 +375,6 @@ async function main(): Promise<void> {
   // Graceful shutdown: stop scheduler on SIGINT/SIGTERM.
   const shutdown = () => {
     scheduler.stop();
-    if (routineTriggerTimer) clearInterval(routineTriggerTimer);
     fastify.close().catch(() => {});
   };
   process.on('SIGINT', shutdown);
@@ -1414,27 +1401,10 @@ async function main(): Promise<void> {
     console.log(`[core][playlist] page=${pageId} slots=${validLayout.length}`);
     return { layout: validLayout, page: validLayout.length > 0 ? page : null };
   };
-  const mqttNavigation = new MqttNavigationService(pool, deliverPageToDevice, controlDeviceMedia, async (routineId,body) => {
-    if (!routineEngine) throw new Error('routine_engine_unavailable');
-    if (typeof body.actionId !== 'string' || body.actionId.trim().length === 0) throw new Error('mqtt_action_id_required');
-    if (typeof body.expiresAt !== 'string') throw new Error('mqtt_expires_at_required');
-    const expiresAt = Date.parse(body.expiresAt);
-    if (!Number.isFinite(expiresAt)) throw new Error('mqtt_expires_at_invalid');
-    if (expiresAt <= Date.now()) throw new Error('mqtt_command_expired');
-    return routineEngine.run(routineId, {
-      origin: 'mqtt',
-      originDeviceId: typeof body.deviceId === 'string' ? body.deviceId : undefined,
-      principal: 'mqtt',
-      role: 'admin',
-      idempotencyKey: `mqtt:${routineId}:${body.actionId}`,
-      inputs: typeof body.inputs === 'object' && body.inputs ? body.inputs as Record<string,unknown> : undefined,
-    });
-  });
+  const mqttNavigation = new MqttNavigationService(pool, deliverPageToDevice, controlDeviceMedia);
   await mqttNavigation.start();
   intelligence.setToolContext({
     haClient: ha,
-    invokeVoiceRoutine: (transcript, deviceId) => routineEngine?.invokeVoice(transcript,deviceId) ?? Promise.resolve({matched:false}),
-    invokeVoiceSkill: (transcript, deviceId) => skillService?.invokeVoice(transcript,deviceId) ?? Promise.resolve({matched:false}),
     resolveHaEntities: async (query) => {
       const terms = query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 3).slice(0, 8);
       if (terms.length === 0) return [];
@@ -1671,14 +1641,6 @@ async function main(): Promise<void> {
       };
     },
   });
-  const routinePlanner = new RoutinePlanner(pool, intelligence.toolRegistry, intelligence.providers.llm);
-  const routineLearning = new RoutineLearningService(pool);
-  registerRoutineLearningRoutes(fastify, routineLearning, requireAdmin);
-  intelligence.setToolContext({recordSuccessfulPlan:(transcript,calls,deviceId)=>routineLearning.record(transcript,calls,deviceId)});
-  routineEngine = await registerRoutineRoutes(fastify, pool, requireAdmin, intelligence.toolRegistry, intelligence.getToolContext(), routinePlanner);
-  skillService = new SkillService(pool, intelligence.toolRegistry, intelligence.providers.llm, () => routineEngine, () => intelligence.getToolContext());
-  skillService.registerTools();
-  registerSkillRoutes(fastify, skillService, requireAdmin);
 
   // ── Visual Automation Flows (Node-RED style) ──────────────────────────────
   const flowRepo = new FlowRepository(pool);
@@ -1714,6 +1676,15 @@ async function main(): Promise<void> {
       // Push card to display device (best-effort, device must be running display server)
       console.log(`[flows] knowledge card: ${card.title} → ${deviceId ?? 'all'}`);
     },
+    sendDeviceCommand: async (deviceId, command, payload) => {
+      const devices = deviceId
+        ? [deviceId]
+        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(r => r.device_id);
+      for (const dId of devices) {
+        await requestDeviceAction(dId, command, payload as Record<string, unknown> | undefined)
+          .catch(err => console.warn(`[flows] device command "${command}" failed for ${dId}:`, (err as Error).message));
+      }
+    },
   });
   registerFlowRoutes(fastify, flowRepo, flowExecutor, requireAdmin);
   intelligence.setToolContext({
@@ -1725,15 +1696,6 @@ async function main(): Promise<void> {
       return { matched: true, flowName: flow.name, executionId };
     },
   });
-  await routineEngine?.primeHaStates();
-  routineTriggerTimer = setInterval(() => {
-    if (routineEngine) {
-      void routineEngine.dispatchSchedules().catch((err) =>
-        console.warn('[core][routines] schedule dispatch failed:', (err as Error).message),
-      );
-    }
-  }, 30_000);
-  routineTriggerTimer.unref();
 
   await registerLegacyRoutes(fastify, {
     pool,

@@ -454,7 +454,6 @@ export function createIntelligence(
       const response = await conversationLlm().chatWithTools(messages, definitions);
       if (response.content) finalContent = response.content;
       if (response.toolCalls.length === 0) {
-        if(executedCalls.length&&!executionFailed)await toolContext.recordSuccessfulPlan?.(transcript,executedCalls,input.originDeviceId);
         // When LLM chose not to call any tools and gave a substantive reply,
         // synthesize a knowledge card so the display can show the answer.
         if (!knowledgeCard && finalContent.trim().length > 10 && executedCalls.length === 0) {
@@ -724,8 +723,6 @@ export function createIntelligence(
     }
 
     const planningStartedAt = performance.now();
-    const skillMatch = await toolContext.invokeVoiceSkill?.(transcript, input.originDeviceId);
-    const routineMatch = await toolContext.invokeVoiceRoutine?.(transcript, input.originDeviceId);
     const flowMatch = await toolContext.invokeVoiceFlow?.(transcript, input.originDeviceId);
 
     // 5) Tool execution (if intent is known and actionable)
@@ -736,21 +733,9 @@ export function createIntelligence(
     let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } | undefined;
 
     const homeAutomationIntents = new Set(['light_set', 'lock_set', 'climate_set', 'climate_query', 'device_query', 'weather_query']);
-    if (skillMatch?.matched) {
-      reply = skillMatch.reply ?? 'Skill completed.';
-      toolResult = { ok: true, message: reply, data: skillMatch.result };
-    } else if (skillMatch?.ambiguous?.length) {
-      reply = `That request matches more than one skill: ${skillMatch.ambiguous.join(', ')}. Please be more specific.`;
-      toolResult = { ok: false, message: reply };
-    } else if (flowMatch?.matched) {
+    if (flowMatch?.matched) {
       reply = `Running automation: ${flowMatch.flowName ?? 'flow'}.`;
       toolResult = { ok: true, message: reply, data: { executionId: flowMatch.executionId } };
-    } else if (routineMatch?.matched) {
-      reply = routineMatch.reply ?? 'Routine completed.';
-      toolResult = { ok: true, message: reply, data: routineMatch.result };
-    } else if (routineMatch?.ambiguous?.length) {
-      reply = `That phrase matches more than one routine: ${routineMatch.ambiguous.join(', ')}. Please be more specific.`;
-      toolResult = { ok: false, message: reply };
     } else if (intent.intent === 'time_query' || intent.intent === 'date_query') {
       reply = temporalReply(intent.intent);
       toolResult = { ok: true, message: reply };
@@ -795,7 +780,6 @@ export function createIntelligence(
           };
           toolResult = await toolRegistry.executeTool(toolName, toolParams, toolCtx);
           reply = toolResult.message;
-          if(toolResult.ok)await toolContext.recordSuccessfulPlan?.(transcript,[{tool:toolName,args:toolParams}],input.originDeviceId);
         }
       } else {
         // No matching tool — use LLM for reply

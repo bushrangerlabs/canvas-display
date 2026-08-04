@@ -435,19 +435,6 @@ export interface HaEntityCatalogueResponse {
   count: number;
 }
 
-export type RoutineOwner = 'canvas_core' | 'home_assistant' | 'hybrid' | 'clarification_required';
-export interface RoutineStep { id: string; kind: 'tool'|'condition'|'delay'|'routine'|'result'; config: Record<string, unknown>; timeoutMs?: number; onFailure?: 'stop'|'continue'; }
-export interface RoutineDefinition { schemaVersion: 1; name: string; description?: string; owner: RoutineOwner; triggers: Array<Record<string, unknown> & {type:string}>; inputs: Record<string,unknown>; steps: RoutineStep[]; result: Record<string,unknown>; limits: {timeoutMs:number;maxSteps:number;maxRoutineDepth:number}; }
-export interface RoutineRevision { id:string; routine_id:string; revision:number; definition:RoutineDefinition; status:string; creation_source:string; created_at:string; enabled_at?:string|null; }
-export interface RoutineRecord { id:string; name:string; description?:string|null; owner:RoutineOwner; status:string; active_revision_id?:string|null; active_revision?:number|null; created_at:string; updated_at:string; revisions?:RoutineRevision[]; }
-export interface RoutineExecution { id:string; routine_id:string; status:string; origin:string; origin_device_id?:string|null; principal:string; started_at:string; finished_at?:string|null; error?:string|null; result?:unknown; steps?:Array<Record<string,unknown>>; }
-export interface RoutinePlan { prompt:string; definition:RoutineDefinition|null; owner:RoutineOwner; reasons:string[]; unresolved:string[]; ambiguous:Array<{value:string;candidates:string[]}>; permissions:string[]; risk:'low'|'medium'|'elevated'; validation:{valid:boolean;errors:Array<{path:string;message:string}>}; expectedBehavior:string; haDraft:{supported:false;reason:string}|null; changes:Array<{path:string;before?:unknown;after?:unknown}>; }
-export type RoutineLearningMode='off'|'suggest'|'automatic_drafts';
-export interface LearnedRoutinePlan { signature:string; normalized_phrase:string; plan:Array<{tool:string;args:Record<string,unknown>}>; success_count:number; status:string; routine_id?:string|null; fast_path_hits:number; last_fast_path_ms?:number|null; origin_devices:string[]; first_seen_at:string; last_seen_at:string; }
-export interface SkillDefinition { schemaVersion:1;name:string;description:string;instructions:string;invocation:{phrases:string[];keywords:string[];examples:string[]};allowedTools:string[];routineId:string|null;responseStyle:string; }
-export interface SkillRevision { id:string;skill_id:string;revision:number;definition:SkillDefinition;status:string;creation_source:string;created_at:string;enabled_at?:string|null; }
-export interface SkillRecord { id:string;name:string;description?:string;status:string;active_revision?:number|null;revisions?:SkillRevision[]; }
-export interface SkillPlan { prompt:string;definition:SkillDefinition|null;validation:{valid:boolean;errors:Array<{path:string;message:string}>};risk:'normal'|'elevated';remainsDisabled:true; }
 
 // ── Visual Automation Flows ─────────────────────────────────────────────────
 
@@ -455,6 +442,7 @@ export type FlowNodeType =
   | 'trigger_voice' | 'trigger_schedule' | 'trigger_ha_state' | 'trigger_webhook' | 'trigger_manual'
   | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_delay' | 'action_http'
   | 'action_set_variable' | 'action_ai_reply' | 'action_knowledge_card'
+  | 'action_device_command' | 'action_log'
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
 
 export interface FlowNode {
@@ -511,33 +499,6 @@ export const coreApi = {
   haEntities: () => api.get<HaEntityCatalogueResponse>('/api/ha/entities'),
   refreshHaEntities: () =>
     api.post<{ ok: boolean; count: number; refreshedAt: string }>('/api/ha/entities/refresh'),
-
-  routines: () => api.get<{routines:RoutineRecord[]}>('/api/admin/routines'),
-  routine: (id:string) => api.get<{routine:RoutineRecord}>(`/api/admin/routines/${encodeURIComponent(id)}`),
-  createRoutine: (definition:RoutineDefinition) => api.post<{ok:boolean;routine:{id:string}}>('/api/admin/routines',{definition,source:'user'}),
-  reviseRoutine: (id:string,definition:RoutineDefinition) => api.post<{ok:boolean;revision:RoutineRevision}>(`/api/admin/routines/${encodeURIComponent(id)}/revisions`,{definition,source:'user'}),
-  validateRoutine: (definition:RoutineDefinition) => api.post<{valid:boolean;errors:Array<{path:string;message:string}>}>('/api/admin/routines/validate',{definition}),
-  enableRoutine: (id:string,revision?:number) => api.post<{ok:boolean;routine:RoutineRecord}>(`/api/admin/routines/${encodeURIComponent(id)}/enable`,{revision}),
-  setRoutineStatus: (id:string,action:'disable'|'archive') => api.post<{ok:boolean;routine:RoutineRecord}>(`/api/admin/routines/${encodeURIComponent(id)}/${action}`),
-  simulateRoutine: (id:string) => api.post<{ok:boolean;simulation:Record<string,unknown>}>(`/api/admin/routines/${encodeURIComponent(id)}/simulate`),
-  runRoutine: (id:string,originDeviceId?:string) => api.post<{ok:boolean;execution:RoutineExecution}>(`/api/admin/routines/${encodeURIComponent(id)}/run`,{originDeviceId,idempotencyKey:crypto.randomUUID()}),
-  routineExecutions: (id:string) => api.get<{executions:RoutineExecution[]}>(`/api/admin/routines/${encodeURIComponent(id)}/executions`),
-  confirmRoutineExecution: (id:string) => api.post<{ok:boolean;execution:RoutineExecution}>(`/api/admin/routine-executions/${encodeURIComponent(id)}/confirm`),
-  cancelRoutineExecution: (id:string) => api.post<{ok:boolean;execution:RoutineExecution}>(`/api/admin/routine-executions/${encodeURIComponent(id)}/cancel`),
-  planRoutine: (prompt:string,routineId?:string,resolutions?:Record<string,string>) => api.post<{ok:boolean;plan:RoutinePlan}>('/api/admin/routines/plan',{prompt,routineId,resolutions}),
-  createPlannedRoutineDraft: (definition:RoutineDefinition,routineId?:string) => api.post<{ok:boolean;routine:{id:string};revision?:RoutineRevision}>('/api/admin/routines/create-draft',{definition,routineId}),
-  routineLearning: () => api.get<{mode:RoutineLearningMode;plans:LearnedRoutinePlan[]}>('/api/admin/routine-learning'),
-  setRoutineLearningMode: (mode:RoutineLearningMode) => api.put<{ok:boolean;mode:RoutineLearningMode}>('/api/admin/routine-learning/mode',{mode}),
-  dismissLearnedRoutinePlan: (signature:string) => api.post<{ok:boolean}>(`/api/admin/routine-learning/${encodeURIComponent(signature)}/dismiss`),
-  createLearnedRoutineDraft: (signature:string) => api.post<{ok:boolean;routineId:string}>(`/api/admin/routine-learning/${encodeURIComponent(signature)}/create-draft`),
-  skills:()=>api.get<{skills:SkillRecord[]}>('/api/admin/skills'),
-  skill:(id:string)=>api.get<{skill:SkillRecord}>(`/api/admin/skills/${encodeURIComponent(id)}`),
-  planSkill:(prompt:string)=>api.post<{ok:boolean;plan:SkillPlan}>('/api/admin/skills/plan',{prompt}),
-  createSkill:(definition:SkillDefinition)=>api.post<{ok:boolean;skill:{id:string}}>('/api/admin/skills',{definition,source:'user'}),
-  reviseSkill:(id:string,definition:SkillDefinition)=>api.post<{ok:boolean;revision:SkillRevision}>(`/api/admin/skills/${encodeURIComponent(id)}/revisions`,{definition}),
-  enableSkill:(id:string,revision?:number)=>api.post<{ok:boolean;skill:SkillRecord}>(`/api/admin/skills/${encodeURIComponent(id)}/enable`,{revision}),
-  setSkillStatus:(id:string,action:'disable'|'archive')=>api.post<{ok:boolean;skill:SkillRecord}>(`/api/admin/skills/${encodeURIComponent(id)}/${action}`),
-  skillSuggestions:()=>api.get<{suggestions:Array<{intent:string;count:number;last_seen:string;avg_feedback:number|null}>}>('/api/skills/suggestions'),
 
   // Auth
   login: (username: string, password: string) =>

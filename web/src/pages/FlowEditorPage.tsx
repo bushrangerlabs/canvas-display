@@ -35,6 +35,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useParams } from 'react-router-dom';
 import { coreApi, type FlowDefinition, type FlowNode, type FlowRow, type FlowNodeType } from '../api/client';
 import { randomUUID } from '../utils/uuid';
@@ -164,6 +165,24 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
       { key: 'title', label: 'Title', type: 'text', placeholder: '{{topic}}' },
       { key: 'body', label: 'Body', type: 'textarea', placeholder: '{{ai_reply}}' },
       { key: 'device_id', label: 'Device ID (blank = all)', type: 'text' },
+    ],
+  },
+
+  action_device_command: {
+    label: 'Device Command', color: '#2b6cb0', textColor: '#fff',
+    group: 'Actions', icon: '📺',
+    configFields: [
+      { key: 'device_id', label: 'Device ID (blank = all)', type: 'text', placeholder: 'kitchen-display' },
+      { key: 'command', label: 'Command', type: 'select', options: ['navigate', 'overlay_show', 'overlay_hide', 'media_play', 'media_pause', 'media_stop', 'volume_set', 'reload'] },
+      { key: 'payload', label: 'Payload (JSON or text)', type: 'textarea', placeholder: '{"scene": "Movie Night"}' },
+    ],
+  },
+  action_log: {
+    label: 'Log Message', color: '#2b6cb0', textColor: '#fff',
+    group: 'Actions', icon: '📝',
+    configFields: [
+      { key: 'message', label: 'Message', type: 'textarea', placeholder: 'Debug: temperature={{temp}}' },
+      { key: 'level', label: 'Level', type: 'select', options: ['info', 'warn', 'error'] },
     ],
   },
 
@@ -365,7 +384,9 @@ export default function FlowEditorPage() {
 
   const updateSelectedConfig = (key: string, value: string) => {
     if (!selectedNode) return;
-    const updated = { ...selectedNode, config: { ...selectedNode.config, [key]: value } };
+    // Special: 'cases' is stored as a JSON array
+    const parsed: unknown = key === 'cases' ? (JSON.parse(value) as unknown) : value;
+    const updated = { ...selectedNode, config: { ...selectedNode.config, [key]: parsed } };
     setSelectedNode(updated);
     setRfNodes(ns => ns.map(n =>
       n.id === selectedNode.id
@@ -626,6 +647,57 @@ export default function FlowEditorPage() {
                     Connect the <b style={{ color: '#fc8181' }}>red</b> bottom-right handle → False path
                   </Typography>
                 </Paper>
+              )}
+
+              {selectedNode.type === 'logic_switch' && (
+                <Box>
+                  <Divider sx={{ borderColor: '#30363d', my: 1.5 }} />
+                  <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                    <Typography sx={{ fontSize: '0.75rem', color: '#8b949e', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Case values
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      sx={{ color: '#58a6ff' }}
+                      onClick={() => {
+                        const current = (selectedNode.config.cases as string[] | undefined) ?? [];
+                        updateSelectedConfig('cases', JSON.stringify([...current, '']));
+                      }}
+                    >
+                      <AddIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                  {((selectedNode.config.cases as string[] | undefined) ?? []).map((caseVal, idx) => (
+                    <Stack key={idx} direction="row" sx={{ alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                      <TextField
+                        value={caseVal}
+                        size="small"
+                        placeholder={`case ${idx + 1}`}
+                        onChange={e => {
+                          const current = [...((selectedNode.config.cases as string[] | undefined) ?? [])];
+                          current[idx] = e.target.value;
+                          updateSelectedConfig('cases', JSON.stringify(current));
+                        }}
+                        fullWidth
+                        sx={{ '& .MuiInputBase-root': { fontSize: '0.75rem' } }}
+                      />
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => {
+                          const current = [...((selectedNode.config.cases as string[] | undefined) ?? [])];
+                          current.splice(idx, 1);
+                          updateSelectedConfig('cases', JSON.stringify(current));
+                        }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                  ))}
+                  <Typography sx={{ fontSize: '0.65rem', color: '#484f58', mt: 1, lineHeight: 1.5 }}>
+                    Each case value routes to edges whose sourceHandle matches. Draw edges from this node and set their handle to the case value.
+                  </Typography>
+                </Box>
               )}
             </Box>
           ) : (

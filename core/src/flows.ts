@@ -48,6 +48,7 @@ export type NodeType =
   | 'action_ha_service' | 'action_tts' | 'action_scene'
   | 'action_delay' | 'action_http' | 'action_set_variable'
   | 'action_ai_reply' | 'action_knowledge_card'
+  | 'action_device_command' | 'action_log'
   // logic
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
 
@@ -211,6 +212,8 @@ export interface FlowExecutorDeps {
   askAi: (prompt: string) => Promise<string>;
   /** Push a knowledge card to a display device */
   pushKnowledgeCard: (card: { title: string; body: string; source_label?: string }, deviceId?: string) => Promise<void>;
+  /** Send a command to a display device (navigate, overlay, media, etc.) */
+  sendDeviceCommand?: (deviceId: string | undefined, command: string, payload?: unknown) => Promise<void>;
 }
 
 type FlowContext = Record<string, unknown>;
@@ -284,6 +287,22 @@ export class FlowExecutor {
 
       const nextHandle = await this._executeNode(node, ctx, handle);
 
+      // Handle for_each fan-out: execute child subgraph once per item
+      if (nextHandle.startsWith('for_each:')) {
+        const nodeId2 = nextHandle.slice('for_each:'.length);
+        const items = ctx[`__for_each_items__${nodeId2}`] as unknown[] ?? [];
+        const itemVar = String(ctx[`__for_each_item_var__${nodeId2}`] ?? 'item');
+        const edges = outEdges.get(nodeId) ?? [];
+        for (const item of items) {
+          const itemCtx = { ...ctx, [itemVar]: item };
+          for (const edge of edges) {
+            // Run sub-walk with item context (shallow — modifies don't propagate back)
+            await this._runSubgraph(edge.target, outEdges, def, itemCtx);
+          }
+        }
+        continue;
+      }
+
       // Enqueue children that match the output handle (or unconditional)
       const edges = outEdges.get(nodeId) ?? [];
       for (const edge of edges) {
@@ -297,6 +316,30 @@ export class FlowExecutor {
       `UPDATE flow_executions SET status='completed', finished_at=now() WHERE id=$1`,
       [execId]
     );
+  }
+
+  /** Run a sub-graph starting from a given node (used by for_each iteration) */
+  private async _runSubgraph(
+    startNodeId: string,
+    outEdges: Map<string, FlowEdge[]>,
+    def: FlowDefinition,
+    ctx: FlowContext,
+  ): Promise<void> {
+    const queue: string[] = [startNodeId];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const nodeId = queue.shift()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+      const node = def.nodes.find(n => n.id === nodeId);
+      if (!node) continue;
+      const handle = await this._executeNode(node, ctx);
+      for (const edge of outEdges.get(nodeId) ?? []) {
+        if (!edge.sourceHandle || edge.sourceHandle === handle || handle === 'any') {
+          queue.push(edge.target);
+        }
+      }
+    }
   }
 
   /** Execute one node, return the output handle name for routing ('any', 'true', 'false', branch key) */
@@ -368,6 +411,23 @@ export class FlowExecutor {
         return 'any';
       }
 
+      case 'action_device_command': {
+        const deviceId = cfg.device_id ? String(this._resolve(cfg.device_id, ctx)) : undefined;
+        const command = String(cfg.command ?? '');
+        const payload = cfg.payload ? this._resolve(cfg.payload, ctx) : undefined;
+        if (this.deps.sendDeviceCommand) {
+          await this.deps.sendDeviceCommand(deviceId, command, payload);
+        }
+        return 'any';
+      }
+
+      case 'action_log': {
+        const message = String(this._resolve(cfg.message, ctx) ?? '');
+        const level = String(cfg.level ?? 'info');
+        console.log(`[flow:log][${level}] ${message}`);
+        return 'any';
+      }
+
       case 'logic_if_else': {
         const condition = this._evalCondition(String(cfg.condition ?? ''), ctx);
         return condition ? 'true' : 'false';
@@ -378,9 +438,18 @@ export class FlowExecutor {
         return String(ctx[varName] ?? '');
       }
 
-      case 'logic_for_each':
-        // for_each is handled specially — we don't iterate here; just pass through
-        return 'any';
+      case 'logic_for_each': {
+        // Store iterator state so the walk loop can fan out
+        const arrVar = String(cfg.array_variable ?? '');
+        const itemVar = String(cfg.item_variable ?? 'item');
+        const arr = ctx[arrVar];
+        const items: unknown[] = Array.isArray(arr) ? arr : typeof arr === 'string' ? arr.split(',').map(s => s.trim()) : [];
+        // We encode iteration items into ctx so the walk loop can see them
+        ctx[`__for_each_items__${node.id}`] = items;
+        ctx[`__for_each_item_var__${node.id}`] = itemVar;
+        // Return 'any' — the walk will process children once per item via _runForEach
+        return `for_each:${node.id}`;
+      }
 
       default:
         return 'any';

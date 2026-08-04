@@ -56,10 +56,7 @@ export interface ToolContext {
     entityId: string; friendlyName?: string; domain: string; state: string;
     deviceName?: string; areaName?: string;
   }>>;
-  invokeVoiceRoutine?: (transcript: string, deviceId?: string) => Promise<{ matched: boolean; ambiguous?: string[]; reply?: string; result?: unknown }>;
-  invokeVoiceSkill?: (transcript: string, deviceId?: string) => Promise<{ matched: boolean; ambiguous?: string[]; reply?: string; result?: unknown }>;
   invokeVoiceFlow?: (transcript: string, deviceId?: string) => Promise<{ matched: boolean; flowName?: string; executionId?: string }>;
-  recordSuccessfulPlan?: (transcript:string,calls:Array<{tool:string;args:Record<string,unknown>}>,deviceId?:string)=>Promise<unknown>;
   /** Intelligence instance for media operations. */
   intelligence?: Intelligence;
   /** Device that originated the current request. Never infer this from a browser session. */
