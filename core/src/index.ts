@@ -1665,7 +1665,7 @@ async function main(): Promise<void> {
       const url = `/display/scenes/${encodeURIComponent(r.rows[0].id)}`;
       const targets = deviceId
         ? [deviceId]
-        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(row => row.device_id);
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(row => row.id);
       for (const dId of targets) {
         await requestDeviceAction(dId, 'navigate_scene', { url })
           .catch(err => console.warn(`[flows] switchScene failed for ${dId}:`, (err as Error).message));
@@ -1681,7 +1681,7 @@ async function main(): Promise<void> {
     pushKnowledgeCard: async (card, deviceId) => {
       const targets = deviceId
         ? [deviceId]
-        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(row => row.device_id);
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(row => row.id);
       for (const dId of targets) {
         await requestDeviceAction(dId, 'device_http', {
           path: '/api/knowledge-card',
@@ -1693,7 +1693,7 @@ async function main(): Promise<void> {
     sendDeviceCommand: async (deviceId, command, payload) => {
       const devices = deviceId
         ? [deviceId]
-        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(r => r.device_id);
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
       for (const dId of devices) {
         await requestDeviceAction(dId, command, payload as Record<string, unknown> | undefined)
           .catch(err => console.warn(`[flows] device command "${command}" failed for ${dId}:`, (err as Error).message));
@@ -1742,7 +1742,7 @@ async function main(): Promise<void> {
       };
       const targets = deviceId
         ? [deviceId]
-        : (await pool.query<{ device_id: string }>(`SELECT device_id FROM devices WHERE status='active'`)).rows.map(r => r.device_id);
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
       for (const dId of targets) {
         sendCommand(dId, { type: 'load_page', page_id: page.id, page_data: page });
       }
