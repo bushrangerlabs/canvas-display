@@ -17,11 +17,14 @@ function getCoreBridgeConfig(): { baseUrl: string; token: string; deviceId: stri
     const db = getDb();
     const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
     const dbToken = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_voice_token') as { value: string } | undefined)?.value ?? '';
-    const deviceId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('device_id') as { value: string } | undefined)?.value ?? '';
+    // edge_device_id is the canonical ID used by Core; fall back to device_id (MQTT nanoid)
+    const edgeDeviceId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_device_id') as { value: string } | undefined)?.value ?? '';
+    const fallbackId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('device_id') as { value: string } | undefined)?.value ?? '';
+    const deviceId = edgeDeviceId || fallbackId;
     return {
       baseUrl: (dbUrl || process.env.CANVAS_CORE_URL || '').replace(/\/+$/, ''),
       token: dbToken || process.env.CANVAS_EDGE_VOICE_TOKEN || '',
-      deviceId: (deviceId || process.env.CANVAS_EDGE_DEVICE_ID) ?? 'unknown',
+      deviceId: deviceId || process.env.CANVAS_EDGE_DEVICE_ID || 'unknown',
     };
   } catch {
     return {

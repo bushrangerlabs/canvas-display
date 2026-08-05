@@ -121,7 +121,7 @@ async function main() {
     // Start alert broadcast poller (polls Core for doorbell/admin alerts)
     startAlertBroadcastPoller(config.port);
     // Start intercom poller (polls Core for device-to-device audio messages)
-    startIntercomPoller(config.port);
+    startIntercomPoller();
   } catch (err) {
     app.log.error(err);
     process.exit(1);

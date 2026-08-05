@@ -7,6 +7,10 @@
  */
 
 import { getDb } from '../db/index.js';
+import { writeFileSync, unlinkSync } from 'fs';
+import path from 'path';
+import { buildMpvAudioArgs, ensureWav } from './audio-utils.js';
+import { spawn } from 'child_process';
 
 let pollTimer: NodeJS.Timeout | null = null;
 let destroyed = false;
@@ -16,11 +20,13 @@ function getCoreBridgeConfig(): { baseUrl: string; token: string; deviceId: stri
     const db = getDb();
     const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
     const dbToken = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_voice_token') as { value: string } | undefined)?.value ?? '';
-    const deviceId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('device_id') as { value: string } | undefined)?.value ?? '';
+    const edgeDeviceId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('edge_device_id') as { value: string } | undefined)?.value ?? '';
+    const fallbackId = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('device_id') as { value: string } | undefined)?.value ?? '';
+    const deviceId = edgeDeviceId || fallbackId;
     return {
       baseUrl: (dbUrl || process.env.CANVAS_CORE_URL || '').replace(/\/+$/, ''),
       token: dbToken || process.env.CANVAS_EDGE_VOICE_TOKEN || '',
-      deviceId: (deviceId || process.env.CANVAS_EDGE_DEVICE_ID) ?? 'unknown',
+      deviceId: deviceId || process.env.CANVAS_EDGE_DEVICE_ID || 'unknown',
     };
   } catch {
     return {
@@ -31,7 +37,7 @@ function getCoreBridgeConfig(): { baseUrl: string; token: string; deviceId: stri
   }
 }
 
-async function pollPending(localPort: number): Promise<void> {
+async function pollPending(): Promise<void> {
   const { baseUrl, token, deviceId } = getCoreBridgeConfig();
   if (!baseUrl || !token) return;
   try {
@@ -48,24 +54,35 @@ async function pollPending(localPort: number): Promise<void> {
 
     console.log(`[intercom] received audio from=${data.from ?? 'unknown'}`);
 
-    // Play audio via the local audio endpoint
-    await fetch(`http://127.0.0.1:${localPort}/api/audio/play`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audioBase64: data.audioBase64, source: 'intercom' }),
-      signal: AbortSignal.timeout(4_000),
-    });
+    // Write to temp WAV file and play via mpv (same approach as TTS broadcast)
+    const tmpFile = path.join('/tmp', `canvas-intercom-${Date.now()}.wav`);
+    const ttsRate = Number.parseInt(process.env.CANVAS_CORE_TTS_SAMPLE_RATE ?? '22050', 10);
+    const buffer = ensureWav(Buffer.from(data.audioBase64, 'base64'), Number.isFinite(ttsRate) ? ttsRate : 22_050);
+    try {
+      writeFileSync(tmpFile, buffer);
+      const volume = Number(process.env.CANVAS_TTS_VOLUME ?? process.env.TTS_VOLUME ?? 85);
+      const mpvArgs = buildMpvAudioArgs(volume, tmpFile);
+      const proc = spawn('mpv', mpvArgs, { detached: false, stdio: 'ignore' });
+      proc.on('exit', () => { try { unlinkSync(tmpFile); } catch { /* ignore */ } });
+      proc.on('error', (err) => {
+        console.error('[intercom] mpv error:', err.message);
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+      });
+    } catch (err) {
+      console.error('[intercom] failed to play audio:', (err as Error).message);
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
   } catch {
     // silently ignore — Core may not be reachable
   }
 }
 
-export function startIntercomPoller(localPort = 8099): void {
+export function startIntercomPoller(): void {
   if (pollTimer) return;
   destroyed = false;
   const interval = Number(process.env.INTERCOM_POLL_MS ?? 3_000);
   pollTimer = setInterval(() => {
-    if (!destroyed) void pollPending(localPort);
+    if (!destroyed) void pollPending();
   }, Math.max(2_000, interval));
   console.log('[intercom] poller started');
 }
