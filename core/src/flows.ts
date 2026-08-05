@@ -48,7 +48,8 @@ export type NodeType =
   // actions
   | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_switch_page'
   | 'action_delay' | 'action_http' | 'action_set_variable'
-  | 'action_ai_reply' | 'action_knowledge_card'
+  | 'action_ai_reply' | 'action_send_intent' | 'action_load_url'
+  | 'action_knowledge_card'
   | 'action_device_command' | 'action_log'
   // logic
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
@@ -213,6 +214,10 @@ export interface FlowExecutorDeps {
   switchPage: (pageName: string, deviceId?: string) => Promise<void>;
   /** Ask the AI for a plain text reply */
   askAi: (prompt: string) => Promise<string>;
+  /** Run a phrase through the full AI intent pipeline; returns intent, reply, slots */
+  runIntentPipeline: (text: string) => Promise<{ intent: string; reply: string; slots: Record<string, unknown> }>;
+  /** Navigate a display's main webview to an arbitrary URL */
+  navigateDeviceToUrl: (url: string, deviceId?: string) => Promise<void>;
   /** Push a knowledge card to a display device */
   pushKnowledgeCard: (card: { title: string; body: string; source_label?: string }, deviceId?: string) => Promise<void>;
   /** Send a command to a display device (navigate, overlay, media, etc.) */
@@ -540,6 +545,25 @@ export class FlowExecutor {
         const prompt = String(this._resolve(cfg.prompt, ctx) ?? '');
         const varName = String(cfg.result_variable ?? 'ai_reply');
         ctx[varName] = await this.deps.askAi(prompt);
+        return 'any';
+      }
+
+      case 'action_send_intent': {
+        const text = String(this._resolve(cfg.text, ctx) ?? '');
+        const result = await this.deps.runIntentPipeline(text);
+        const intentVar = String(cfg.intent_variable ?? 'intent');
+        const replyVar = String(cfg.reply_variable ?? 'reply');
+        const slotsVar = String(cfg.slots_variable ?? 'slots');
+        ctx[intentVar] = result.intent;
+        ctx[replyVar] = result.reply;
+        ctx[slotsVar] = result.slots;
+        return 'any';
+      }
+
+      case 'action_load_url': {
+        const url = String(this._resolve(cfg.url, ctx) ?? '');
+        const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
+        if (url) await this.deps.navigateDeviceToUrl(url, deviceId);
         return 'any';
       }
 

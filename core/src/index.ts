@@ -1684,6 +1684,34 @@ async function main(): Promise<void> {
       });
       return result.reply ?? '';
     },
+    runIntentPipeline: async (text) => {
+      const result = await intelligence.runIntelligentPipeline({
+        transcript: text,
+        skipTts: true,
+      });
+      // Build a simple slots map from entities + tool_call params
+      const slots: Record<string, unknown> = {};
+      for (const entity of result.intent?.entities ?? []) {
+        slots[entity.id] = entity.name;
+      }
+      for (const tc of result.intent?.tool_calls ?? []) {
+        Object.assign(slots, tc.arguments ?? {});
+      }
+      return {
+        intent: String(result.intent?.intent ?? 'unknown'),
+        reply: result.reply ?? '',
+        slots,
+      };
+    },
+    navigateDeviceToUrl: async (url, deviceId) => {
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
+      for (const dId of targets) {
+        await requestDeviceAction(dId, 'navigate_scene', { url })
+          .catch(err => console.warn(`[flows] navigateDeviceToUrl failed for ${dId}:`, (err as Error).message));
+      }
+    },
     pushKnowledgeCard: async (card, deviceId) => {
       const targets = deviceId
         ? [deviceId]

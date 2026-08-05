@@ -196,6 +196,36 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
       { key: 'result_variable', label: 'Store reply in variable', type: 'text', placeholder: 'ai_reply' },
     ],
   },
+  action_send_intent: {
+    label: 'Send to AI Intent', color: '#2b6cb0', textColor: '#fff',
+    group: 'Actions', icon: '🧠',
+    configFields: [
+      {
+        key: 'text',
+        label: 'Text / phrase',
+        type: 'textarea',
+        placeholder: 'Play {{song}} on {{room}}',
+        hint: 'Runs through the full AI pipeline — detects intent, executes any tools, returns reply',
+      },
+      { key: 'intent_variable', label: 'Store intent name in', type: 'text', placeholder: 'intent' },
+      { key: 'reply_variable', label: 'Store AI reply in', type: 'text', placeholder: 'reply' },
+      { key: 'slots_variable', label: 'Store slots in', type: 'text', placeholder: 'slots' },
+    ],
+  },
+  action_load_url: {
+    label: 'Load URL on Display', color: '#2b6cb0', textColor: '#fff',
+    group: 'Actions', icon: '🌐',
+    configFields: [
+      {
+        key: 'url',
+        label: 'URL',
+        type: 'text',
+        placeholder: 'https://example.com or {{url_variable}}',
+        hint: 'Navigates the display\'s main screen to this URL',
+      },
+      { key: 'device_id', label: 'Device (blank = all)', type: 'device_picker' },
+    ],
+  },
   action_knowledge_card: {
     label: 'Show Knowledge Card', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '📚',
