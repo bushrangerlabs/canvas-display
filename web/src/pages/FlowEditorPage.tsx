@@ -667,6 +667,9 @@ export default function FlowEditorPage() {
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             nodeTypes={NODE_TYPES}
+            deleteKeyCode={['Delete', 'Backspace']}
+            selectionKeyCode="Shift"
+            multiSelectionKeyCode="Shift"
             fitView
             colorMode="dark"
             style={{ background: '#0d1117' }}
@@ -683,7 +686,7 @@ export default function FlowEditorPage() {
             />
             <Panel position="top-center">
               <Typography sx={{ fontSize: '0.7rem', color: '#484f58' }}>
-                Click palette to add nodes · Click node to configure · Drag handles to connect
+                Click to select · Delete/Backspace to remove · Shift+drag to multi-select
               </Typography>
             </Panel>
           </ReactFlow>
