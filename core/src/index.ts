@@ -1657,7 +1657,24 @@ async function main(): Promise<void> {
       await ha.callService(domain, service, data as Record<string, unknown>);
     },
     speakTts: async (text, deviceId) => {
-      if (flowEnqueueTts) await flowEnqueueTts(text, deviceId);
+      // Directly ask each target device to speak via its own Piper TTS endpoint.
+      // Falls back to the legacy broadcast-poller path if device_http fails.
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
+      for (const dId of targets) {
+        try {
+          await requestDeviceAction(dId, 'device_http', {
+            path: '/api/voice/speak',
+            http_method: 'POST',
+            body: { text: text.trim() },
+          });
+        } catch (err) {
+          // Fallback: enqueue via broadcast-poller for devices that may not support device_http
+          console.warn(`[flows] speakTts device_http failed for ${dId}, falling back to broadcast:`, (err as Error).message);
+          if (flowEnqueueTts) await flowEnqueueTts(text, dId);
+        }
+      }
     },
     switchScene: async (sceneName, deviceId) => {
       const r = await pool.query<{ id: string }>(
