@@ -11,6 +11,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import path from 'path';
 import { getDb } from '../db/index.js';
+import { buildMpvAudioArgs } from './audio-utils.js';
 
 let pollTimer: NodeJS.Timeout | null = null;
 let broadcastProc: ChildProcess | null = null;
@@ -48,7 +49,8 @@ function playBroadcastAudio(audioBase64: string): void {
   try {
     writeFileSync(tmpFile, buffer);
     const volume = Number(process.env.CANVAS_TTS_VOLUME ?? process.env.TTS_VOLUME ?? 85);
-    const proc = spawn('mpv', ['--no-video', '--really-quiet', `--volume=${volume}`, tmpFile], {
+    const mpvArgs = buildMpvAudioArgs(volume, tmpFile);
+    const proc = spawn('mpv', mpvArgs, {
       detached: false,
       stdio: 'ignore',
     });

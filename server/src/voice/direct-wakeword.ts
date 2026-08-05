@@ -8,6 +8,7 @@ import { config } from '../config';
 import { MicCapture } from './mic';
 import { WakeWordDetector } from './wakeword-local';
 import { runVoiceTurn } from '../services/voice';
+import { buildMpvAudioArgs } from './audio-utils.js';
 import { EndOfSpeechDetector } from './end-of-speech';
 import {
   setVoiceStateListening,
@@ -177,7 +178,7 @@ function playCueSound(soundPath: string): Promise<void> {
   stopWakeAckPlayback();
   return new Promise(resolve => {
     try {
-    wakeAckProc = spawn('mpv', ['--no-video', '--really-quiet', '--volume=100', soundPath], {
+    wakeAckProc = spawn('mpv', buildMpvAudioArgs(100, soundPath), {
       stdio: 'ignore',
       detached: false,
     });
@@ -278,7 +279,7 @@ function playTtsAudioBuffer(audio: Buffer): Promise<void> {
 
     try {
       writeFileSync(tmpFile, audio);
-      ttsProc = spawn('mpv', ['--no-video', '--really-quiet', `--volume=${volume}`, tmpFile], {
+      ttsProc = spawn('mpv', buildMpvAudioArgs(volume, tmpFile), {
         stdio: 'ignore',
         detached: false,
       });
