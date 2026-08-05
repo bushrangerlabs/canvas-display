@@ -467,6 +467,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
               '/api/audio/test-cue',
               '/api/settings/voice/cue-upload',
               '/api/voice/wakeword-test',
+              '/api/voice/speak',
               '/api/media/play',
               '/api/media/control',
               '/api/knowledge-card',
