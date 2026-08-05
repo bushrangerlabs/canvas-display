@@ -5,7 +5,6 @@ import { getDb } from '../db/index.js';
 
 /**
  * Returns the configured speaker device name, or 'default' if not set.
- * Maps bare sink names to pulse/<sink> format for mpv.
  */
 export function getSpeakerDevice(): string {
   try {
@@ -35,4 +34,30 @@ export function buildMpvAudioArgs(volume: number, filePath: string, speakerDevic
   if (audioDevice) args.push(`--audio-device=${audioDevice}`);
   args.push(filePath);
   return args;
+}
+
+/**
+ * Wrap raw s16le mono PCM in a RIFF/WAV container.
+ * Core's Piper TTS provider returns raw PCM; the broadcast poller must add
+ * the WAV header before passing the buffer to mpv.
+ * If the buffer already has a RIFF header it is returned unchanged.
+ */
+export function ensureWav(pcm: Buffer, sampleRate = 22_050, channels = 1): Buffer {
+  if (pcm.length >= 4 && pcm.slice(0, 4).toString('ascii') === 'RIFF') return pcm;
+  const header = Buffer.alloc(44);
+  const byteRate = sampleRate * channels * 2;
+  header.write('RIFF', 0, 'ascii');
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8, 'ascii');
+  header.write('fmt ', 12, 'ascii');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'ascii');
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }

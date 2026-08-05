@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { writeFileSync, unlinkSync } from 'fs';
 import path from 'path';
 import { getDb } from '../db/index.js';
-import { buildMpvAudioArgs } from './audio-utils.js';
+import { buildMpvAudioArgs, ensureWav } from './audio-utils.js';
 
 let pollTimer: NodeJS.Timeout | null = null;
 let broadcastProc: ChildProcess | null = null;
@@ -45,7 +45,9 @@ function playBroadcastAudio(audioBase64: string): void {
     broadcastProc = null;
   }
   const tmpFile = path.join('/tmp', `canvas-broadcast-tts-${Date.now()}.wav`);
-  const buffer = Buffer.from(audioBase64, 'base64');
+  // Core's Piper TTS returns raw s16le PCM — wrap in WAV header so mpv can play it
+  const ttsRate = Number.parseInt(process.env.CANVAS_CORE_TTS_SAMPLE_RATE ?? '22050', 10);
+  const buffer = ensureWav(Buffer.from(audioBase64, 'base64'), Number.isFinite(ttsRate) ? ttsRate : 22_050);
   try {
     writeFileSync(tmpFile, buffer);
     const volume = Number(process.env.CANVAS_TTS_VOLUME ?? process.env.TTS_VOLUME ?? 85);
