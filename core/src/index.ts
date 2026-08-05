@@ -837,16 +837,21 @@ async function main(): Promise<void> {
   // Exposed to the flow executor via closure.
   let flowEnqueueTts: ((text: string, deviceId?: string) => Promise<void>) | null = null;
   {
-    const pendingTts = new Map<string, { audioBase64: string; text: string; timestamp: string }>();
+    const pendingTts = new Map<string, { audioBase64?: string; text: string; timestamp: string }>();
     const ALL_DEVICES = '__all__';
 
     // Expose TTS queue to flow executor
     flowEnqueueTts = async (text: string, deviceId?: string) => {
       const speech = intelligence.providers.tts;
-      if (!speech) return;
-      const audio = await speech.synthesize(text.trim());
       const key = deviceId ?? ALL_DEVICES;
-      pendingTts.set(key, { audioBase64: audio.toString('base64'), text: text.trim(), timestamp: new Date().toISOString() });
+      if (speech) {
+        // Core has a TTS provider — synthesize and queue audio
+        const audio = await speech.synthesize(text.trim());
+        pendingTts.set(key, { audioBase64: audio.toString('base64'), text: text.trim(), timestamp: new Date().toISOString() });
+      } else {
+        // No Core TTS — queue text only; the sidecar will synthesize locally via Piper
+        pendingTts.set(key, { text: text.trim(), timestamp: new Date().toISOString() });
+      }
     };
 
     fastify.post<{ Body: { text?: string; deviceIds?: string[] } }>(

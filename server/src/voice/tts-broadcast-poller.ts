@@ -65,6 +65,16 @@ function playBroadcastAudio(audioBase64: string): void {
   }
 }
 
+function getPiperUrl(): string {
+  try {
+    const db = getDb();
+    const val = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('piper_url') as { value: string } | undefined)?.value;
+    return (val || process.env.PIPER_URL || 'http://127.0.0.1:10200/speak').replace(/\/$/, '');
+  } catch {
+    return (process.env.PIPER_URL || 'http://127.0.0.1:10200/speak').replace(/\/$/, '');
+  }
+}
+
 async function pollPending(): Promise<void> {
   const { baseUrl, token, deviceId } = getCoreBridgeConfig();
   if (!baseUrl || !token) return;
@@ -75,9 +85,32 @@ async function pollPending(): Promise<void> {
     });
     if (!res.ok) return;
     const data = await res.json() as { empty?: boolean; audioBase64?: string; text?: string };
-    if (data.empty || !data.audioBase64) return;
+    if (data.empty || !data.text) return;
     console.log(`[tts-broadcast] playing queued TTS: "${(data.text ?? '').slice(0, 60)}"`);
-    playBroadcastAudio(data.audioBase64);
+
+    if (data.audioBase64) {
+      // Core pre-synthesised audio — play directly
+      playBroadcastAudio(data.audioBase64);
+    } else {
+      // Core queued text only — synthesise locally with Piper
+      try {
+        const piperUrl = getPiperUrl();
+        const piperRes = await fetch(piperUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: data.text }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!piperRes.ok) {
+          console.error(`[tts-broadcast] Piper synthesis failed: ${piperRes.status}`);
+          return;
+        }
+        const audioBuf = Buffer.from(await piperRes.arrayBuffer());
+        playBroadcastAudio(audioBuf.toString('base64'));
+      } catch (err) {
+        console.error('[tts-broadcast] local Piper synthesis error:', (err as Error).message);
+      }
+    }
   } catch {
     // silently ignore — Core may not be reachable
   }
