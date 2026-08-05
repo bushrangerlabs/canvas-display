@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
+const nanoid = (n: number) => randomBytes(Math.ceil(n * 3 / 4)).toString('base64url').slice(0, n);
 import { getDb } from '../db/index';
 import { broadcast } from '../ws/index';
 import { guardAdmin } from './admin-gate';

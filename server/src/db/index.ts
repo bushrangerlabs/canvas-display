@@ -247,14 +247,16 @@ const migrations: Array<{
     version: 6,
     name: 'active_page_id and device_id settings',
     up: (db) => {
-      const { nanoid } = require('nanoid') as typeof import('nanoid');
+      // Use Node crypto instead of nanoid (ESM-only, incompatible with pkg)
+      const { randomBytes } = require('crypto') as typeof import('crypto');
+      const nanoid12 = randomBytes(9).toString('base64url').slice(0, 12);
       const insert = db.prepare(`
         INSERT OR IGNORE INTO server_settings (key, value, updated_at)
         VALUES (?, ?, datetime('now'))
       `);
       insert.run('active_page_id', '');
       // Stable UUID used for MQTT topic: canvas_ui/{device_id}/...
-      insert.run('device_id', nanoid(12));
+      insert.run('device_id', nanoid12);
     },
   },
 ];
