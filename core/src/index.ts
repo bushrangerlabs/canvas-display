@@ -63,7 +63,7 @@ import { ShadowModeRunner } from './shadow-mode.js';
 import { RolloutStrategy, InMemoryRolloutRepository, registerRolloutRoutes } from './rollout-strategy.js';
 import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
-import { registerLegacyRoutes, requestDeviceAction, sendCommand } from './legacy-routes.js';
+import { registerLegacyRoutes, requestDeviceAction, sendCommand, getDeviceIp } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
@@ -1658,11 +1658,26 @@ async function main(): Promise<void> {
     },
     speakTts: async (text, deviceId) => {
       // Directly ask each target device to speak via its own Piper TTS endpoint.
-      // Falls back to the legacy broadcast-poller path if device_http fails.
       const targets = deviceId
         ? [deviceId]
         : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
       for (const dId of targets) {
+        // Try 1: call the sidecar REST API directly if we know the device IP
+        const ip = getDeviceIp(dId)?.replace(/^::ffff:/, '');
+        if (ip) {
+          try {
+            const res = await fetch(`http://${ip}:3100/api/voice/speak`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: text.trim() }),
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (res.ok) continue;
+          } catch (err) {
+            console.warn(`[flows] speakTts direct call failed for ${dId} (${ip}):`, (err as Error).message);
+          }
+        }
+        // Try 2: relay through kiosk device_http (requires kiosk v0.2.51+)
         try {
           await requestDeviceAction(dId, 'device_http', {
             path: '/api/voice/speak',
@@ -1670,8 +1685,8 @@ async function main(): Promise<void> {
             body: { text: text.trim() },
           });
         } catch (err) {
-          // Fallback: enqueue via broadcast-poller for devices that may not support device_http
-          console.warn(`[flows] speakTts device_http failed for ${dId}, falling back to broadcast:`, (err as Error).message);
+          // Try 3: broadcast-poller fallback
+          console.warn(`[flows] speakTts device_http failed for ${dId}, using broadcast fallback:`, (err as Error).message);
           if (flowEnqueueTts) await flowEnqueueTts(text, dId);
         }
       }

@@ -82,6 +82,7 @@ interface ConnectedClient {
   ws: WebSocket;
   clientType: ClientType;
   deviceId?: string;
+  remoteAddress?: string;
   connectedAt: Date;
 }
 
@@ -241,6 +242,16 @@ export function getConnectedDeviceIds(): string[] {
     if (client.clientType === 'browser' && client.deviceId) ids.push(client.deviceId);
   }
   return ids;
+}
+
+/** Get the remote IP address of a connected browser device. */
+export function getDeviceIp(deviceId: string): string | undefined {
+  for (const client of clients.values()) {
+    if (client.clientType === 'browser' && client.deviceId === deviceId) {
+      return client.remoteAddress;
+    }
+  }
+  return undefined;
 }
 
 // ─── Repository helpers ──────────────────────────────────────────────────────
@@ -1386,6 +1397,7 @@ function registerLegacyWebSocket(fastify: FastifyInstance, pool: Pool): void {
       ws,
       clientType: role,
       deviceId,
+      remoteAddress: req.socket?.remoteAddress,
       connectedAt: new Date(),
     };
     clients.set(ws, client);
