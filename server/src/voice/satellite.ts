@@ -272,7 +272,7 @@ def _load_wake_model(name: str):
         raw_path = _find_oww_model(name)
         if raw_path:
             try:
-                model = _OWWRawModel(wakeword_models=[raw_path], inference_framework="tflite")
+                model = _OWWRawModel(wakeword_model_paths=[raw_path])
                 _LOGGER.info("Loaded raw OWW model: %s", os.path.basename(raw_path))
                 return ("oww_raw", model, None)
             except Exception as e:
