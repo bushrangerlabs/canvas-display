@@ -93,7 +93,8 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     group: 'Triggers', icon: '🏠',
     configFields: [
       { key: 'entity_id', label: 'Entity', type: 'entity_picker', placeholder: 'binary_sensor.motion' },
-      { key: 'to_state', label: 'New state (optional)', type: 'text', placeholder: 'on' },
+      { key: 'to_state', label: 'To state (blank = any)', type: 'text', placeholder: 'on' },
+      { key: 'from_state', label: 'From state (optional)', type: 'text', placeholder: 'off' },
     ],
   },
   trigger_webhook: {
@@ -173,8 +174,10 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     group: 'Actions', icon: '🌐',
     configFields: [
       { key: 'url', label: 'URL', type: 'text', placeholder: 'https://example.com/api' },
-      { key: 'method', label: 'Method', type: 'select', options: ['GET', 'POST', 'PUT', 'DELETE'] },
+      { key: 'method', label: 'Method', type: 'select', options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
       { key: 'body', label: 'Body (JSON)', type: 'textarea', placeholder: '{"key": "{{value}}"}' },
+      { key: 'headers', label: 'Headers (JSON)', type: 'textarea', placeholder: '{"Authorization": "Bearer {{token}}"}' },
+      { key: 'result_variable', label: 'Store response in variable', type: 'text', placeholder: 'response' },
     ],
   },
   action_set_variable: {
@@ -199,6 +202,7 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     configFields: [
       { key: 'title', label: 'Title', type: 'text', placeholder: '{{topic}}' },
       { key: 'body', label: 'Body', type: 'textarea', placeholder: '{{ai_reply}}' },
+      { key: 'source_label', label: 'Source label', type: 'text', placeholder: 'My Flow' },
       { key: 'device_id', label: 'Device (blank = all)', type: 'device_picker' },
     ],
   },
@@ -257,6 +261,8 @@ function FlowNodeComponent({ data, selected }: { data: { flowNode: FlowNode }; s
   const meta = NODE_CATALOG[fn.type];
   const isTrigger = fn.type.startsWith('trigger_');
   const isIfElse = fn.type === 'logic_if_else';
+  const isSwitch = fn.type === 'logic_switch';
+  const switchCases: string[] = isSwitch ? ((fn.config.cases as string[] | undefined) ?? []) : [];
 
   return (
     <Box
@@ -299,10 +305,33 @@ function FlowNodeComponent({ data, selected }: { data: { flowNode: FlowNode }; s
       {/* Output handles */}
       {isIfElse ? (
         <>
-          <Handle type="source" id="true" position={Position.Bottom} style={{ background: '#48bb78', left: '30%', width: 10, height: 10 }}>
-          </Handle>
-          <Handle type="source" id="false" position={Position.Bottom} style={{ background: '#fc8181', left: '70%', width: 10, height: 10 }}>
-          </Handle>
+          <Handle type="source" id="true" position={Position.Bottom} style={{ background: '#48bb78', left: '30%', width: 10, height: 10 }} />
+          <Handle type="source" id="false" position={Position.Bottom} style={{ background: '#fc8181', left: '70%', width: 10, height: 10 }} />
+        </>
+      ) : isSwitch && switchCases.length > 0 ? (
+        // Per-case handles, evenly spaced
+        <>
+          {switchCases.map((caseVal, idx) => {
+            const pct = ((idx + 1) / (switchCases.length + 1)) * 100;
+            return (
+              <Handle
+                key={caseVal}
+                type="source"
+                id={caseVal}
+                position={Position.Bottom}
+                style={{ background: '#ed8936', left: `${pct}%`, width: 10, height: 10 }}
+                title={caseVal}
+              />
+            );
+          })}
+          {/* Default handle */}
+          <Handle
+            type="source"
+            id="__default__"
+            position={Position.Bottom}
+            style={{ background: '#718096', left: '50%', bottom: -18, width: 10, height: 10 }}
+            title="default"
+          />
         </>
       ) : (
         <Handle type="source" position={Position.Bottom} style={{ background: '#718096', width: 10, height: 10 }} />
@@ -978,7 +1007,7 @@ export default function FlowEditorPage() {
                     </Stack>
                   ))}
                   <Typography sx={{ fontSize: '0.65rem', color: '#484f58', mt: 1, lineHeight: 1.5 }}>
-                    Each case value routes to edges whose sourceHandle matches. Draw edges from this node and set their handle to the case value.
+                    Each case value creates an output handle (orange). Connect edges from those handles to route to specific paths. The grey "default" handle fires when no case matches.
                   </Typography>
                 </Box>
               )}

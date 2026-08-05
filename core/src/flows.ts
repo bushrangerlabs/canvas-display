@@ -35,6 +35,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { FastifyInstance } from 'fastify';
+import cron, { type ScheduledTask } from 'node-cron';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -221,7 +222,81 @@ export interface FlowExecutorDeps {
 type FlowContext = Record<string, unknown>;
 
 export class FlowExecutor {
+  private scheduledTasks = new Map<string, ScheduledTask>(); // key: `${flowId}:${nodeId}`
+
   constructor(private repo: FlowRepository, private deps: FlowExecutorDeps) {}
+
+  /** Start cron scheduler — loads all enabled flows with trigger_schedule nodes. */
+  async startScheduler(): Promise<void> {
+    const flows = await this.repo.listEnabled();
+    for (const flow of flows) {
+      for (const node of flow.definition.nodes) {
+        if (node.type !== 'trigger_schedule') continue;
+        this._scheduleFlow(flow.id, node.id, String(node.config.cron ?? ''));
+      }
+    }
+    console.log(`[flows] scheduler started — ${this.scheduledTasks.size} scheduled task(s)`);
+  }
+
+  /** Re-register schedules for a specific flow (call after flow save/enable/disable). */
+  async refreshFlowSchedule(flowId: string): Promise<void> {
+    // Remove existing tasks for this flow
+    for (const [key, task] of this.scheduledTasks) {
+      if (key.startsWith(`${flowId}:`)) {
+        task.stop();
+        this.scheduledTasks.delete(key);
+      }
+    }
+    // Re-add if still enabled
+    const flow = await this.repo.get(flowId);
+    if (!flow?.enabled) return;
+    for (const node of flow.definition.nodes) {
+      if (node.type !== 'trigger_schedule') continue;
+      this._scheduleFlow(flowId, node.id, String(node.config.cron ?? ''));
+    }
+  }
+
+  private _scheduleFlow(flowId: string, nodeId: string, expression: string): void {
+    if (!expression || !cron.validate(expression)) {
+      console.warn(`[flows] invalid cron "${expression}" for flow ${flowId}`);
+      return;
+    }
+    const key = `${flowId}:${nodeId}`;
+    const task = cron.schedule(expression, () => {
+      this.execute(flowId, { trigger: 'schedule', expression }).catch(err =>
+        console.error(`[flows] scheduled flow ${flowId} error:`, err)
+      );
+    });
+    this.scheduledTasks.set(key, task);
+  }
+
+  private _prevHaState = new Map<string, string>();
+
+  /** Called by index.ts when an HA entity changes state. Fires matching flows. */
+  async onHaEntityChange(entityId: string, newState: string): Promise<void> {
+    const prevState = this._prevHaState.get(entityId);
+    this._prevHaState.set(entityId, newState);
+    const flows = await this.repo.listEnabled();
+    for (const flow of flows) {
+      for (const node of flow.definition.nodes) {
+        if (node.type !== 'trigger_ha_state') continue;
+        const watchEntity = String(node.config.entity_id ?? '').toLowerCase();
+        const watchToState = String(node.config.to_state ?? '').trim();
+        const watchFromState = String(node.config.from_state ?? '').trim();
+        if (!watchEntity || watchEntity !== entityId.toLowerCase()) continue;
+        if (watchToState && watchToState !== newState) continue;
+        if (watchFromState && watchFromState !== (prevState ?? '')) continue;
+        // Match — fire the flow
+        this.execute(flow.id, {
+          trigger: 'ha_state',
+          entity_id: entityId,
+          new_state: newState,
+          old_state: prevState ?? '',
+        }).catch(err => console.error(`[flows] ha_state flow ${flow.id} error:`, err));
+        break;
+      }
+    }
+  }
 
   /** Find flows whose voice trigger matches the transcript. Returns first match. */
   async matchVoiceTrigger(transcript: string): Promise<FlowRow | null> {
@@ -440,7 +515,18 @@ export class FlowExecutor {
         const url = String(this._resolve(cfg.url, ctx) ?? '');
         const method = String(cfg.method ?? 'GET').toUpperCase();
         const body = cfg.body ? JSON.stringify(this._resolve(cfg.body, ctx)) : undefined;
-        await fetch(url, { method, body, headers: { 'Content-Type': 'application/json' } });
+        const varName = cfg.result_variable ? String(cfg.result_variable) : null;
+        const headersRaw = cfg.headers ? this._resolve(cfg.headers, ctx) : undefined;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (headersRaw && typeof headersRaw === 'object') {
+          Object.assign(headers, headersRaw);
+        }
+        const res = await fetch(url, { method, body, headers });
+        const text = await res.text();
+        if (varName) {
+          try { ctx[varName] = JSON.parse(text); } catch { ctx[varName] = text; }
+        }
+        if (!res.ok) console.warn(`[flows] action_http ${method} ${url} → ${res.status}`);
         return 'any';
       }
 
@@ -460,8 +546,9 @@ export class FlowExecutor {
       case 'action_knowledge_card': {
         const title = String(this._resolve(cfg.title, ctx) ?? '');
         const body = String(this._resolve(cfg.body, ctx) ?? '');
+        const source_label = cfg.source_label ? String(this._resolve(cfg.source_label, ctx)) : 'Flow';
         const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
-        await this.deps.pushKnowledgeCard({ title, body, source_label: 'Flow' }, deviceId);
+        await this.deps.pushKnowledgeCard({ title, body, source_label }, deviceId);
         return 'any';
       }
 
@@ -489,7 +576,10 @@ export class FlowExecutor {
 
       case 'logic_switch': {
         const varName = String(cfg.variable ?? '');
-        return String(ctx[varName] ?? '');
+        const value = String(ctx[varName] ?? '');
+        const cases: string[] = Array.isArray(cfg.cases) ? (cfg.cases as string[]) : [];
+        // Return the value if it matches a defined case, otherwise __default__
+        return cases.includes(value) ? value : '__default__';
       }
 
       case 'logic_for_each': {
@@ -581,6 +671,7 @@ export function registerFlowRoutes(
       if (!def?.name) return reply.code(400).send({ error: 'invalid_definition' });
       const flow = await repo.update(req.params.id, { ...def, schemaVersion: 1 });
       if (!flow) return reply.code(404).send({ error: 'not_found' });
+      void executor.refreshFlowSchedule(req.params.id);
       return flow;
     }
   );
@@ -588,12 +679,14 @@ export function registerFlowRoutes(
   fastify.patch<{ Params: { id: string }; Body: { enabled: boolean } }>(
     '/api/flows/:id/enabled', authWrite, async (req, reply) => {
       await repo.setEnabled(req.params.id, Boolean(req.body?.enabled));
+      void executor.refreshFlowSchedule(req.params.id);
       return { ok: true };
     }
   );
 
   fastify.delete<{ Params: { id: string } }>(
     '/api/flows/:id', authWrite, async (req, reply) => {
+      void executor.refreshFlowSchedule(req.params.id); // stop any scheduled tasks
       await repo.delete(req.params.id);
       return { ok: true };
     }

@@ -260,6 +260,12 @@ async function main(): Promise<void> {
       void cacheHaEntity(entity).catch((err) => {
         console.warn('[core][ha] failed to persist entity cache update:', (err as Error).message);
       });
+      // Fire any trigger_ha_state flows that match this entity+state
+      if (flowExecutor) {
+        void flowExecutor.onHaEntityChange(entityId, String(entity.state ?? '')).catch(err =>
+          console.warn('[core][ha] ha_state flow trigger error:', (err as Error).message)
+        );
+      }
     });
     // WebSocket pushes handle normal changes; this periodic full pass catches
     // removals and anything missed during reconnects.
@@ -1749,6 +1755,10 @@ async function main(): Promise<void> {
     },
   });
   registerFlowRoutes(fastify, flowRepo, flowExecutor, requireAdmin);
+  // Start cron scheduler for trigger_schedule nodes
+  void flowExecutor.startScheduler().catch(err =>
+    console.warn('[flows] scheduler startup error:', (err as Error).message)
+  );
   intelligence.setToolContext({
     invokeVoiceFlow: async (transcript, deviceId) => {
       if (!flowExecutor) return { matched: false };
