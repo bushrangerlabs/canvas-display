@@ -38,6 +38,7 @@ const SETTING_DEFAULTS: Record<string, string> = {
   server_port:          '3100',
   canvas_core_url:      process.env.CANVAS_CORE_URL ?? '',
   edge_voice_token:     process.env.CANVAS_EDGE_VOICE_TOKEN ?? '',
+  edge_device_id:       process.env.CANVAS_EDGE_DEVICE_ID ?? '',
   mqtt_enabled:         '0',
   mqtt_broker_url:      'mqtt://localhost:1883',
   mqtt_username:        '',
