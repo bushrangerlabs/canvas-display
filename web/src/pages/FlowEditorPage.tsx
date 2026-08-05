@@ -237,6 +237,25 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     ],
   },
 
+  action_broadcast_alert: {
+    label: 'Broadcast Alert', color: '#c05621', textColor: '#fff',
+    group: 'Actions', icon: '🚨',
+    configFields: [
+      { key: 'title', label: 'Title', type: 'text', placeholder: 'Alert' },
+      { key: 'message', label: 'Message', type: 'textarea', placeholder: 'Something happened! {{detail}}' },
+      { key: 'type', label: 'Type', type: 'select', options: ['info', 'warning', 'error', 'success'] },
+    ],
+  },
+
+  action_broadcast_intercom: {
+    label: 'Broadcast Intercom', color: '#c05621', textColor: '#fff',
+    group: 'Actions', icon: '📢',
+    configFields: [
+      { key: 'text', label: 'Text to speak', type: 'textarea', placeholder: 'Attention: {{message}}' },
+      { key: 'from', label: 'From (label)', type: 'text', placeholder: 'system' },
+    ],
+  },
+
   action_device_command: {
     label: 'Device Command', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '📺',

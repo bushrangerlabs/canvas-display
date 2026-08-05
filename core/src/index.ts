@@ -836,6 +836,8 @@ async function main(): Promise<void> {
   // GET /api/edge/tts/pending to pick up and play queued audio.
   // Exposed to the flow executor via closure.
   let flowEnqueueTts: ((text: string, deviceId?: string) => Promise<void>) | null = null;
+  let flowBroadcastAlert: ((title: string, message: string, type?: string, deviceIds?: string[]) => void) | null = null;
+  let flowBroadcastIntercom: ((text: string, from?: string, deviceIds?: string[]) => Promise<void>) | null = null;
   {
     const pendingTts = new Map<string, { audioBase64?: string; text: string; timestamp: string }>();
     const ALL_DEVICES = '__all__';
@@ -956,6 +958,14 @@ async function main(): Promise<void> {
     const pendingAlerts = new Map<string, PendingAlert>();
     const ALL_ALERT_DEVICES = '__all__';
 
+    flowBroadcastAlert = (title, message, type = 'info', deviceIds) => {
+      const timestamp = new Date().toISOString();
+      const alert: PendingAlert = { title, message, type, timestamp };
+      const targets = deviceIds?.length ? deviceIds : [ALL_ALERT_DEVICES];
+      for (const id of targets) pendingAlerts.set(id, alert);
+      console.log(`[core][alert-broadcast] flow queued "${message.slice(0, 60)}" for ${targets.join(',')}`);
+    };
+
     fastify.post<{ Body: { title?: string; message?: string; type?: string; camera_entity?: string; deviceIds?: string[] } }>(
       '/api/edge/alert/broadcast',
       async (request, reply) => {
@@ -1046,6 +1056,18 @@ async function main(): Promise<void> {
     type PendingIntercom = { audioBase64: string; from: string; timestamp: string };
     const pendingIntercom = new Map<string, PendingIntercom>();
     const ALL_INTERCOM = '__all__';
+
+    flowBroadcastIntercom = async (text, from = 'system', targetDeviceIds) => {
+      const speech = intelligence.providers.tts;
+      if (!speech) { console.warn('[core][intercom] TTS not configured for flow broadcast'); return; }
+      const buf = await speech.synthesize(text);
+      const audio = buf.toString('base64');
+      const timestamp = new Date().toISOString();
+      const entry: PendingIntercom = { audioBase64: audio, from, timestamp };
+      const targets = targetDeviceIds?.length ? targetDeviceIds : [ALL_INTERCOM];
+      for (const id of targets) pendingIntercom.set(id, entry);
+      console.log(`[core][intercom] flow queued from=${from} targets=${targets.join(',')}`);
+    };
 
     fastify.post<{ Body: { audioBase64?: string; text?: string; from?: string; targetDeviceIds?: string[] } }>(
       '/api/edge/intercom/broadcast',
@@ -1769,6 +1791,12 @@ async function main(): Promise<void> {
         await requestDeviceAction(dId, command, payload as Record<string, unknown> | undefined)
           .catch(err => console.warn(`[flows] device command "${command}" failed for ${dId}:`, (err as Error).message));
       }
+    },
+    broadcastAlert: async (title, message, type = 'info', deviceIds) => {
+      if (flowBroadcastAlert) flowBroadcastAlert(title, message, type, deviceIds);
+    },
+    broadcastIntercom: async (text, from = 'system', deviceIds) => {
+      if (flowBroadcastIntercom) await flowBroadcastIntercom(text, from, deviceIds);
     },
     switchPage: async (pageName, deviceId) => {
       // Resolve page by name or ID

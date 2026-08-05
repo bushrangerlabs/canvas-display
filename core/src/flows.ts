@@ -49,7 +49,7 @@ export type NodeType =
   | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_switch_page'
   | 'action_delay' | 'action_http' | 'action_set_variable'
   | 'action_ai_reply' | 'action_send_intent' | 'action_load_url'
-  | 'action_knowledge_card'
+  | 'action_knowledge_card' | 'action_broadcast_alert' | 'action_broadcast_intercom'
   | 'action_device_command' | 'action_log'
   // logic
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
@@ -220,6 +220,10 @@ export interface FlowExecutorDeps {
   navigateDeviceToUrl: (url: string, deviceId?: string) => Promise<void>;
   /** Push a knowledge card to a display device */
   pushKnowledgeCard: (card: { title: string; body: string; source_label?: string }, deviceId?: string) => Promise<void>;
+  /** Broadcast an alert notification to devices */
+  broadcastAlert?: (title: string, message: string, type?: string, deviceIds?: string[]) => Promise<void>;
+  /** Broadcast audio (via intercom) to devices */
+  broadcastIntercom?: (text: string, from?: string, deviceIds?: string[]) => Promise<void>;
   /** Send a command to a display device (navigate, overlay, media, etc.) */
   sendDeviceCommand?: (deviceId: string | undefined, command: string, payload?: unknown) => Promise<void>;
 }
@@ -493,6 +497,23 @@ export class FlowExecutor {
         const text = String(this._resolve(cfg.text, ctx) ?? '');
         const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
         await this.deps.speakTts(text, deviceId);
+        return 'any';
+      }
+
+      case 'action_broadcast_alert': {
+        const title = String(this._resolve(cfg.title, ctx) ?? 'Alert');
+        const message = String(this._resolve(cfg.message, ctx) ?? '');
+        const type = String(cfg.type ?? 'info');
+        const deviceIds = Array.isArray(cfg.device_ids) ? cfg.device_ids.map(String) : undefined;
+        if (this.deps.broadcastAlert) await this.deps.broadcastAlert(title, message, type, deviceIds);
+        return 'any';
+      }
+
+      case 'action_broadcast_intercom': {
+        const text = String(this._resolve(cfg.text, ctx) ?? '');
+        const from = String(cfg.from ?? 'system');
+        const deviceIds = Array.isArray(cfg.device_ids) ? cfg.device_ids.map(String) : undefined;
+        if (this.deps.broadcastIntercom) await this.deps.broadcastIntercom(text, from, deviceIds);
         return 'any';
       }
 
