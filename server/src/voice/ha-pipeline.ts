@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import { spawn } from 'child_process';
 import { MicCapture } from './mic.js';
 import { WakeWordDetector } from './wakeword-local.js';
+import { startBroadcast, isBroadcasting } from './broadcast-recorder.js';
 
 export interface HAPipelineSettings {
   haUrl: string;
@@ -294,9 +295,24 @@ export class HAPipeline extends EventEmitter {
         console.log('[voice] Speech ended');
         break;
 
-      case 'stt-end':
+      case 'stt-end': {
+        const transcript: string = (data?.stt_output?.text ?? '').trim().toLowerCase();
         console.log('[voice] Transcript:', data?.stt_output?.text ?? '(empty)');
+        // Intercept "broadcast" — stop the pipeline and start a mic broadcast recording
+        if (transcript === 'broadcast' || transcript.startsWith('broadcast ')) {
+          console.log('[voice] Broadcast command detected — starting intercom recording');
+          this.startWakeWordPhase();
+          if (!isBroadcasting()) {
+            // Brief pause so the wake-word beep / TTS finishes before we record
+            setTimeout(() => {
+              startBroadcast(8_000).catch((err: Error) =>
+                console.error('[voice][broadcast] recording error:', err.message)
+              );
+            }, 800);
+          }
+        }
         break;
+      }
 
       case 'intent-end':
         console.log('[voice] Intent:', data?.intent_output?.response?.speech?.plain?.speech ?? '(no speech)');

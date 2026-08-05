@@ -3,6 +3,7 @@ import { getVoiceEndpoints, runVoiceTurn, speakWithPiper, transcribeWithWhisper 
 import { probeHermesConnection } from '../services/hermes';
 import { getDirectWakewordState } from '../voice/direct-wakeword';
 import { testMicCapture } from '../voice/mic';
+import { startBroadcast, stopBroadcast, getBroadcastState } from '../voice/broadcast-recorder';
 
 export async function voiceRoutes(app: FastifyInstance) {
   app.get('/voice/status', async () => {
@@ -131,5 +132,43 @@ export async function voiceRoutes(app: FastifyInstance) {
     });
 
     return { ok: true, ...result };
+  });
+
+  // ── Broadcast (real mic audio → Core → all devices) ──────────────────────
+
+  /** GET /api/voice/broadcast/status */
+  app.get('/voice/broadcast/status', async () => {
+    return { state: getBroadcastState() };
+  });
+
+  /**
+   * POST /api/voice/broadcast
+   * Body: { duration?: number (seconds, 1-30, default 8), action?: 'stop' }
+   *
+   * When action = 'stop' — ends recording early and triggers upload.
+   * Otherwise — starts recording, returns immediately (non-blocking).
+   * The browser should poll /api/voice/broadcast/status to know when done.
+   */
+  app.post('/voice/broadcast', async (req, reply) => {
+    const body = (req.body as { action?: string; duration?: number } | undefined) ?? {};
+
+    if (body.action === 'stop') {
+      stopBroadcast();
+      return { ok: true, action: 'stopped' };
+    }
+
+    const currentState = getBroadcastState();
+    if (currentState !== 'idle') {
+      return reply.code(409).send({ ok: false, error: `Already ${currentState}`, state: currentState });
+    }
+
+    const durationMs = Math.max(1_000, Math.min(30_000, Math.round((body.duration ?? 8) * 1_000)));
+
+    // Non-blocking — recording and upload happen in background
+    startBroadcast(durationMs).catch((err: Error) =>
+      console.error('[broadcast] unexpected error:', err.message)
+    );
+
+    return { ok: true, action: 'recording', duration_ms: durationMs };
   });
 }

@@ -251,8 +251,8 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     label: 'Broadcast Intercom', color: '#c05621', textColor: '#fff',
     group: 'Actions', icon: '📢',
     configFields: [
-      { key: 'text', label: 'Text to speak', type: 'textarea', placeholder: 'Attention: {{message}}' },
-      { key: 'from', label: 'From (label)', type: 'text', placeholder: 'system' },
+      { key: 'device_id', label: 'Recording device (blank = all)', type: 'device_picker' },
+      { key: 'duration', label: 'Recording duration (seconds)', type: 'number', placeholder: '8' },
     ],
   },
 

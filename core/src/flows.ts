@@ -222,8 +222,8 @@ export interface FlowExecutorDeps {
   pushKnowledgeCard: (card: { title: string; body: string; source_label?: string }, deviceId?: string) => Promise<void>;
   /** Broadcast an alert notification to devices */
   broadcastAlert?: (title: string, message: string, type?: string, deviceIds?: string[]) => Promise<void>;
-  /** Broadcast audio (via intercom) to devices */
-  broadcastIntercom?: (text: string, from?: string, deviceIds?: string[]) => Promise<void>;
+  /** Trigger mic recording on a device and broadcast real audio to all devices */
+  broadcastIntercom?: (deviceId?: string, durationSeconds?: number) => Promise<void>;
   /** Send a command to a display device (navigate, overlay, media, etc.) */
   sendDeviceCommand?: (deviceId: string | undefined, command: string, payload?: unknown) => Promise<void>;
 }
@@ -510,10 +510,9 @@ export class FlowExecutor {
       }
 
       case 'action_broadcast_intercom': {
-        const text = String(this._resolve(cfg.text, ctx) ?? '');
-        const from = String(cfg.from ?? 'system');
-        const deviceIds = Array.isArray(cfg.device_ids) ? cfg.device_ids.map(String) : undefined;
-        if (this.deps.broadcastIntercom) await this.deps.broadcastIntercom(text, from, deviceIds);
+        const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
+        const duration = cfg.duration ? Number(cfg.duration) : 8;
+        if (this.deps.broadcastIntercom) await this.deps.broadcastIntercom(deviceId, duration);
         return 'any';
       }
 

@@ -837,7 +837,6 @@ async function main(): Promise<void> {
   // Exposed to the flow executor via closure.
   let flowEnqueueTts: ((text: string, deviceId?: string) => Promise<void>) | null = null;
   let flowBroadcastAlert: ((title: string, message: string, type?: string, deviceIds?: string[]) => void) | null = null;
-  let flowBroadcastIntercom: ((text: string, from?: string, deviceIds?: string[]) => Promise<void>) | null = null;
   {
     const pendingTts = new Map<string, { audioBase64?: string; text: string; timestamp: string }>();
     const ALL_DEVICES = '__all__';
@@ -1056,18 +1055,6 @@ async function main(): Promise<void> {
     type PendingIntercom = { audioBase64: string; from: string; timestamp: string };
     const pendingIntercom = new Map<string, PendingIntercom>();
     const ALL_INTERCOM = '__all__';
-
-    flowBroadcastIntercom = async (text, from = 'system', targetDeviceIds) => {
-      const speech = intelligence.providers.tts;
-      if (!speech) { console.warn('[core][intercom] TTS not configured for flow broadcast'); return; }
-      const buf = await speech.synthesize(text);
-      const audio = buf.toString('base64');
-      const timestamp = new Date().toISOString();
-      const entry: PendingIntercom = { audioBase64: audio, from, timestamp };
-      const targets = targetDeviceIds?.length ? targetDeviceIds : [ALL_INTERCOM];
-      for (const id of targets) pendingIntercom.set(id, entry);
-      console.log(`[core][intercom] flow queued from=${from} targets=${targets.join(',')}`);
-    };
 
     fastify.post<{ Body: { audioBase64?: string; text?: string; from?: string; targetDeviceIds?: string[] } }>(
       '/api/edge/intercom/broadcast',
@@ -1795,8 +1782,29 @@ async function main(): Promise<void> {
     broadcastAlert: async (title, message, type = 'info', deviceIds) => {
       if (flowBroadcastAlert) flowBroadcastAlert(title, message, type, deviceIds);
     },
-    broadcastIntercom: async (text, from = 'system', deviceIds) => {
-      if (flowBroadcastIntercom) await flowBroadcastIntercom(text, from, deviceIds);
+    broadcastIntercom: async (deviceId, durationSeconds = 8) => {
+      const targets = deviceId
+        ? [deviceId]
+        : (await pool.query<{ id: string }>(`SELECT id FROM devices WHERE status='connected' AND paired=true`)).rows.map(r => r.id);
+      for (const dId of targets) {
+        const ip = getDeviceIp(dId)?.replace(/^::ffff:/, '');
+        if (ip) {
+          try {
+            const res = await fetch(`http://${ip}:3100/api/voice/broadcast`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ duration: durationSeconds }),
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (res.ok) continue;
+          } catch { /* fall through to device_http relay */ }
+        }
+        await requestDeviceAction(dId, 'device_http', {
+          path: '/api/voice/broadcast',
+          http_method: 'POST',
+          body: { duration: durationSeconds },
+        }).catch(err => console.warn(`[flows] broadcastIntercom trigger failed for ${dId}:`, (err as Error).message));
+      }
     },
     switchPage: async (pageName, deviceId) => {
       // Resolve page by name or ID
