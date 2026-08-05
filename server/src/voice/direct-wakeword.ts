@@ -496,9 +496,16 @@ function loadSettingsFromDb(): DirectWakewordSettings {
     ? Math.max(0, Math.min(1, wakeThresholdParsed))
     : 0.35;
 
+  // DB setting `voice_integration_wake_enabled` takes explicit priority:
+  // if the user has explicitly enabled wake-word in settings, honour it even
+  // when the Tauri binary passes CANVAS_DISABLE_DIRECT_WAKEWORD=1 (old binaries
+  // set this env var unconditionally).
+  const dbWakeEnabled = dbGet('voice_integration_wake_enabled', '1');
+  const envDisabled = process.env.CANVAS_DISABLE_DIRECT_WAKEWORD === '1';
+  const wakeEnabled = dbWakeEnabled === '1' ? true : (envDisabled ? false : dbWakeEnabled !== '0');
+
   return {
-    enabled: process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
-      && dbGet('voice_integration_wake_enabled', '1') === '1',
+    enabled: wakeEnabled,
     micDevice: dbGet('voice_mic_device', 'default'),
     wakeWord: dbGet('voice_integration_wake_word', dbGet('voice_wake_word', 'hey_jarvis')),
     wakeThreshold,
