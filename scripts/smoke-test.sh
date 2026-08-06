@@ -186,6 +186,14 @@ if ssh -o ConnectTimeout=5 -o BatchMode=yes "spetchal@${PI_IP}" true 2>/dev/null
     fail "canvas-display-server.service is $svc_status"
   fi
 
+  # canvas-display-browser.service (user service)
+  browser_status=$(ssh -o BatchMode=yes "spetchal@${PI_IP}" "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user is-active canvas-display-browser 2>/dev/null || echo inactive")
+  if [[ "$browser_status" == "active" ]]; then
+    pass "canvas-display-browser.service (kiosk) is active"
+  else
+    fail "canvas-display-browser.service (kiosk) is $browser_status — run: XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user start canvas-display-browser"
+  fi
+
   # Satellite/wake word process
   if ssh -o BatchMode=yes "spetchal@${PI_IP}" "pgrep -f canvas-display-satellite.py" > /dev/null 2>&1; then
     pass "ESPHome satellite Python process running"
