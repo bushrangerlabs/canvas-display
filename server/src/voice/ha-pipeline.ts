@@ -43,6 +43,7 @@ export class HAPipeline extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectDelay = 2000;
   private destroyed = false;
+  private lastIntentSpeech: string | null = null; // cached for tts-end logging
 
   constructor(settings: HAPipelineSettings) {
     super();
@@ -313,15 +314,19 @@ export class HAPipeline extends EventEmitter {
         break;
       }
 
-      case 'intent-end':
-        console.log('[voice] Intent:', data?.intent_output?.response?.speech?.plain?.speech ?? '(no speech)');
+      case 'intent-end': {
+        const speech = data?.intent_output?.response?.speech?.plain?.speech ?? '(no speech)';
+        this.lastIntentSpeech = speech;
+        console.log('[voice] Intent:', speech);
         break;
+      }
 
       case 'tts-end': {
         const url: string | undefined = data?.tts_output?.url;
         if (url) {
           const fullUrl = url.startsWith('http') ? url : this.settings.haUrl.replace(/\/$/, '') + url;
-          console.log('[voice] TTS ->', fullUrl);
+          console.log('[voice] TTS:', this.lastIntentSpeech ?? '(text unknown)', '→', fullUrl);
+          this.lastIntentSpeech = null;
           this.playTts(fullUrl);
         }
         break;

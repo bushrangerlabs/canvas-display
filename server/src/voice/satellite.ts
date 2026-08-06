@@ -511,9 +511,14 @@ class VoiceSatellite(asyncio.Protocol):
         if et in (_EVT_STT_VAD_END, _EVT_STT_END):
             # Speech ended — stop streaming mic audio
             self._streaming = False
-            _LOGGER.debug("Speech ended — audio stream stopped")
+            if et == _EVT_STT_END:
+                transcript = data.get("text", "")
+                _LOGGER.info("STT transcript: %s", transcript or "(empty)")
 
         if et == _EVT_INTENT_END:
+            speech = data.get("speech", "") or data.get("response", "")
+            if speech:
+                _LOGGER.info("Intent speech: %s", speech)
             self._play_intent_cue(True)
 
         elif et == _EVT_TTS_END:

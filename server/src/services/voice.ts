@@ -1651,6 +1651,7 @@ export async function speakWithPiper(options: PiperSpeakOptions): Promise<PiperS
     console.log('[voice] Wyoming TTS request:', {
       target: formatWyomingTarget(target),
       voice: options.voice ?? getVoiceEndpoints().piperVoice,
+      text: options.text,
     });
 
     const result = await synthesizeWithWyoming(target, options.text, options.voice ?? getVoiceEndpoints().piperVoice);
@@ -1664,7 +1665,7 @@ export async function speakWithPiper(options: PiperSpeakOptions): Promise<PiperS
     };
   }
 
-  console.log('[voice] Piper request:', { piperUrl, voice: options.voice ?? getVoiceEndpoints().piperVoice });
+  console.log('[voice] Piper TTS request:', { piperUrl, voice: options.voice ?? getVoiceEndpoints().piperVoice, text: options.text });
   const payload = options.payload ?? {
     text: options.text,
     voice: options.voice ?? getVoiceEndpoints().piperVoice,
@@ -1937,12 +1938,12 @@ export async function runVoiceTurn(options: VoiceTurnOptions): Promise<Record<st
 
   let piperResult: PiperSpeakResult | null = null;
   if (options.speak !== false && structuredEnvelope.speech) {
+    console.log('[voice] TTS:', structuredEnvelope.speech);
     piperResult = await speakWithPiper({
       piperUrl: options.piperUrl ?? endpoints.piperUrl,
       text: structuredEnvelope.speech,
       voice: options.piperVoice,
     });
-    console.log('[voice] Piper speak complete');
   }
 
   return {
