@@ -6,16 +6,27 @@
  * receive and play the audio via their intercom pollers.
  *
  * Trigger via:
- *   POST /api/voice/broadcast          { duration?: number (seconds, default 8) }
- *   POST /api/voice/broadcast/stop     (stop early)
+ *   POST /api/voice/broadcast   { duration?: number (seconds, default 8), prompt?: boolean | string }
+ *   POST /api/voice/broadcast   { action: 'stop' }
  *   Voice intent: "broadcast"
+ *
+ * Default flow:
+ *   1. Synthesise spoken prompt via Piper TTS → play via mpv
+ *   2. Record mic for up to `duration` seconds
+ *   3. Upload WAV to Core → relayed to all edge devices (including this one)
  */
 
+import { writeFileSync, unlinkSync } from 'fs';
+import { spawn } from 'child_process';
+import path from 'path';
 import { getDb } from '../db/index.js';
 import { MicCapture } from './mic.js';
-import { ensureWav } from './audio-utils.js';
+import { ensureWav, buildMpvAudioArgs } from './audio-utils.js';
+import { speakWithPiper } from '../services/voice.js';
 
-export type BroadcastState = 'idle' | 'recording' | 'uploading';
+export type BroadcastState = 'idle' | 'prompting' | 'recording' | 'uploading';
+
+const DEFAULT_PROMPT = "What would you like to broadcast?";
 
 let state: BroadcastState = 'idle';
 let activeMic: MicCapture | null = null;
@@ -50,68 +61,95 @@ function getConfig(): { coreUrl: string; token: string; deviceId: string; micDev
   }
 }
 
-async function uploadAudio(wav: Buffer, from: string, coreUrl: string, token: string): Promise<void> {
-  const res = await fetch(`${coreUrl}/api/edge/intercom/broadcast`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      audioBase64: wav.toString('base64'),
-      from,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Core returned ${res.status}: ${body}`);
+/** Synthesise text via Piper and play via mpv. Resolves when playback finishes. */
+async function playPrompt(text: string): Promise<void> {
+  const volume = Number(process.env.CANVAS_TTS_VOLUME ?? process.env.TTS_VOLUME ?? 85);
+  let tmpFile: string | null = null;
+  try {
+    const result = await speakWithPiper({ text });
+    if (!result.audioBase64) {
+      console.warn('[broadcast] TTS prompt returned no audio — skipping prompt');
+      return;
+    }
+    tmpFile = path.join('/tmp', `canvas-broadcast-prompt-${Date.now()}.wav`);
+    writeFileSync(tmpFile, ensureWav(Buffer.from(result.audioBase64, 'base64')));
+
+    await new Promise<void>((resolve) => {
+      const mpv = spawn('mpv', buildMpvAudioArgs(volume, tmpFile!), { stdio: 'ignore' });
+      mpv.on('exit', () => resolve());
+      mpv.on('error', (err) => { console.warn('[broadcast] mpv prompt error:', err.message); resolve(); });
+    });
+  } catch (err) {
+    console.warn('[broadcast] prompt failed (continuing anyway):', (err as Error).message);
+  } finally {
+    if (tmpFile) try { unlinkSync(tmpFile); } catch { /* ignore */ }
   }
 }
 
+async function uploadAudio(wav: Buffer, from: string, coreUrl: string, token: string): Promise<void> {
+  const res = await fetch(`${coreUrl}/api/edge/intercom/broadcast`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ audioBase64: wav.toString('base64'), from }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Core returned ${res.status}: ${await res.text().catch(() => '')}`);
+}
+
+export interface BroadcastOptions {
+  /** Max recording duration in milliseconds (default 8 000) */
+  durationMs?: number;
+  /**
+   * Spoken prompt played before recording starts.
+   *   true (default)  → plays "What would you like to broadcast?"
+   *   string          → plays a custom prompt
+   *   false           → skip prompt, start recording immediately
+   */
+  prompt?: boolean | string;
+}
+
 /**
- * Start recording a broadcast.
- * Returns once the audio is uploaded (or an error occurs).
- *
- * @param durationMs  Maximum recording duration in milliseconds (default 8 s)
+ * Start a broadcast: prompt → record → upload.
+ * Back-compat: passing a plain number is treated as durationMs with default prompt.
  */
-export async function startBroadcast(durationMs = 8_000): Promise<{ ok: boolean; error?: string }> {
+export async function startBroadcast(options: BroadcastOptions | number = {}): Promise<{ ok: boolean; error?: string }> {
+  const opts: BroadcastOptions = typeof options === 'number' ? { durationMs: options } : options;
+  const durationMs   = opts.durationMs ?? 8_000;
+  const promptOption = opts.prompt ?? true;
+
   if (state !== 'idle') return { ok: false, error: 'Already recording or uploading' };
 
   const cfg = getConfig();
-  if (!cfg.coreUrl || !cfg.token) {
-    return { ok: false, error: 'Core URL or voice token not configured' };
-  }
+  if (!cfg.coreUrl || !cfg.token) return { ok: false, error: 'Core URL or voice token not configured' };
 
   const bounded = Math.max(1_000, Math.min(30_000, durationMs));
+
+  // ── 1. Prompt ───────────────────────────────────────────────────────────────
+  if (promptOption !== false) {
+    state = 'prompting';
+    const promptText = typeof promptOption === 'string' ? promptOption : DEFAULT_PROMPT;
+    console.log(`[broadcast] prompting: "${promptText}"`);
+    await playPrompt(promptText);
+    await new Promise(r => setTimeout(r, 300)); // brief gap so mic doesn't catch TTS tail
+  }
+
+  // ── 2. Record ───────────────────────────────────────────────────────────────
   const mic = new MicCapture(cfg.micDevice);
   const chunks: Buffer[] = [];
   activeMic = mic;
   state = 'recording';
-
   console.log(`[broadcast] recording for up to ${bounded / 1000}s on device=${cfg.micDevice}`);
 
   try {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, bounded);
-
-      stopEarly = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-
+      stopEarly = () => { clearTimeout(timer); resolve(); };
       mic.on('data', (chunk: Buffer) => chunks.push(chunk));
-      mic.once('error', (err: Error) => {
-        clearTimeout(timer);
-        stopEarly = null;
-        reject(err);
-      });
+      mic.once('error', (err: Error) => { clearTimeout(timer); stopEarly = null; reject(err); });
       mic.start();
     });
   } catch (err) {
-    state = 'idle';
-    activeMic = null;
-    stopEarly = null;
+    state = 'idle'; activeMic = null; stopEarly = null;
     await mic.stop().catch(() => {});
     return { ok: false, error: (err as Error).message };
   }
@@ -121,16 +159,12 @@ export async function startBroadcast(durationMs = 8_000): Promise<{ ok: boolean;
   activeMic = null;
 
   const pcm = Buffer.concat(chunks);
-  if (!pcm.length) {
-    state = 'idle';
-    return { ok: false, error: 'No audio captured from microphone' };
-  }
+  if (!pcm.length) { state = 'idle'; return { ok: false, error: 'No audio captured from microphone' }; }
 
-  // Mic captures 16 kHz mono S16LE
-  const wav = ensureWav(pcm, 16_000, 1);
+  // ── 3. Upload ───────────────────────────────────────────────────────────────
   state = 'uploading';
-
-  console.log(`[broadcast] uploading ${Math.round(wav.length / 1024)} KB of audio`);
+  const wav = ensureWav(pcm, 16_000, 1);
+  console.log(`[broadcast] uploading ${Math.round(wav.length / 1024)} KB`);
 
   try {
     await uploadAudio(wav, cfg.deviceId, cfg.coreUrl, cfg.token);
@@ -144,10 +178,7 @@ export async function startBroadcast(durationMs = 8_000): Promise<{ ok: boolean;
   }
 }
 
-/** Stop recording early and immediately trigger the upload with whatever was captured. */
+/** Stop recording early and immediately trigger upload with whatever was captured. */
 export function stopBroadcast(): void {
-  if (stopEarly) {
-    stopEarly();
-    stopEarly = null;
-  }
+  if (stopEarly) { stopEarly(); stopEarly = null; }
 }

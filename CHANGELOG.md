@@ -18,6 +18,13 @@ Run `scripts/smoke-test.sh` after any deploy to verify core features are working
 
 ---
 
+## [0.2.65] — 2026-08-06
+### Summary
+Broadcast: play TTS prompt before recording ('What would you like to broadcast?')
+
+### Key files
+- _TODO: list modified files and what changed_
+
 ## [0.2.64] — 2026-08-06
 ### Added — Regression tracking
 - `CHANGELOG.md` — documents every release: what changed, which files, root cause of fixes

@@ -303,12 +303,11 @@ export class HAPipeline extends EventEmitter {
           console.log('[voice] Broadcast command detected — starting intercom recording');
           this.startWakeWordPhase();
           if (!isBroadcasting()) {
-            // Brief pause so the wake-word beep / TTS finishes before we record
             setTimeout(() => {
-              startBroadcast(8_000).catch((err: Error) =>
+              startBroadcast({ durationMs: 8_000, prompt: true }).catch((err: Error) =>
                 console.error('[voice][broadcast] recording error:', err.message)
               );
-            }, 800);
+            }, 400);
           }
         }
         break;

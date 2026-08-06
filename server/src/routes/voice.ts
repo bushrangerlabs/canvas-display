@@ -143,14 +143,16 @@ export async function voiceRoutes(app: FastifyInstance) {
 
   /**
    * POST /api/voice/broadcast
-   * Body: { duration?: number (seconds, 1-30, default 8), action?: 'stop' }
-   *
-   * When action = 'stop' — ends recording early and triggers upload.
-   * Otherwise — starts recording, returns immediately (non-blocking).
-   * The browser should poll /api/voice/broadcast/status to know when done.
+   * Body: {
+   *   duration?: number       seconds, 1–30, default 8
+   *   prompt?:  boolean|string  true (default) = "What would you like to broadcast?"
+   *                             string = custom prompt text
+   *                             false  = skip prompt, record immediately
+   *   action?:  'stop'         stop early and upload what was recorded
+   * }
    */
   app.post('/voice/broadcast', async (req, reply) => {
-    const body = (req.body as { action?: string; duration?: number } | undefined) ?? {};
+    const body = (req.body as { action?: string; duration?: number; prompt?: boolean | string } | undefined) ?? {};
 
     if (body.action === 'stop') {
       stopBroadcast();
@@ -163,12 +165,13 @@ export async function voiceRoutes(app: FastifyInstance) {
     }
 
     const durationMs = Math.max(1_000, Math.min(30_000, Math.round((body.duration ?? 8) * 1_000)));
+    const prompt = body.prompt ?? true;
 
-    // Non-blocking — recording and upload happen in background
-    startBroadcast(durationMs).catch((err: Error) =>
+    // Non-blocking — prompt + recording + upload happen in background
+    startBroadcast({ durationMs, prompt }).catch((err: Error) =>
       console.error('[broadcast] unexpected error:', err.message)
     );
 
-    return { ok: true, action: 'recording', duration_ms: durationMs };
+    return { ok: true, action: 'prompting', duration_ms: durationMs };
   });
 }
