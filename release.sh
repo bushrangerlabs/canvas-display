@@ -18,6 +18,18 @@ sed -i "s/^version: .*/version: \"${VERSION}\"/" "$REPO_ROOT/config.yaml"
 sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$REPO_ROOT/browser/linux/src-tauri/tauri.conf.json"
 echo "✓ config.yaml + tauri.conf.json → $VERSION"
 
+# ── 1b. Prepend CHANGELOG.md entry ───────────────────────────────────────────
+CHANGELOG="$REPO_ROOT/CHANGELOG.md"
+RELEASE_DATE="$(date +%Y-%m-%d)"
+if [[ -f "$CHANGELOG" ]]; then
+  # Insert new entry after the first blank line following the header block
+  ENTRY="## [${VERSION}] — ${RELEASE_DATE}\n${NOTES:+### Summary\n${NOTES}\n}\n### Key files\n- _TODO: list modified files and what changed_\n"
+  # Prepend after the first '---' separator line
+  awk -v entry="$ENTRY" '/^---$/ && !done { print; print ""; printf "%s", entry; done=1; next } 1' \
+    "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
+  echo "✓ CHANGELOG.md updated with v${VERSION} stub"
+fi
+
 # ── 2. Build web ──────────────────────────────────────────────────────────────
 echo "Building web…"
 cd "$REPO_ROOT/web"
