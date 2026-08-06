@@ -25,7 +25,27 @@ Broadcast: play TTS prompt before recording ('What would you like to broadcast?'
 ### Key files
 - _TODO: list modified files and what changed_
 
-## [0.2.64] — 2026-08-06
+## [0.2.65] — 2026-08-06
+### Added — Broadcast prompt before recording
+Before recording starts, the device now speaks a TTS prompt so the user knows when to talk.
+
+**Default prompt:** *"What would you like to broadcast?"*
+
+**Customisable via API:**
+```json
+{ "duration": 8 }                              // default prompt
+{ "duration": 8, "prompt": false }             // skip prompt, record immediately
+{ "duration": 8, "prompt": "Speak now..." }    // custom prompt text
+```
+
+State machine: `idle → prompting → recording → uploading → idle`
+
+**Modified files:**
+- `server/src/voice/broadcast-recorder.ts` — added `playPrompt()` using `speakWithPiper` + mpv; `startBroadcast()` now accepts `BroadcastOptions` object (back-compat number still works)
+- `server/src/routes/voice.ts` — `POST /api/voice/broadcast` passes `prompt` option; returns `action: "prompting"` instead of `"recording"`
+- `server/src/voice/ha-pipeline.ts` — voice "broadcast" intercept passes `{ prompt: true }` options
+
+
 ### Added — Regression tracking
 - `CHANGELOG.md` — documents every release: what changed, which files, root cause of fixes
 - `scripts/smoke-test.sh` — 13 live checks against Core + Pi sidecar; run after any deploy
