@@ -19,11 +19,23 @@ Run `scripts/smoke-test.sh` after any deploy to verify core features are working
 ---
 
 ## [0.2.64] — 2026-08-06
-### Summary
-Add CHANGELOG.md and scripts/smoke-test.sh for regression tracking
+### Added — Regression tracking
+- `CHANGELOG.md` — documents every release: what changed, which files, root cause of fixes
+- `scripts/smoke-test.sh` — 13 live checks against Core + Pi sidecar; run after any deploy
+- `release.sh` — now auto-inserts a CHANGELOG stub entry on every release
 
-### Key files
-- _TODO: list modified files and what changed_
+### Known-working features as of this version ✅
+The following features are confirmed working end-to-end on the Pi edge device (192.168.1.216):
+- **YouTube playback** — video/audio via the display kiosk
+- **Music Assistant** — plays music through the display
+- **TTS broadcast** — Core pushes TTS audio → Pi polls → plays via mpv on HDMI
+- **Alert broadcast** — Core pushes alerts → Pi polls → shows on display
+- **Intercom broadcast** — Pi records real mic audio → uploads to Core → plays on all devices
+- **ESPHome satellite** — wake word (Hey Jarvis) → HA pipeline → STT + intent + TTS response
+- **Voice broadcast trigger** — saying "broadcast" starts intercom recording
+- **Automation flows** — visual flow editor with TTS, scene switch, page switch, HA service, HTTP, AI, broadcast nodes
+- **Canvas editor** — drag-and-drop widget placement, multi-select, copy/paste, undo/redo
+- **29 widgets** — text, value, gauge, clock variants, button, switch, camera, iframe, etc.
 
 ## [0.2.63] — 2026-08-06
 ### Fixed
