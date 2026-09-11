@@ -84,6 +84,10 @@ export async function migrate(pool: pg.Pool): Promise<void> {
   await addColumnIfNotExists(pool, 'devices', 'invitation_id', 'TEXT');
   await addColumnIfNotExists(pool, 'devices', 'audio_config', 'JSONB');
   await addColumnIfNotExists(pool, 'devices', 'voice_config', 'JSONB');
+  // Physical display resolution (native pixels) so the Editor canvas and Pages
+  // layout previews can match each device's real screen instead of assuming 16:9.
+  await addColumnIfNotExists(pool, 'devices', 'display_width', 'INTEGER');
+  await addColumnIfNotExists(pool, 'devices', 'display_height', 'INTEGER');
 
   // --- device_invitations: one-time pairing tokens (P-003 bootstrap) ---------
   await pool.query(`

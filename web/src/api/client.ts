@@ -124,6 +124,9 @@ export interface DeviceRow {
   cert_fingerprint: string | null;
   audio_config?: Record<string, any>;
   voice_config?: Record<string, any>;
+  /** Native display resolution in pixels (null when not set). */
+  display_width?: number | null;
+  display_height?: number | null;
 }
 
 export interface InvitationRecord {
@@ -283,6 +286,19 @@ export interface LegacyPage {
   updated_at: string;
 }
 
+export interface PageAssignmentActionResult {
+  delivered: boolean;
+  detail?: string;
+  success?: boolean;
+  device_id?: string;
+  page_id?: string | null;
+  active_page_id?: string | null;
+  default_page_id?: string | null;
+  persistent_page_id?: string | null;
+  override?: boolean;
+  removed_library_rows?: number;
+}
+
 export interface LegacySettings {
   device_name: string;
   server_port: string;
@@ -402,6 +418,13 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Per-request tuning for the admin AI chat endpoint (codegen / latency). */
+export interface AiChatOptions {
+  disableThinking?: boolean;
+  maxTokens?: number;
+  noTools?: boolean;
+}
+
 export interface PendingToolConfirmation {
   token: string;
   tool: string;
@@ -514,6 +537,8 @@ export const coreApi = {
     api.post<InvitationCreateResponse>('/api/admin/devices/invitations', { scope, ttlSeconds }),
   revokeDevice: (id: string) =>
     api.post<{ ok: boolean; device: DeviceRow }>(`/api/admin/devices/${id}/revoke`),
+  updateDevice: (id: string, patch: { name?: string; display_width?: number | null; display_height?: number | null }) =>
+    api.put<{ device: DeviceRow }>(`/api/admin/devices/${id}`, patch),
 
   // Scenes
   scenes: () => api.get<ScenesResponse>('/api/admin/scenes'),
@@ -577,16 +602,16 @@ export const coreApi = {
   deletePagePanel: (pageId: string, panelId: string) =>
     api.delete<void>(`/api/pages/${encodeURIComponent(pageId)}/panels/${encodeURIComponent(panelId)}`),
   assignPage: (pageId: string, deviceId: string) =>
-    api.put<{ device_id: string; page_id: string; assigned_at: string; delivered: boolean }>(
+    api.put<PageAssignmentActionResult>(
       `/api/pages/${encodeURIComponent(pageId)}/assign`,
       { device_id: deviceId },
     ),
   unassignPage: (pageId: string, deviceId: string) =>
-    api.delete<{ success: boolean }>(
+    api.delete<PageAssignmentActionResult>(
       `/api/pages/${encodeURIComponent(pageId)}/assign/${encodeURIComponent(deviceId)}`,
     ),
   forceDisplayPage: (pageId: string, deviceId: string) =>
-    api.post<{ delivered: boolean }>(
+    api.post<PageAssignmentActionResult>(
       `/api/pages/${encodeURIComponent(pageId)}/display`,
       { device_id: deviceId },
     ),
@@ -661,8 +686,8 @@ export const coreApi = {
   deleteMcpServer: (name: string) => api.delete<{ ok: boolean }>('/api/admin/mcp-servers/' + encodeURIComponent(name)),
 
   // AI Chat
-  chatSend: (messages: ChatMessage[], providerId?: string) =>
-    api.post<AiChatResponse>('/api/admin/ai/chat', { messages, providerId }),
+  chatSend: (messages: ChatMessage[], providerId?: string, options?: AiChatOptions) =>
+    api.post<AiChatResponse>('/api/admin/ai/chat', { messages, providerId, options }),
   confirmChatTool: (token: string) =>
     api.post<{ reply: string; toolResult: { ok: boolean; message: string; data?: unknown } }>('/api/admin/ai/chat/confirm', { token }),
 

@@ -39,6 +39,13 @@ let _state: AudioState = {
 };
 
 let _mpv: ChildProcess | null = null;
+let _mpvUrl = '';
+let _mpvVolume = 75;
+let _intentionalStop = false;
+let _retryCount = 0;
+let _mpvGen = 0;
+const MAX_AUDIO_RETRIES = 5;
+const AUDIO_RETRY_DELAY_MS = 1500;
 
 /** Returns a copy of the current audio state. */
 export function getAudioState(): AudioState {
@@ -54,7 +61,12 @@ export function setAudioStateField<K extends keyof AudioState>(key: K, value: Au
 
 const MPV_SOCK = '/tmp/mpv-canvas.sock';
 
-function killMpv() {
+function killMpv(opts?: { intentional?: boolean }) {
+  if (opts?.intentional) {
+    _intentionalStop = true;
+    // Cancel any pending retry timer from a prior spawn.
+    _mpvGen += 1;
+  }
   if (_mpv) {
     try { _mpv.kill('SIGTERM'); } catch { /* already dead */ }
     _mpv = null;
@@ -64,32 +76,67 @@ function killMpv() {
 }
 
 function spawnMpv(url: string, volume: number) {
+  _mpvGen += 1;
+  _mpvUrl = url;
+  _mpvVolume = volume;
+  _intentionalStop = false;
+  _retryCount = 0;
   killMpv();
+  startMpv(_mpvGen);
+}
 
+function startMpv(gen: number) {
   const args = [
     '--no-video',
     '--really-quiet',
     `--input-ipc-server=${MPV_SOCK}`,
-    `--volume=${volume}`,
-    url,
+    `--volume=${_mpvVolume}`,
+    _mpvUrl,
   ];
 
-  _mpv = spawn('mpv', args, { detached: false, stdio: 'ignore' });
+  const mpv = spawn('mpv', args, { detached: false, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderrBuf = '';
+  if (mpv.stderr) {
+    mpv.stderr.setEncoding('utf8');
+    mpv.stderr.on('data', (chunk: string) => {
+      stderrBuf += chunk;
+      if (stderrBuf.length > 4000) stderrBuf = stderrBuf.slice(-4000);
+    });
+  }
 
-  _mpv.on('exit', (code) => {
-    console.log(`[audio] mpv exited (code=${code})`);
+  _mpv = mpv;
+
+  mpv.on('error', (err: Error) => {
+    console.error('[audio] mpv spawn error:', err.message);
+  });
+
+  mpv.on('exit', (code) => {
+    // A newer spawn superseded this process; ignore its exit.
+    if (gen !== _mpvGen) return;
+
     _mpv = null;
+    const tail = stderrBuf.trim().split('\n').slice(-8).join(' │ ');
+    console.log(`[audio] mpv exited (code=${code})${tail ? ' :: ' + tail : ''}`);
+
+    if (_intentionalStop) return;
+
+    // Unexpected exit (crash, network drop, stream reset): retry a few
+    // times before giving up, so a transient hiccup doesn't kill playback.
+    if (_retryCount < MAX_AUDIO_RETRIES) {
+      _retryCount += 1;
+      console.log(`[audio] mpv exited unexpectedly; retry ${_retryCount}/${MAX_AUDIO_RETRIES} in ${AUDIO_RETRY_DELAY_MS}ms`);
+      setTimeout(() => {
+        if (gen === _mpvGen) startMpv(gen);
+      }, AUDIO_RETRY_DELAY_MS);
+      return;
+    }
+
+    console.log('[audio] mpv retries exhausted; marking idle');
     _state.state = 'idle';
     _state.url   = '';
     _state.title = '';
     // Notify MQTT of state change (dynamic import avoids circular dep)
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
-  });
-
-  _mpv.on('error', (err) => {
-    console.error('[audio] mpv error:', err.message);
-    _mpv    = null;
-    _state.state = 'idle';
   });
 }
 
@@ -168,7 +215,7 @@ export async function resumeAudio(): Promise<AudioState> {
 }
 
 export async function stopAudio(): Promise<AudioState> {
-  killMpv();
+  killMpv({ intentional: true });
   _state.state = 'idle';
   _state.url = '';
   _state.title = '';
@@ -249,7 +296,7 @@ export async function audioRoutes(app: FastifyInstance) {
 
   // POST /api/audio/stop
   app.post('/audio/stop', async () => {
-    killMpv();
+    killMpv({ intentional: true });
     _state.state = 'idle';
     _state.url   = '';
     _state.title = '';

@@ -423,6 +423,11 @@ export async function registerSceneRoutes(
       reply.code(404);
       return { error: 'published_scene_not_found' };
     }
+    // Devices poll/reload this endpoint; never let the browser or an intermediary
+    // cache a stale published revision or the display keeps showing old designs.
+    reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+    reply.header('Pragma', 'no-cache');
+    reply.header('Expires', '0');
     return { scene };
   });
 

@@ -492,6 +492,19 @@ export async function registerLegacyRoutes(
     sendCommand(deviceId, { type: 'load_page', page_id: page.id, page_data: page });
     return isDeviceConnected(deviceId);
   };
+  const deliverWithOutcome = async (page: PageRow, deviceId: string, offlineDetail: string) => {
+    try {
+      const delivered = await deliverPage(page, deviceId);
+      return { delivered, detail: delivered ? undefined : offlineDetail };
+    } catch (error) {
+      return {
+        delivered: false,
+        detail: isDeviceConnected(deviceId)
+          ? (error instanceof Error ? error.message : String(error))
+          : offlineDetail,
+      };
+    }
+  };
 
   // ═══ Pages ═══════════════════════════════════════════════════════════════
 
@@ -623,30 +636,101 @@ export async function registerLegacyRoutes(
       [deviceId, page.id],
     );
     await pool.query(
-      `INSERT INTO device_page_state (device_id, default_page_id, updated_at)
-       VALUES ($1, $2, now())
+      `INSERT INTO device_page_state (device_id, active_page_id, default_page_id, history, updated_at)
+       VALUES ($1, NULL, $2, '[]'::jsonb, now())
        ON CONFLICT (device_id) DO UPDATE
-       SET default_page_id = COALESCE(device_page_state.default_page_id, excluded.default_page_id),
+       SET active_page_id = NULL,
+           default_page_id = excluded.default_page_id,
+           history = '[]'::jsonb,
            updated_at = now()`,
       [deviceId, page.id],
     );
-    const delivered = isDeviceConnected(deviceId);
-    sendCommand(deviceId, { type: 'load_page', page_id: page.id, page_data: page });
-    return { ...assignmentRes.rows[0], delivered };
+    // Assignment is the device's durable default. It intentionally replaces any
+    // temporary force-display override and records desired state even when Edge
+    // is offline, so the page applies after the device reconnects.
+    const outcome = await deliverWithOutcome(
+      page,
+      deviceId,
+      'Device is offline — assignment saved and will apply when it reconnects.',
+    );
+    return {
+      ...assignmentRes.rows[0],
+      active_page_id: null,
+      default_page_id: page.id,
+      ...outcome,
+    };
   });
 
   // DELETE /api/pages/:id/assign/:deviceId
   fastify.delete<{ Params: { id: string; deviceId: string } }>('/api/pages/:id/assign/:deviceId', {
     preHandler: adminPreHandler(options),
   }, async (req, reply) => {
-    const pageRes = await pool.query('SELECT 1 FROM pages WHERE id = $1', [req.params.id]);
+    const pageId = req.params.id;
+    const deviceId = req.params.deviceId;
+    const pageRes = await pool.query('SELECT 1 FROM pages WHERE id = $1', [pageId]);
     if (pageRes.rowCount === 0) return reply.code(404).send({ error: 'Page not found' });
-    const result = await pool.query(
-      'DELETE FROM device_page_library WHERE page_id = $1 AND device_id = $2',
-      [req.params.id, req.params.deviceId],
+    const assignmentRes = await pool.query(
+      'DELETE FROM device_page_assignments WHERE page_id = $1 AND device_id = $2 RETURNING page_id',
+      [pageId, deviceId],
     );
-    if (result.rowCount === 0) return reply.code(404).send({ error: 'Assignment not found' });
-    return { success: true };
+    if (assignmentRes.rowCount === 0) return reply.code(404).send({ error: 'Assignment not found' });
+    const delRes = await pool.query(
+      'DELETE FROM device_page_library WHERE page_id = $1 AND device_id = $2',
+      [pageId, deviceId],
+    );
+    // Reset only pointers that reference the unassigned page. A force-display
+    // override for a different page remains active.
+    const stateRes = await pool.query(
+      'SELECT active_page_id, default_page_id, fallback_page_id, history FROM device_page_state WHERE device_id = $1',
+      [deviceId],
+    );
+    const row = stateRes.rows[0];
+    const history = Array.isArray(row?.history)
+      ? (row.history as unknown[]).map(String).filter(id => id !== pageId)
+      : [];
+    const priorActivePageId = row?.active_page_id ? String(row.active_page_id) : null;
+    let activePageId = priorActivePageId === pageId ? (history.pop() ?? null) : priorActivePageId;
+    const defaultPageId = row?.default_page_id === pageId ? null : (row?.default_page_id ? String(row.default_page_id) : null);
+    const fallbackPageId = row?.fallback_page_id === pageId ? null : (row?.fallback_page_id ? String(row.fallback_page_id) : null);
+
+    if (priorActivePageId === pageId && !activePageId) {
+      activePageId = fallbackPageId ?? defaultPageId;
+      if (!activePageId) {
+        const global = await getSetting(pool, 'active_page_id');
+        activePageId = global && global !== pageId ? global : null;
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO device_page_state (device_id, active_page_id, default_page_id, fallback_page_id, history, updated_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, now())
+       ON CONFLICT (device_id) DO UPDATE SET
+         active_page_id = excluded.active_page_id,
+         default_page_id = excluded.default_page_id,
+         fallback_page_id = excluded.fallback_page_id,
+         history = excluded.history,
+         updated_at = now()`,
+      [deviceId, activePageId, defaultPageId, fallbackPageId, JSON.stringify(history)],
+    );
+
+    let outcome: { delivered: boolean; detail?: string } = { delivered: false };
+    if (priorActivePageId === pageId && activePageId) {
+      const nextPage = await getPageWithPanels(pool, activePageId);
+      outcome = nextPage
+        ? await deliverWithOutcome(nextPage, deviceId, 'Device is offline — assignment removed and the fallback page will apply when it reconnects.')
+        : { delivered: false, detail: 'Assignment removed, but its fallback page no longer exists.' };
+    } else if (priorActivePageId === pageId) {
+      outcome = { delivered: false, detail: 'Assignment removed. No fallback page is configured for this device.' };
+    } else {
+      outcome = { delivered: false, detail: 'Assignment removed. The current force-display override was preserved.' };
+    }
+    return {
+      success: true,
+      removed_library_rows: delRes.rowCount ?? 0,
+      active_page_id: activePageId,
+      default_page_id: defaultPageId,
+      ...outcome,
+    };
   });
 
   // POST /api/pages/:id/display { device_id }
@@ -655,13 +739,13 @@ export async function registerLegacyRoutes(
   }, async (req, reply) => {
     const deviceId = req.body?.device_id;
     if (!deviceId) return reply.code(400).send({ error: 'device_id is required' });
-    const [page, deviceRes] = await Promise.all([
+    const [page, deviceRes, assignmentRes] = await Promise.all([
       getPageWithPanels(pool, req.params.id),
       pool.query('SELECT 1 FROM devices WHERE id = $1', [deviceId]),
+      pool.query('SELECT page_id FROM device_page_assignments WHERE device_id = $1', [deviceId]),
     ]);
     if (!page) return reply.code(404).send({ error: 'Page not found' });
     if (deviceRes.rowCount === 0) return reply.code(404).send({ error: 'Device not found' });
-    const delivered = isDeviceConnected(deviceId);
     await pool.query(
       `INSERT INTO device_page_library (device_id, page_id, sync_status, assigned_at)
        VALUES ($1, $2, 'pending', now())
@@ -686,20 +770,21 @@ export async function registerLegacyRoutes(
          updated_at = now()`,
       [deviceId, page.id, JSON.stringify(history.slice(-50))],
     );
-    if (options.onDisplayPage) {
-      try {
-        const delivery = await options.onDisplayPage(page, deviceId);
-        return { delivered: true, delivery };
-      } catch (error) {
-        return reply.code(409).send({
-          delivered: false,
-          error: 'page_delivery_failed',
-          detail: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    sendCommand(deviceId, { type: 'load_page', page_id: page.id, page_data: page });
-    return { delivered };
+    // Force display is an active override only; it deliberately leaves the
+    // persistent assignment untouched. Delivery still records desired state
+    // while offline so the override can apply when Edge reconnects.
+    const outcome = await deliverWithOutcome(
+      page,
+      deviceId,
+      'Device is offline — display override queued and will apply when it reconnects.',
+    );
+    return {
+      page_id: page.id,
+      active_page_id: page.id,
+      persistent_page_id: assignmentRes.rows[0]?.page_id ?? null,
+      override: true,
+      ...outcome,
+    };
   });
 
   // Device page library and navigation. All entry points (UI, HA, MQTT and AI)

@@ -54,7 +54,7 @@ export class AzureOpenAiLlm implements LlmProvider {
     this.deployment = opts.deployment;
     this.apiVersion = opts.apiVersion ?? DEFAULT_API_VERSION;
     this.temperature = opts.temperature ?? 0.7;
-    this.timeoutMs = opts.timeoutMs ?? 120_000;
+    this.timeoutMs = opts.timeoutMs ?? 300_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.name = opts.name ?? 'azure';
   }

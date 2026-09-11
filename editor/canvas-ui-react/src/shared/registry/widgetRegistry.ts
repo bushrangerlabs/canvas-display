@@ -15,6 +15,7 @@ import { FlipClockWidgetMetadata } from '../widgets/FlipClockWidget';
 import { GaugeWidgetMetadata } from '../widgets/GaugeWidget';
 import { GraphWidgetMetadata } from '../widgets/GraphWidget';
 import { htmlWidgetMetadata } from '../widgets/HtmlWidget';
+import { customDashboardMetadata } from '../widgets/CustomDashboardWidget';
 import { iconWidgetMetadata } from '../widgets/IconWidget';
 import { IFrameWidgetMetadata } from '../widgets/IFrameWidget';
 import { ImageWidgetMetadata } from '../widgets/ImageWidget';
@@ -69,6 +70,7 @@ const AI_ALIASES: Record<string, string[]> = {
   switch: ['toggle'],
   value: ['number', 'sensor value', 'readout'],
   entitycard: ['status card', 'entity tile', 'sensor card'],
+  customdashboard: ['custom html', 'freeform dashboard', 'html dashboard', 'code widget'],
 };
 
 function enrichMetadata(type: string, metadata: WidgetMetadata): WidgetMetadata {
@@ -124,6 +126,7 @@ const RAW_WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   screensaver: screensaverWidgetMetadata,
   scrollablecontainer: scrollableContainerMetadata,
   entitycard: EntityCardWidgetMetadata,
+  customdashboard: customDashboardMetadata,
 };
 
 export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = Object.fromEntries(

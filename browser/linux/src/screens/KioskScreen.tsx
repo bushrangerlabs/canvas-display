@@ -58,6 +58,13 @@ interface LoadedPage {
   floating_config: FloatingConfig | null;
 }
 
+interface DisplayGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 type AppState = 'registering' | 'ready' | 'error' | 'settings';
 
 interface Props {
@@ -69,6 +76,20 @@ interface Props {
 
 function pct(percent: number, total: number) {
   return Math.round((percent / 100) * total);
+}
+
+async function getDisplayGeometry(): Promise<DisplayGeometry> {
+  try {
+    return await invoke<DisplayGeometry>('display_geometry');
+  } catch (error) {
+    console.warn('[KioskScreen] native display geometry unavailable:', error);
+    return {
+      x: window.screenX ?? 0,
+      y: window.screenY ?? 0,
+      width: window.screen.width,
+      height: window.screen.height,
+    };
+  }
 }
 /**
  * Builds the initialization_script that:
@@ -150,6 +171,7 @@ function buildHAKioskScript(params: {
 })();`;
 }
 async function closeAllPanelWindows() {
+  await invoke('close_panel_webviews').catch(() => {});
   const all = await WebviewWindow.getAll();
   await Promise.all(
     all
@@ -234,6 +256,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   }, [config.haUrl, config.haToken, config.serverUrl]);
 
   const panelLabelsRef   = useRef<string[]>([]);
+  const panelTimersRef   = useRef<ReturnType<typeof setTimeout>[]>([]);
   const tapTimestamps    = useRef<number[]>([]);
 
   function handleCornerTap() {
@@ -251,11 +274,11 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   useEffect(() => {
     if (appState === 'settings') {
       panelLabelsRef.current.forEach(label =>
-        WebviewWindow.getByLabel(label).then(w => w?.hide().catch(() => {}))
+        invoke('set_webview_visibility', { label, visible: false }).catch(() => {})
       );
     } else if (appState === 'ready') {
       panelLabelsRef.current.forEach(label =>
-        WebviewWindow.getByLabel(label).then(w => w?.show().catch(() => {}))
+        invoke('set_webview_visibility', { label, visible: true }).catch(() => {})
       );
     }
   }, [appState]);
@@ -264,13 +287,13 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   useEffect(() => {
     if (showQuitDialog) {
       panelLabelsRef.current.forEach(label =>
-        WebviewWindow.getByLabel(label).then(w => w?.hide().catch(() => {}))
+        invoke('set_webview_visibility', { label, visible: false }).catch(() => {})
       );
     } else {
       // Only restore if not in settings (settings manages its own hide/show)
       if (appState === 'ready') {
         panelLabelsRef.current.forEach(label =>
-          WebviewWindow.getByLabel(label).then(w => w?.show().catch(() => {}))
+          invoke('set_webview_visibility', { label, visible: true }).catch(() => {})
         );
       }
     }
@@ -338,55 +361,70 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     };
   }, [config.serverUrl, config.deviceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Open native WebviewWindow panels ─────────────────────────────────────
+  // ── Open child webviews attached to the fullscreen controller window ──────
+  // Child webviews are positioned by Tauri relative to the parent window, so the
+  // Wayland compositor cannot recenter them (unlike top-level windows). This keeps
+  // exact page-relative geometry while still giving each panel a real WebKit
+  // webview (TLS handling, storage, YouTube/Google, HA auth injection).
+  // Creation is staggered with fire-and-forget invokes so a single blocked IPC
+  // call can never stall the rest of the page from rendering.
+  // ── Open child webviews attached to the fullscreen controller window ──────
+  // Child webviews are positioned by Tauri relative to the parent window, so the
+  // Wayland compositor cannot recenter them (unlike top-level windows). This keeps
+  // exact page-relative geometry while still giving each panel a real WebKit
+  // webview (TLS handling, storage, YouTube/Google, HA auth injection).
+  // Panels are created strictly in sequence: each panel's window must fully build
+  // before the next is requested, otherwise WebKit's NetworkProcess is overwhelmed
+  // on kiosk hardware and the later panels fail to appear.
   const openPanelWindows = useCallback(async (panels: PagePanel[], floating: FloatingConfig | null) => {
+    panelTimersRef.current.forEach(t => clearTimeout(t));
+    panelTimersRef.current = [];
     await closeAllPanelWindows();
     panelLabelsRef.current = [];
+    const { width: sw, height: sh } = await getDisplayGeometry();
 
-    const sw = window.screen.width;
-    const sh = window.screen.height;
-    const ox = window.screenX ?? 0;
-    const oy = window.screenY ?? 0;
-
-    for (const panel of [...panels].sort((a, b) => (a.z_index ?? a.position) - (b.z_index ?? b.position))) {
-      const label = `panel-${panel.id}`;
-      const directUrl = resolvePanelUrl(panel, config, deviceId);
-
-      // Await each panel creation before starting the next one.
-      // Creating all panels simultaneously causes WebKit's NetworkProcess to crash
-      // on kiosk hardware when multiple HA WebSocket connections race at startup.
-      await invoke('create_panel_webview', {
-        label,
-        url:           directUrl,
-        x:             ox + pct(panel.x, sw),
-        y:             oy + pct(panel.y, sh),
-        width:         pct(panel.w, sw),
-        height:        pct(panel.h, sh),
-        title:         panel.name,
-        visible:       panel.visible !== false,
-        ingressSession: null,
-        initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-      }).catch(e => console.error(`[${label}] create_panel_webview error:`, e));
-      panelLabelsRef.current.push(label);
-      // Give WebKit 2000ms to stabilise its subprocess before spawning the next
-      // webview — prevents the NetworkProcess from being overwhelmed at startup.
-      await new Promise(r => setTimeout(r, 2000));
+    const ordered = [...panels].sort((a, b) => (a.z_index ?? a.position) - (b.z_index ?? b.position));
+    const specs = ordered.map(panel => ({
+      label:         `panel-${panel.id}`,
+      url:           resolvePanelUrl(panel, config, deviceId),
+      x:             pct(panel.x, sw),
+      y:             pct(panel.y, sh),
+      width:         pct(panel.w, sw),
+      height:        pct(panel.h, sh),
+      visible:       panel.visible !== false,
+      ingressSession: null,
+      initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+    }));
+    panelLabelsRef.current = specs.map(s => s.label);
+    try {
+      // Single call hands every panel to Rust, which builds them on a spawned
+      // thread (with a gap between each) regardless of whether the controller
+      // webview is later occluded/suspended by a large child panel.
+      await invoke('create_panel_webviews', { panels: specs });
+    } catch (e) {
+      console.error('[openPanelWindows] create_panel_webviews error:', e);
     }
 
     if (floating?.url) {
       const fc = floating;
-      invoke('create_panel_webview', {
-        label:         'floating',
-        url:           fc.url!,
-        x:             ox + pct(fc.x ?? 10, sw),
-        y:             oy + pct(fc.y ?? 10, sh),
-        width:         pct(fc.w ?? 80, sw),
-        height:        pct(fc.h ?? 80, sh),
-        title:         'Floating',
-        visible:       false,
-        ingressSession: null,
-        initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-      }).catch(e => console.error('[floating] create_panel_webview error:', e));
+      try {
+        await invoke('create_panel_webviews', {
+          panels: [{
+            label:         'floating',
+            url:           fc.url!,
+            x:             pct(fc.x ?? 10, sw),
+            y:             pct(fc.y ?? 10, sh),
+            width:         pct(fc.w ?? 80, sw),
+            height:        pct(fc.h ?? 80, sh),
+            visible:       false,
+            ingressSession: null,
+            initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+          }],
+        });
+        panelLabelsRef.current.push('floating');
+      } catch (e) {
+        console.error('[floating] create_panel_webviews error:', e);
+      }
     }
   }, [config, deviceId]);
 
@@ -419,13 +457,12 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       }
     }
     const fc = loadedPage?.floating_config;
-    const sw = window.screen.width;
-    const sh = window.screen.height;
+    const { width: sw, height: sh } = await getDisplayGeometry();
     await invoke('create_panel_webview', {
       label:         'floating',
       url,
-      x:             fullscreen ? (window.screenX ?? 0) : (window.screenX ?? 0) + pct(fc?.x ?? 10, sw),
-      y:             fullscreen ? (window.screenY ?? 0) : (window.screenY ?? 0) + pct(fc?.y ?? 10, sh),
+      x:             fullscreen ? 0 : pct(fc?.x ?? 10, sw),
+      y:             fullscreen ? 0 : pct(fc?.y ?? 10, sh),
       width:         fullscreen ? sw : pct(fc?.w ?? 80, sw),
       height:        fullscreen ? sh : pct(fc?.h ?? 80, sh),
       title:         'Floating',
@@ -542,13 +579,12 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         if (existing) {
           await invoke('navigate_webview', { label, url }).catch(console.error);
         } else {
-          const sw = window.screen.width;
-          const sh = window.screen.height;
+          const { width: sw, height: sh } = await getDisplayGeometry();
           await invoke('create_panel_webview', {
             label,
             url,
-            x:             window.screenX ?? 0,
-            y:             window.screenY ?? 0,
+            x:             0,
+            y:             0,
             width:         sw,
             height:        sh,
             title:         'Canvas Display',
@@ -596,9 +632,8 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
             url: resolvePanelUrl(panel, config, deviceId),
           }).catch(console.error);
         }
-        const window = await WebviewWindow.getByLabel(`panel-${panelId}`);
         if (typeof cmd.visible === 'boolean') {
-          await (cmd.visible ? window?.show() : window?.hide())?.catch(() => {});
+          await invoke('set_webview_visibility', { label: `panel-${panelId}`, visible: cmd.visible }).catch(console.error);
         }
         break;
       }
@@ -678,15 +713,14 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   useEffect(() => {
     if (appState !== 'ready' || !deviceId || loadedPage) return;
     const label = 'panel-fallback';
-    WebviewWindow.getByLabel(label).then(existing => {
+    WebviewWindow.getByLabel(label).then(async existing => {
       if (existing) return;
-      const sw = window.screen.width;
-      const sh = window.screen.height;
+      const { width: sw, height: sh } = await getDisplayGeometry();
       invoke('create_panel_webview', {
         label,
         url:           `${config.haUrl}/canvas-ui-static/kiosk.html`,
-        x:             window.screenX ?? 0,
-        y:             window.screenY ?? 0,
+        x:             0,
+        y:             0,
         width:         sw,
         height:        sh,
         title:         'Canvas Display',
@@ -747,6 +781,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   // appState === 'ready' — main window is the invisible controller + corner tap
   return (
     <Box sx={{ width: '100%', height: '100%', position: 'relative', bgcolor: '#000' }}>
+      {/* corner tap target for opening settings */}
       <Box
         onClick={handleCornerTap}
         sx={{ position: 'absolute', top: 0, right: 0, width: 60, height: 60, zIndex: 9999, cursor: 'default' }}

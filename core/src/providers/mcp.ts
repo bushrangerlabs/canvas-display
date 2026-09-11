@@ -90,6 +90,10 @@ export class HttpJsonRpcMcpClient implements McpClient {
   private readonly fetchImpl: FetchImpl;
   private readonly name: string;
   private initialized = false;
+  /** MCP Streamable HTTP session id from the initialize response header. */
+  private sessionId: string | null = null;
+  /** Server name reported during initialize (used by healthCheck). */
+  private serverNameFromInit: string | null = null;
 
   constructor(opts: HttpJsonRpcMcpClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
@@ -99,8 +103,24 @@ export class HttpJsonRpcMcpClient implements McpClient {
     this.name = opts.name ?? 'mcp';
   }
 
-  private async rpc<T>(method: string, params: unknown): Promise<T> {
-    if (method !== 'initialize' && !this.initialized) {
+  private async rpc<T>(method: string, params: unknown, opts?: { isNotification?: boolean }): Promise<T> {
+    try {
+      return await this.rpcOnce<T>(method, params, opts);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // A session may expire server-side (e.g. the MCP server restarted).
+      // Re-initialize once and retry so long-lived clients recover.
+      if (!opts?.isNotification && method !== 'initialize' && /not initialized|session/i.test(message)) {
+        this.initialized = false;
+        this.sessionId = null;
+        return await this.rpcOnce<T>(method, params, opts);
+      }
+      throw err;
+    }
+  }
+
+  private async rpcOnce<T>(method: string, params: unknown, opts?: { isNotification?: boolean }): Promise<T> {
+    if (method !== 'initialize' && method !== 'notifications/initialized' && !this.initialized) {
       await this.initialize();
     }
     const id = Math.floor(Math.random() * 1e9);
@@ -112,14 +132,25 @@ export class HttpJsonRpcMcpClient implements McpClient {
         headers: {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
+          ...(this.sessionId ? { 'mcp-session-id': this.sessionId } : {}),
         },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+        body: JSON.stringify(
+          opts?.isNotification
+            ? { jsonrpc: '2.0', method, params }
+            : { jsonrpc: '2.0', id, method, params },
+        ),
         signal: controller.signal,
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`MCP ${res.status}: ${text.slice(0, 200)}`);
       }
+      // Streamable HTTP: the initialize response carries the session id that
+      // must accompany every subsequent request.
+      const sessionId = res.headers.get('mcp-session-id');
+      if (sessionId) this.sessionId = sessionId;
+      // JSON-RPC notifications are answered with 202 + empty body.
+      if (opts?.isNotification) return undefined as T;
       const contentType = res.headers.get('content-type') ?? '';
       const text = await res.text();
       let json: JsonRpcResponse;
@@ -131,6 +162,10 @@ export class HttpJsonRpcMcpClient implements McpClient {
       if (json.error) {
         throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
       }
+      const result = json.result as (T & { serverInfo?: { name?: string } }) | undefined;
+      if (method === 'initialize' && result?.serverInfo?.name) {
+        this.serverNameFromInit = result.serverInfo.name;
+      }
       return json.result as T;
     } finally {
       clearTimeout(timer);
@@ -138,12 +173,19 @@ export class HttpJsonRpcMcpClient implements McpClient {
   }
 
   private async initialize(): Promise<void> {
-    await this.rpc('initialize', {
+    await this.rpcOnce('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: this.clientInfo,
     });
     this.initialized = true;
+    // Streamable HTTP requires the initialized notification before the server
+    // considers the session ready for tools/list & tools/call.
+    try {
+      await this.rpcOnce('notifications/initialized', {}, { isNotification: true });
+    } catch {
+      // Some stateless servers ignore notifications; not fatal.
+    }
   }
 
   async listTools(): Promise<McpTool[]> {
@@ -160,26 +202,50 @@ export class HttpJsonRpcMcpClient implements McpClient {
   }
 
   async healthCheck(): Promise<HealthStatus> {
-    try {
+    const doInitialize = async (): Promise<HealthStatus> => {
       const res = await this.rpc<{ serverInfo?: { name?: string } }>('initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
         clientInfo: this.clientInfo,
       });
       this.initialized = true;
+      this.serverNameFromInit = res.serverInfo?.name ?? null;
       return {
         name: this.name,
         kind: 'HttpJsonRpcMcpClient',
         healthy: true,
         detail: `server: ${res.serverInfo?.name ?? 'unknown'}`,
       };
-    } catch (err) {
-      return {
-        name: this.name,
-        kind: 'HttpJsonRpcMcpClient',
-        healthy: false,
-        detail: err instanceof Error ? err.message : String(err),
-      };
+    };
+    try {
+      if (this.initialized) {
+        // Already-initialized session: verify liveness with a lightweight ping.
+        // Re-initializing an initialized session fails with "Server already
+        // initialized" on stateful Streamable HTTP servers.
+        await this.rpcOnce('ping', {});
+        return {
+          name: this.name,
+          kind: 'HttpJsonRpcMcpClient',
+          healthy: true,
+          detail: `server: ${this.serverNameFromInit ?? 'unknown'}`,
+        };
+      }
+      return await doInitialize();
+    } catch (firstErr) {
+      // The session may be gone (e.g. the MCP server restarted) — one
+      // full re-initialization attempt before reporting unhealthy.
+      try {
+        this.initialized = false;
+        this.sessionId = null;
+        return await doInitialize();
+      } catch (retryErr) {
+        return {
+          name: this.name,
+          kind: 'HttpJsonRpcMcpClient',
+          healthy: false,
+          detail: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        };
+      }
     }
   }
 }

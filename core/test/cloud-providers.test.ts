@@ -18,6 +18,7 @@ import { AnthropicLlm } from '../src/providers/cloud/anthropic.js';
 import { GeminiLlm } from '../src/providers/cloud/gemini.js';
 import { GroqLlm } from '../src/providers/cloud/groq.js';
 import { AzureOpenAiLlm } from '../src/providers/cloud/azure.js';
+import { CodexLlm } from '../src/providers/cloud/codex.js';
 import { mockFetch, jsonResponse } from './helpers.js';
 import type { FetchImpl } from '../src/providers/llm.js';
 
@@ -91,6 +92,39 @@ test('OpenRouterLlm.chat works without referer/title headers', async () => {
   const llm = new OpenRouterLlm({ apiKey: 'sk-or', model: 'x/y', fetchImpl });
   const out = await llm.chat([{ role: 'user', content: 'hi' }]);
   assert.equal(out, 'ok');
+});
+
+test('OpenRouterLlm.chatWithTools honors maxTokens and disableThinking options', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  });
+  const llm = new OpenRouterLlm({ apiKey: 'sk-or', model: 'x/y', fetchImpl });
+  await llm.chatWithTools(
+    [{ role: 'user', content: 'hi' }],
+    [{ type: 'function', function: { name: 'f', description: 'd', parameters: {} } }],
+    { maxTokens: 16000, disableThinking: true },
+  );
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.max_tokens, 16000);
+  assert.deepEqual(body.reasoning, { enabled: false });
+});
+
+test('OpenRouterLlm.chatWithTools omits options when not provided', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+  });
+  const llm = new OpenRouterLlm({ apiKey: 'sk-or', model: 'x/y', fetchImpl });
+  await llm.chatWithTools(
+    [{ role: 'user', content: 'hi' }],
+    [{ type: 'function', function: { name: 'f', description: 'd', parameters: {} } }],
+  );
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.max_tokens, undefined);
+  assert.equal(body.reasoning, undefined);
 });
 
 // ─── Anthropic ─────────────────────────────────────────────────────────────
@@ -290,6 +324,158 @@ test('AzureOpenAiLlm supports custom baseUrl with {resource} placeholder', async
   assert.ok(capturedUrl.startsWith('https://myorg.example.com/openai/'), `got ${capturedUrl}`);
 });
 
+// ─── Codex (Responses API) ───────────────────────────────────────────────
+
+test('CodexLlm.chat posts to /v1/responses with Bearer auth and Responses API format', async () => {
+  let capturedUrl = '';
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((url, init) => {
+    capturedUrl = url;
+    capturedInit = init;
+    return jsonResponse({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'Hello from Codex' }] }],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'sk-test', model: 'codex-mini-latest', fetchImpl });
+  const out = await llm.chat([{ role: 'user', content: 'hi' }]);
+  assert.equal(out, 'Hello from Codex');
+  assert.ok(capturedUrl.endsWith('/v1/responses'), `got ${capturedUrl}`);
+  const headers = capturedInit?.headers as Record<string, string>;
+  assert.equal(headers.authorization, 'Bearer sk-test');
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.model, 'codex-mini-latest');
+  assert.equal(body.input[0].type, 'message');
+  assert.equal(body.input[0].content, 'User: hi');
+  assert.equal(typeof body.max_output_tokens, 'number');
+});
+
+test('CodexLlm.chat extracts system message as instructions', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  await llm.chat([
+    { role: 'system', content: 'You are helpful' },
+    { role: 'user', content: 'hi' },
+  ]);
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.instructions, 'You are helpful');
+  assert.equal(body.input[0].content, 'User: hi');
+});
+
+test('CodexLlm.chat formats multi-turn conversation', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  await llm.chat([
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'hi there' },
+    { role: 'user', content: 'bye' },
+  ]);
+  const body = JSON.parse(capturedInit?.body as string);
+  const input = body.input[0].content;
+  assert.ok(input.includes('User: hello'));
+  assert.ok(input.includes('Assistant: hi there'));
+  assert.ok(input.includes('User: bye'));
+});
+
+test('CodexLlm.chatWithTools sends tools in Responses API format', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({
+      output: [
+        { type: 'function_call', call_id: 'call_1', name: 'get_weather', arguments: '{"city":"NYC"}' },
+      ],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  const result = await llm.chatWithTools(
+    [{ role: 'user', content: 'weather?' }],
+    [{ type: 'function', function: { name: 'get_weather', description: 'Get weather', parameters: { type: 'object', properties: {} } } }],
+  );
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.tools[0].type, 'function');
+  assert.equal(body.tools[0].name, 'get_weather');
+  assert.equal(body.tools[0].strict, true);
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].function.name, 'get_weather');
+  assert.equal(result.toolCalls[0].function.arguments, '{"city":"NYC"}');
+});
+
+test('CodexLlm.chatWithTools parses mixed text + tool calls', async () => {
+  const fetchImpl: FetchImpl = mockFetch(() => jsonResponse({
+    output: [
+      { type: 'message', content: [{ type: 'output_text', text: 'Let me check' }] },
+      { type: 'function_call', call_id: 'call_2', name: 'search', arguments: '{"q":"test"}' },
+    ],
+  }));
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  const result = await llm.chatWithTools(
+    [{ role: 'user', content: 'search' }],
+    [{ type: 'function', function: { name: 'search', description: 'Search', parameters: {} } }],
+  );
+  assert.equal(result.content, 'Let me check');
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].function.name, 'search');
+});
+
+test('CodexLlm.chat throws on non-ok status', async () => {
+  const fetchImpl: FetchImpl = mockFetch(() => jsonResponse({ error: 'rate limited' }, 429));
+  const llm = new CodexLlm({ apiKey: 'sk', model: 'm', fetchImpl });
+  await assert.rejects(() => llm.chat([{ role: 'user', content: 'hi' }]), /Codex 429/);
+});
+
+test('CodexLlm.healthCheck probes /v1/models', async () => {
+  let capturedUrl = '';
+  const fetchImpl: FetchImpl = mockFetch((url) => {
+    capturedUrl = url;
+    return jsonResponse({ object: 'list', data: [] });
+  });
+  const llm = new CodexLlm({ apiKey: 'sk', model: 'm', fetchImpl });
+  const h = await llm.healthCheck();
+  assert.equal(h.healthy, true);
+  assert.equal(h.kind, 'CodexLlm');
+  assert.ok(capturedUrl.endsWith('/v1/models'));
+});
+
+test('CodexLlm respects temperature config', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', temperature: 0.3, fetchImpl });
+  await llm.chat([{ role: 'user', content: 'hi' }]);
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.temperature, 0.3);
+});
+
+test('CodexLlm omits temperature when not configured', async () => {
+  let capturedInit: RequestInit | undefined;
+  const fetchImpl: FetchImpl = mockFetch((_url, init) => {
+    capturedInit = init;
+    return jsonResponse({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+    });
+  });
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  await llm.chat([{ role: 'user', content: 'hi' }]);
+  const body = JSON.parse(capturedInit?.body as string);
+  assert.equal(body.temperature, undefined);
+});
+
 // ─── Cross-cutting: all cloud adapters implement LlmProvider ──────────────
 
 test('All cloud adapters expose chat() and healthCheck() returning HealthStatus', async () => {
@@ -313,4 +499,16 @@ test('All cloud adapters expose chat() and healthCheck() returning HealthStatus'
     assert.equal(typeof h.healthy, 'boolean');
     assert.equal(typeof h.kind, 'string');
   }
+});
+
+test('CodexLlm (Responses API) exposes chat() and healthCheck() returning HealthStatus', async () => {
+  const fetchImpl: FetchImpl = mockFetch(() => jsonResponse({
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }],
+  }));
+  const llm = new CodexLlm({ apiKey: 'k', model: 'm', fetchImpl });
+  const reply = await llm.chat([{ role: 'user', content: 'hi' }]);
+  assert.equal(reply, 'ok');
+  const h = await llm.healthCheck();
+  assert.equal(typeof h.healthy, 'boolean');
+  assert.equal(h.kind, 'CodexLlm');
 });

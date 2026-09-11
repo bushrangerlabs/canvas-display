@@ -22,6 +22,7 @@ import { Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogCont
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { nanoid } from 'nanoid';
 import { clearConfig, saveDeviceId, type AppConfig } from '../store/config';
+import { cachePage, loadActiveCachedPage } from '../store/pageLibrary';
 import { useServerSocket } from '../hooks/useServerSocket';
 import { invoke } from '../tauriInvoke';
 import SettingsScreen from './SettingsScreen';
@@ -29,7 +30,7 @@ import SettingsScreen from './SettingsScreen';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PagePanel {
-  id: number;
+  id: string;
   name: string;
   x: number;   // 0-100 %
   y: number;
@@ -38,6 +39,11 @@ interface PagePanel {
   view_id: string | null;
   url: string | null;
   position: number;
+  content_type?: 'url' | 'scene';
+  scene_id?: string | null;
+  z_index?: number;
+  visible?: boolean;
+  opacity?: number;
 }
 
 interface FloatingConfig {
@@ -49,7 +55,7 @@ interface FloatingConfig {
 }
 
 interface LoadedPage {
-  page_id: number;
+  page_id: string;
   panels: PagePanel[];
   floating_config: FloatingConfig | null;
 }
@@ -97,6 +103,9 @@ async function closeAllPanelWindows() {
 }
 
 function resolvePanelUrl(panel: PagePanel, config: AppConfig, _deviceId: string): string {
+  if (panel.content_type === 'scene' && panel.scene_id) {
+    return `${config.serverUrl.replace(/\/$/, '')}/display/scenes/${encodeURIComponent(panel.scene_id)}`;
+  }
   if (panel.url) return panel.url;
   if (panel.view_id) return `${config.haUrl}/canvas-ui-static/kiosk.html#${encodeURIComponent(panel.view_id)}`;
   return `${config.haUrl}/canvas-ui-static/kiosk.html`;
@@ -234,7 +243,10 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     const sw = window.screen.width;
     const sh = window.screen.height;
 
-    for (const panel of panels) {
+    const orderedPanels = [...panels].sort(
+      (a, b) => (a.z_index ?? a.position) - (b.z_index ?? b.position),
+    );
+    for (const panel of orderedPanels) {
       const label = `panel-${panel.id}`;
       const directUrl = resolvePanelUrl(panel, config, deviceId);
 
@@ -246,11 +258,14 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         width:          pct(panel.w, sw),
         height:         pct(panel.h, sh),
         title:          panel.name,
-        visible:        true,
+        visible:        panel.visible !== false,
         ingressSession: null,
         initScript:     config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
       }).catch(e => console.error(`[${label}] create_panel_webview error:`, e));
       panelLabelsRef.current.push(label);
+      if (panel.visible === false) {
+        await invoke('hide_webview', { label }).catch(() => {});
+      }
       // Give WebView time to stabilise before spawning the next one.
       await new Promise(r => setTimeout(r, 500));
     }
@@ -272,8 +287,27 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     }
   }, [config, deviceId]);
 
+  // Restore the last complete page while the server connection is recovering.
+  useEffect(() => {
+    let cancelled = false;
+    void loadActiveCachedPage<PagePanel, FloatingConfig>().then(async cached => {
+      if (!cached || cancelled) return;
+      const page: LoadedPage = {
+        page_id: cached.page_id,
+        panels: cached.panels.map(panel => ({ ...panel, id: String(panel.id) })),
+        floating_config: cached.floating_config,
+      };
+      setLoadedPage(page);
+      await openPanelWindows(page.panels, page.floating_config);
+    });
+    return () => { cancelled = true; };
+  }, [openPanelWindows]);
+
   // ── WS command handler ────────────────────────────────────────────────────
-  const handleCommand = useCallback(async (cmd: Record<string, unknown>) => {
+  const handleCommand = useCallback(async (
+    cmd: Record<string, any>,
+    respond: (message: Record<string, unknown>) => void = () => {},
+  ) => {
     console.log('[KioskScreen] command:', cmd);
     switch (cmd.type) {
 
@@ -308,21 +342,65 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       case 'load_page': {
         const pageData = cmd.page_data as { panels: PagePanel[]; floating_config: FloatingConfig | null };
         const page: LoadedPage = {
-          page_id:         cmd.page_id as number,
-          panels:          pageData?.panels ?? [],
+          page_id:         String(cmd.page_id),
+          panels:          (pageData?.panels ?? []).map(panel => ({ ...panel, id: String(panel.id) })),
           floating_config: pageData?.floating_config ?? null,
         };
         setLoadedPage(page);
+        await cachePage(page);
         await openPanelWindows(page.panels, page.floating_config);
         break;
       }
 
       case 'navigate_panel': {
-        const panelId = cmd.panel_id as number;
+        const panelId = String(cmd.panel_id);
         const url     = cmd.url as string;
         if (panelId != null && url) {
           await invoke('navigate_webview', { label: `panel-${panelId}`, url }).catch(console.error);
         }
+        break;
+      }
+
+      case 'panel.patch': {
+        const panelId = String(cmd.panel_id);
+        const content = cmd.content as { type?: string; url?: string; scene_id?: string } | undefined;
+        const panel = loadedPage?.panels.find(item => item.id === panelId);
+        if (panel && content) {
+          panel.content_type = content.type === 'scene' ? 'scene' : 'url';
+          panel.url = content.url ?? null;
+          panel.scene_id = content.scene_id ?? null;
+          await invoke('navigate_webview', {
+            label: `panel-${panelId}`,
+            url: resolvePanelUrl(panel, config, deviceId),
+          }).catch(console.error);
+        }
+        if (typeof cmd.visible === 'boolean') {
+          await invoke(cmd.visible ? 'show_webview' : 'hide_webview', {
+            label: `panel-${panelId}`,
+          }).catch(console.error);
+        }
+        break;
+      }
+
+      case 'panel.reload': {
+        const panelId = String(cmd.panel_id);
+        const panel = loadedPage?.panels.find(item => item.id === panelId);
+        if (panel) {
+          await invoke('navigate_webview', {
+            label: `panel-${panelId}`,
+            url: resolvePanelUrl(panel, config, deviceId),
+          }).catch(console.error);
+        }
+        break;
+      }
+
+      case 'device_request': {
+        respond({
+          type: 'device_response',
+          request_id: String(cmd.request_id ?? ''),
+          ok: false,
+          error: `Android device action is not supported: ${String(cmd.action ?? '')}`,
+        });
         break;
       }
 
@@ -383,7 +461,7 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       // Generic command envelope sent by POST /api/devices/:id/command
       case 'command': {
         const action = cmd.action as string | undefined;
-        if (action) await handleCommand({ ...cmd, ...(cmd.payload as Record<string, unknown> ?? {}), type: action });
+        if (action) await handleCommand({ ...cmd, ...(cmd.payload ?? {}), type: action }, respond);
         break;
       }
     }

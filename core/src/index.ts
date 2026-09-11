@@ -1215,11 +1215,36 @@ async function main(): Promise<void> {
     }
   });
 
+  // Same command surface in RESTful form: POST /api/ha/services/:domain/:service
+  // with the request body as the service data. This is the shape the widget layer
+  // (and the HTML widget's CanvasHermes bridge) calls, so both variants must exist
+  // or every entity control silently 404s.
+  fastify.post('/api/ha/services/:domain/:service', { preHandler: requireAdmin({ roles: ['admin'] }) }, async (request, reply) => {
+    if (!ha) {
+      reply.code(503);
+      return { error: 'ha_not_configured' };
+    }
+    const { domain, service } = request.params as { domain?: string; service?: string };
+    if (typeof domain !== 'string' || !domain || typeof service !== 'string' || !service) {
+      reply.code(400);
+      return { error: 'domain and service are required path segments' };
+    }
+    const raw = request.body as unknown;
+    const serviceData = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+    try {
+      const affected = await ha.callService(domain, service, serviceData);
+      return { ok: true, affected: affected.length };
+    } catch (err) {
+      reply.code(502);
+      return { error: 'ha_service_failed', detail: (err as Error).message };
+    }
+  });
+
   // Minimal admin API stub — Phase 2 expands this (auth, devices, scenes, commands).
   fastify.get('/api/devices', async () => {
     const pool = getPool(config);
     const result = await pool.query(
-      'SELECT id, name, architecture, status, last_seen, audio_config, voice_config FROM devices ORDER BY last_seen DESC',
+      'SELECT id, name, architecture, status, last_seen, audio_config, voice_config, display_width, display_height FROM devices ORDER BY last_seen DESC',
     );
     return { devices: result.rows };
   });
@@ -1333,6 +1358,14 @@ async function main(): Promise<void> {
           };
         }),
       };
+      // The kiosk browser is connected to Core's legacy WebSocket. Deliver its
+      // visual command here rather than making Edge post the same command back
+      // to Core, which otherwise recursively issues another desired state.
+      sendCommand(deviceId, {
+        type: 'load_page',
+        page_id: page.id,
+        page_data: effectivePage,
+      });
       const revision = await setDesiredState(
         stateRepo,
         deviceId,
@@ -1990,7 +2023,7 @@ async function main(): Promise<void> {
     preHandler: requireAdmin({ roles: ['admin'] }),
   }, async (request, reply) => {
     const body = request.body as
-      | { messages?: unknown; providerId?: string }
+      | { messages?: unknown; providerId?: string; options?: { disableThinking?: boolean; maxTokens?: number; noTools?: boolean } }
       | undefined;
     if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
       reply.code(400);
@@ -2048,32 +2081,76 @@ async function main(): Promise<void> {
     // Gather tools from the native tool registry only. MCP tools are already
     // registered there by intelligence.ts with the `mcp.<server>.<tool>` prefix.
     // Duplicating them from the MCP client directly would confuse the LLM.
-    const toolDefinitions: import('./providers/llm.js').ToolDefinition[] = [];
-
+    // Rebuilt every loop iteration so MCP tools that appear mid-conversation
+    // (e.g. after a tool-list refresh) become available to the model.
     const latestUserMessage = [...messages].reverse().find(message => message.role === 'user')?.content ?? '';
-    const nativeTools = selectToolsForRequest(intelligence.toolRegistry.listTools('admin'), latestUserMessage);
-    for (const tool of nativeTools) {
-      toolDefinitions.push({
-        type: 'function',
+
+    const buildToolDefinitions = (): import('./providers/llm.js').ToolDefinition[] => {
+      const nativeTools = body.options?.noTools
+        ? []
+        : selectToolsForRequest(intelligence.toolRegistry.listTools('admin'), latestUserMessage);
+      return nativeTools.map((tool) => ({
+        type: 'function' as const,
         function: {
           name: tool.name,
           description: tool.description,
           parameters: tool.schema as Record<string, unknown>,
         },
-      });
+      }));
+    };
+
+    // MCP servers can change their exposed tool set at runtime (e.g. HA-MCP
+    // only exposes write tools after read-only mode is disabled). Refresh the
+    // registry when the cached list is older than the TTL so the model always
+    // sees the current tool surface.
+    const MCP_TOOLS_TTL_MS = 60_000;
+    if (!body.options?.noTools && Date.now() - intelligence.getMcpToolsLastRefreshAt() > MCP_TOOLS_TTL_MS) {
+      try {
+        await intelligence.reloadMcpTools();
+        console.log('[core][ai-chat] refreshed MCP tool registry (stale)');
+      } catch (err) {
+        console.error('[core][ai-chat] MCP tool refresh failed:', err instanceof Error ? err.message : err);
+      }
     }
+    let toolDefinitions = buildToolDefinitions();
 
     const mcpClient = intelligence.providers.mcp;
 
     // ── Chat loop with tool execution ─────────────────────────────────────
     // Up to 5 iterations to handle chains of tool calls.
-    const MAX_ITERATIONS = 5;
+    const MAX_ITERATIONS = 8;
     let currentMessages: import('./providers/types.js').ChatMessage[] = messages;
     let finalContent = '';
+    let mcpRefreshedInConversation = false;
+
+    // Tool-discipline system prompt. The chat has broad access to MCP tools —
+    // including mutating ones (HA config writes, Node-RED flow edits, service
+    // calls) — so set explicit expectations for when tools may be used.
+    const toolSystemPrompt = [
+      'You are the Canvas Core smart-home assistant. You have tools for Home Assistant (ha-mcp), Node-RED flow editing (node-red mcp), weather, sport and web search.',
+      'Tool discipline:',
+      '- Questions, reviews, analyses and "report/tell me/show me/what needs fixing" style requests are answered IN CHAT. Inspect with read-only tools (get/list/search) and reply — do NOT create notifications, issues or reports anywhere.',
+      '- ha_report_issue ONLY generates a bug-report template for the ha-mcp server itself. Use it only when the user explicitly asks to file an issue/bug report.',
+      '- Mutating tools (create/set/update/delete/deploy/inject/call_service/…) are used only when the user explicitly asks you to make that change. Changing things the user did not ask to change is a failure.',
+      '- Node-RED edits are staged on the server; call the deploy tool to make them live and tell the user you did.',
+      '- If a tool call fails with "not available", the MCP tool list was refreshed — retry once using an exact function name from the provided list.',
+      '- Prefer the fewest tool calls that answer the request, and summarise tool output in your reply instead of dumping it.',
+    ].join('\n');
 
     try {
       for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-        const result = await llmProvider.chatWithTools(currentMessages, toolDefinitions);
+        // Prepend the tool-discipline system prompt on EVERY turn so it is
+        // never lost mid-conversation.
+        const messagesForLlm: import('./providers/types.js').ChatMessage[] = [
+          { role: 'system', content: toolSystemPrompt },
+          ...currentMessages,
+        ];
+        const result = await llmProvider.chatWithTools(messagesForLlm, toolDefinitions, {
+          // Sensible floor so long multi-part reports don't truncate when the
+          // client sends no explicit cap.
+          maxTokens: body.options?.maxTokens ?? 4000,
+          disableThinking: body.options?.disableThinking,
+        });
 
         // Accumulate assistant content.
         if (result.content) {
@@ -2113,6 +2190,7 @@ async function main(): Promise<void> {
                   digest,
                   expiresAt: Date.now() + 60_000,
                 });
+
                 return {
                   reply: `Confirmation required before running ${tc.function.name}.`,
                   providerId,
@@ -2159,7 +2237,29 @@ async function main(): Promise<void> {
               }
               toolResult = JSON.stringify(execResult);
             } else {
-              toolResult = JSON.stringify({ ok: false, message: `Tool '${tc.function.name}' not found` });
+              // The model may reference a tool that only appeared after the
+              // cached MCP tool list was built (e.g. HA-MCP starts exposing
+              // write tools when read-only mode is disabled). Force one tool
+              // registry refresh; the next loop iteration re-runs with the
+              // updated tool definitions so the model can retry with the
+              // correct current function names.
+              if (/^mcp[._-]/i.test(tc.function.name) && !mcpRefreshedInConversation) {
+                mcpRefreshedInConversation = true;
+                try {
+                  await intelligence.reloadMcpTools();
+                  toolDefinitions = buildToolDefinitions();
+                  console.log('[core][ai-chat] refreshed MCP tool registry (unknown tool requested)');
+                  toolResult = JSON.stringify({
+                    ok: false,
+                    message: `Tool '${tc.function.name}' is not available. The MCP tool list has just been refreshed — if this capability now exists, call it again using one of the exact function names provided.`,
+                  });
+                } catch (refreshErr) {
+                  console.error('[core][ai-chat] MCP tool refresh failed:', refreshErr instanceof Error ? refreshErr.message : refreshErr);
+                  toolResult = JSON.stringify({ ok: false, message: `Tool '${tc.function.name}' not found` });
+                }
+              } else {
+                toolResult = JSON.stringify({ ok: false, message: `Tool '${tc.function.name}' not found` });
+              }
             }
           } catch (err) {
             toolResult = JSON.stringify({
@@ -2176,6 +2276,34 @@ async function main(): Promise<void> {
         }
       }
 
+      // If the loop ran out of turns while the model was still working (last
+      // message is a tool result), or it produced no prose at all, force one
+      // final no-tools call so the user gets the actual findings instead of a
+      // mid-investigation narration or silence.
+      const lastMessage = currentMessages[currentMessages.length - 1];
+      const loopExhausted = lastMessage?.role === 'tool';
+      if (loopExhausted || !finalContent.trim()) {
+        currentMessages.push({
+          role: 'system',
+          content: loopExhausted
+            ? 'Your tool-calling turns are exhausted. Using the tool results already gathered, write your FINAL report to the user now in plain prose. Do not request more tools. If some checks could not be completed, state that explicitly in the report.'
+            : 'You have used all available tool-calling turns. Answer the user now in plain prose using only the tool results already gathered. Do not request more tools.',
+        });
+        const final = await llmProvider.chatWithTools(
+          [{ role: 'system', content: toolSystemPrompt }, ...currentMessages],
+          [],
+          {
+            maxTokens: body.options?.maxTokens,
+            disableThinking: body.options?.disableThinking,
+          },
+        );
+        if (final.content && final.content.trim()) {
+          finalContent = final.content;
+        }
+      }
+      if (!finalContent.trim()) {
+        finalContent = 'I ran out of tool-calling turns before producing an answer. Please try again or narrow the request.';
+      }
       return { reply: finalContent, providerId, model };
     } catch (err) {
       reply.code(502);
@@ -2201,7 +2329,19 @@ async function main(): Promise<void> {
       intelligence,
       mcp: intelligence.providers.mcp,
     }, pending.digest);
-    return { reply: result.message, toolResult: result };
+    // Include the tool's own output in the reply so the confirmation turn
+    // actually shows what happened, instead of a bare "executed" line.
+    let confirmationReply = result.message;
+    if (Array.isArray(result.data) && result.data.length > 0) {
+      const text = result.data
+        .map((block: Record<string, unknown>) => (block.type === 'text' ? String(block.text ?? '') : `[${block.type}]`))
+        .join('\n')
+        .trim();
+      if (text) confirmationReply += '\n\n' + text.slice(0, 2000);
+    } else if (typeof result.data === 'string' && result.data.trim()) {
+      confirmationReply += '\n\n' + result.data.slice(0, 2000);
+    }
+    return { reply: confirmationReply, toolResult: result };
   });
 
   await fastify.listen({ host: config.host, port: config.port });

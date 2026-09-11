@@ -45,6 +45,9 @@ export interface DeviceRow {
   audio_config?: Record<string, any>;
   /** Per-device voice configuration (wake_word, wake_threshold, wake_enabled, language, pipeline). */
   voice_config?: Record<string, any>;
+  /** Physical display resolution in native pixels (null = unknown). Drives Editor canvas size and Pages preview aspect ratio. */
+  display_width?: number | null;
+  display_height?: number | null;
 }
 
 export interface InvitationRecord {
@@ -206,6 +209,46 @@ export async function revokeDevice(repo: DeviceRepository, id: string): Promise<
   return rowToDevice(res.rows[0]);
 }
 
+export interface DeviceUpdate {
+  name?: string;
+  display_width?: number | null;
+  display_height?: number | null;
+}
+
+/** Patch mutable, admin-editable device fields (name, display resolution). */
+export async function updateDevice(
+  repo: DeviceRepository,
+  id: string,
+  patch: DeviceUpdate,
+): Promise<DeviceRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (typeof patch.name === 'string') {
+    sets.push(`name = $${i++}`);
+    params.push(patch.name);
+  }
+  if (patch.display_width === null || typeof patch.display_width === 'number') {
+    sets.push(`display_width = $${i++}`);
+    params.push(patch.display_width);
+  }
+  if (patch.display_height === null || typeof patch.display_height === 'number') {
+    sets.push(`display_height = $${i++}`);
+    params.push(patch.display_height);
+  }
+  if (sets.length === 0) {
+    const found = (await listDevices(repo)).find(d => d.id === id);
+    return found ?? null;
+  }
+  params.push(id);
+  const res = await repo.query(
+    `UPDATE devices SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+    params,
+  );
+  if (res.rowCount === 0 || !res.rows[0]) return null;
+  return rowToDevice(res.rows[0]);
+}
+
 export async function listInvitations(repo: DeviceRepository): Promise<InvitationRecord[]> {
   const res = await repo.query(
     `SELECT id, scope, created_by, created_at, expires_at, used_at, used_by_device_id FROM device_invitations ORDER BY created_at DESC`,
@@ -237,6 +280,8 @@ function rowToDevice(row: any): DeviceRow {
     cert_fingerprint: row.cert_fingerprint ?? null,
     audio_config: row.audio_config ?? undefined,
     voice_config: row.voice_config ?? undefined,
+    display_width: row.display_width ?? null,
+    display_height: row.display_height ?? null,
   };
 }
 
@@ -304,6 +349,23 @@ export async function registerDeviceRoutes(
         scope: result.scope,
         expires_at: result.expires_at,
       };
+    },
+  );
+
+  // Update mutable device fields (name, display resolution). Admin-only, CSRF-protected.
+  fastify.put<{ Params: { id: string }; Body: DeviceUpdate }>(
+    '/api/admin/devices/:id',
+    { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) },
+    async (request, reply) => {
+      const id = request.params.id;
+      const body = request.body ?? {};
+      const patch: DeviceUpdate = {};
+      if (typeof body.name === 'string') patch.name = body.name;
+      if (body.display_width === null || typeof body.display_width === 'number') patch.display_width = body.display_width;
+      if (body.display_height === null || typeof body.display_height === 'number') patch.display_height = body.display_height;
+      const updated = await updateDevice(repo, id, patch);
+      if (!updated) return reply.code(404).send({ error: 'Device not found' });
+      return { device: updated };
     },
   );
 

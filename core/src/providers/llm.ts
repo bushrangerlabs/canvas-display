@@ -43,7 +43,11 @@ export interface LlmProvider {
    * text, tool calls, or both. The caller is responsible for executing
    * tool calls and looping back with results.
    */
-  chatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult>;
+  chatWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    opts?: ChatWithToolsOptions,
+  ): Promise<ChatWithToolsResult>;
   /** Analyze a base64 image when the backing model supports multimodal input. */
   analyzeImage?(prompt: string, imageBase64: string, mimeType: string): Promise<string>;
   /** Lightweight availability probe. */
@@ -65,6 +69,15 @@ export interface OpenAiCompatibleLlmOptions {
   name?: string;
 }
 
+/** Per-request knobs for `chatWithTools` (codegen / latency tuning). */
+export interface ChatWithToolsOptions {
+  /** Cap the generated tokens so the call terminates predictably. */
+  maxTokens?: number;
+  /** Disable chain-of-thought for reasoning models (e.g. Qwen3) so the
+   *  answer lands in `content` quickly instead of being swallowed by thinking. */
+  disableThinking?: boolean;
+}
+
 const DEFAULT_MODEL = 'local';
 
 export class OpenAiCompatibleLlm implements LlmProvider {
@@ -79,7 +92,7 @@ export class OpenAiCompatibleLlm implements LlmProvider {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
     this.model = opts.model ?? DEFAULT_MODEL;
     this.temperature = opts.temperature ?? 0.7;
-    this.timeoutMs = opts.timeoutMs ?? 120_000;
+    this.timeoutMs = opts.timeoutMs ?? 600_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.name = opts.name ?? 'llm';
   }
@@ -143,7 +156,11 @@ export class OpenAiCompatibleLlm implements LlmProvider {
     } finally { clearTimeout(timer); }
   }
 
-  async chatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult> {
+  async chatWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    opts?: ChatWithToolsOptions,
+  ): Promise<ChatWithToolsResult> {
     const url = `${this.baseUrl}/chat/completions`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -153,6 +170,12 @@ export class OpenAiCompatibleLlm implements LlmProvider {
         messages,
         temperature: this.temperature,
       };
+      if (opts?.maxTokens != null) {
+        body.max_tokens = opts.maxTokens;
+      }
+      if (opts?.disableThinking) {
+        body.chat_template_kwargs = { enable_thinking: false };
+      }
       if (tools.length > 0) {
         body.tools = tools;
       }
@@ -279,7 +302,7 @@ export class DegradedLlm implements LlmProvider {
     return this.fallback;
   }
 
-  async chatWithTools(_messages: ChatMessage[], _tools: ToolDefinition[]): Promise<ChatWithToolsResult> {
+  async chatWithTools(_messages: ChatMessage[], _tools: ToolDefinition[], _opts?: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
     return { content: this.fallback, toolCalls: [] };
   }
 

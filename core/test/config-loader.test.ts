@@ -25,6 +25,7 @@ import { AnthropicLlm } from '../src/providers/cloud/anthropic.js';
 import { GeminiLlm } from '../src/providers/cloud/gemini.js';
 import { GroqLlm } from '../src/providers/cloud/groq.js';
 import { AzureOpenAiLlm } from '../src/providers/cloud/azure.js';
+import { CodexLlm } from '../src/providers/cloud/codex.js';
 import { OllamaLlm } from '../src/providers/local/ollama.js';
 import { mockFetch, jsonResponse } from './helpers.js';
 import type { FetchImpl } from '../src/providers/llm.js';
@@ -176,6 +177,11 @@ test('buildProviderInstance: builds GroqLlm for kind=groq', () => {
 test('buildProviderInstance: builds AzureOpenAiLlm for kind=azure', () => {
   const instance = buildProviderInstance('llm', 'azure', { apiKey: 'az-key', resource: 'my-org', deployment: 'gpt-4o-deploy' }, { fetchImpl: noopFetch });
   assert.ok(instance instanceof AzureOpenAiLlm);
+});
+
+test('buildProviderInstance: builds CodexLlm for kind=codex', () => {
+  const instance = buildProviderInstance('llm', 'codex', { apiKey: 'sk-codex', model: 'codex-mini-latest' }, { fetchImpl: noopFetch });
+  assert.ok(instance instanceof CodexLlm);
 });
 
 test('buildProviderInstance: builds OllamaLlm for kind=ollama', () => {

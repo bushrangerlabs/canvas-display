@@ -16,7 +16,8 @@ export type FieldType =
   | 'textarea'
   | 'font'
   | 'file'
-  | 'code-editor';
+  | 'code-editor'
+  | 'entity-list';
 
 export interface FieldOption {
   value: string | number;

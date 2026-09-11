@@ -81,6 +81,17 @@ export class MultiMcpManager implements McpClient {
   }
 
   /**
+   * Forces the next listTools() call to re-query every server.
+   *
+   * MCP servers can change their exposed tool set at runtime (e.g. HA-MCP
+   * exposes write tools only after read-only mode is disabled), so callers
+   * should invalidate the cache before re-registering tools.
+   */
+  invalidateToolCache(): void {
+    this.cachedTools = null;
+  }
+
+  /**
    * Calls a tool by its namespaced name (`<server_name>.<tool_name>`).
    * If the name doesn't contain a dot, tries each server in order.
    */

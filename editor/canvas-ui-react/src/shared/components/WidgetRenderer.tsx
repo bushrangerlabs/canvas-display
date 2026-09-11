@@ -69,6 +69,7 @@ const widgetComponents: Record<string, React.LazyExoticComponent<React.FC<Widget
   screensaver: lazy(() => import('../widgets/ScreensaverWidget')),
   scrollablecontainer: lazy(() => import('../widgets/ScrollableContainerWidget')),
   entitycard: lazy(() => import('../widgets/EntityCardWidget')),
+  customdashboard: lazy(() => import('../widgets/CustomDashboardWidget')),
 };
 
 const SNAP_THRESHOLD = 5; // pixels

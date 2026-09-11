@@ -501,9 +501,18 @@ export class HomeAssistantClient {
       const event = msg.event as {
         event_type?: string;
         a?: unknown;
+        c?: unknown;
         d?: unknown;
         data?: { new_state?: unknown };
       };
+      // Real HA `subscribe_entities` pushes are COMPRESSED and carry no
+      // `event_type`: `a` = added/initial states, `c` = per-entity changes.
+      // Without this branch the cache is primed once by the REST pull and then
+      // never updates again, silently serving stale states forever.
+      if (!event.event_type && (event.a || event.c)) {
+        this.applyCompressedEvent(event.a, event.c);
+        return;
+      }
       if (event.event_type === 'state_changed' && event.a && event.d) {
         const newState = normalizeState(event.d);
         if (newState) {
@@ -526,6 +535,53 @@ export class HomeAssistantClient {
             this.notifyEntityChange(e.entityId, e);
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Apply HA's compressed `subscribe_entities` payloads.
+   *
+   * `a` (add) maps entity_id -> { s: state, a: attributes, lc, lu }.
+   * `c` (change) maps entity_id -> { "+": {partial}, "-": {removed attrs} } and
+   * must be merged onto the cached entity, since only deltas are sent.
+   */
+  private applyCompressedEvent(added: unknown, changed: unknown): void {
+    const toEntity = (entityId: string, raw: Record<string, unknown>): HaEntity => ({
+      entityId,
+      state: typeof raw.s === 'string' ? raw.s : String(raw.s ?? ''),
+      attributes: (raw.a as Record<string, unknown>) ?? {},
+      ...(typeof raw.lc === 'number' ? { lastChanged: new Date(raw.lc * 1000).toISOString() } : {}),
+      ...(typeof raw.lu === 'number' ? { lastUpdated: new Date(raw.lu * 1000).toISOString() } : {}),
+    });
+
+    if (added && typeof added === 'object') {
+      for (const [entityId, raw] of Object.entries(added as Record<string, unknown>)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const entity = toEntity(entityId, raw as Record<string, unknown>);
+        this.cache.set(entityId, entity);
+        this.notifyEntityChange(entityId, entity);
+      }
+    }
+
+    if (changed && typeof changed === 'object') {
+      for (const [entityId, raw] of Object.entries(changed as Record<string, unknown>)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const delta = (raw as Record<string, unknown>)['+'];
+        if (!delta || typeof delta !== 'object') continue;
+        const d = delta as Record<string, unknown>;
+        const prev = this.cache.get(entityId);
+        const entity: HaEntity = {
+          entityId,
+          state: typeof d.s === 'string' ? d.s : (prev?.state ?? ''),
+          attributes: { ...(prev?.attributes ?? {}), ...((d.a as Record<string, unknown>) ?? {}) },
+          ...(prev?.lastChanged ? { lastChanged: prev.lastChanged } : {}),
+          ...(prev?.lastUpdated ? { lastUpdated: prev.lastUpdated } : {}),
+          ...(typeof d.lc === 'number' ? { lastChanged: new Date(d.lc * 1000).toISOString() } : {}),
+          ...(typeof d.lu === 'number' ? { lastUpdated: new Date(d.lu * 1000).toISOString() } : {}),
+        };
+        this.cache.set(entityId, entity);
+        this.notifyEntityChange(entityId, entity);
       }
     }
   }

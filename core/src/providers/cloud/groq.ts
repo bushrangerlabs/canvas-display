@@ -43,7 +43,7 @@ export class GroqLlm implements LlmProvider {
     this.apiKey = opts.apiKey;
     this.model = opts.model;
     this.temperature = opts.temperature ?? 0.7;
-    this.timeoutMs = opts.timeoutMs ?? 120_000;
+    this.timeoutMs = opts.timeoutMs ?? 300_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.name = opts.name ?? 'groq';
   }

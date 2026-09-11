@@ -9,6 +9,15 @@ use tauri_plugin_shell::ShellExt;
 
 struct ServerChild(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisplayGeometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
 // ─── Crash Log ────────────────────────────────────────────────────────────────
 
 const LOG_PATH: &str = "/tmp/canvas-ui-kiosk.log";
@@ -37,6 +46,27 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
     // Hard fallback in case app.exit doesn't terminate the process
     std::process::exit(0);
+}
+
+/// Returns the main kiosk window's monitor bounds in Tauri logical pixels. Panel
+/// windows use the same logical coordinate space, avoiding CSS screen metrics
+/// drifting from the compositor's real output geometry.
+#[tauri::command]
+fn display_geometry(window: tauri::WebviewWindow) -> Result<DisplayGeometry, String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "No monitor is available for the kiosk window".to_string())?;
+    let scale = monitor.scale_factor();
+    let position = monitor.position().to_logical::<f64>(scale);
+    let size = monitor.size().to_logical::<f64>(scale);
+    Ok(DisplayGeometry {
+        x: position.x.round() as i32,
+        y: position.y.round() as i32,
+        width: size.width.round().max(1.0) as u32,
+        height: size.height.round().max(1.0) as u32,
+    })
 }
 
 /// Turn the display off using xset (Linux only)
@@ -98,7 +128,7 @@ async fn keep_screen_on(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Navigate an existing WebviewWindow to a new URL.
+/// Navigate an existing child webview or top-level WebviewWindow to a new URL.
 /// Must run on the GTK main thread on Linux — same restriction as build().
 #[tauri::command]
 async fn navigate_webview(app: AppHandle, label: String, url: String) -> Result<(), String> {
@@ -106,7 +136,11 @@ async fn navigate_webview(app: AppHandle, label: String, url: String) -> Result<
     let parsed = url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
     let app_handle = app.clone();
     app.run_on_main_thread(move || {
-        if let Some(win) = app_handle.get_webview_window(&label) {
+        if let Some(webview) = app_handle.get_webview(&label) {
+            if let Err(e) = webview.navigate(parsed) {
+                eprintln!("[navigate_webview] failed '{}': {}", label, e);
+            }
+        } else if let Some(win) = app_handle.get_webview_window(&label) {
             if let Err(e) = win.navigate(parsed) {
                 eprintln!("[navigate_webview] failed '{}': {}", label, e);
             }
@@ -117,15 +151,56 @@ async fn navigate_webview(app: AppHandle, label: String, url: String) -> Result<
     .map_err(|e| e.to_string())
 }
 
-/// Close a WebviewWindow by label.
+/// Close a child webview or top-level WebviewWindow by label.
 /// Must run on the GTK main thread on Linux.
 #[tauri::command]
 async fn close_webview(app: AppHandle, label: String) -> Result<(), String> {
     let app_handle = app.clone();
     app.run_on_main_thread(move || {
-        if let Some(win) = app_handle.get_webview_window(&label) {
+        if let Some(webview) = app_handle.get_webview(&label) {
+            if let Err(e) = webview.close() {
+                eprintln!("[close_webview] failed '{}': {}", label, e);
+            }
+        } else if let Some(win) = app_handle.get_webview_window(&label) {
             if let Err(e) = win.close() {
                 eprintln!("[close_webview] failed '{}': {}", label, e);
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_webview_visibility(app: AppHandle, label: String, visible: bool) -> Result<(), String> {
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(webview) = app_handle.get_webview(&label) {
+            let result = if visible { webview.show() } else { webview.hide() };
+            if let Err(e) = result {
+                eprintln!("[set_webview_visibility] failed '{}': {}", label, e);
+            }
+        } else if let Some(win) = app_handle.get_webview_window(&label) {
+            let result = if visible { win.show() } else { win.hide() };
+            if let Err(e) = result {
+                eprintln!("[set_webview_visibility] failed '{}': {}", label, e);
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn close_panel_webviews(app: AppHandle) -> Result<(), String> {
+    // Invalidate any in-flight panel-creation batch before closing — a batch
+    // that starts creating panels after this point belongs to a newer page.
+    PANEL_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let app_handle = app.clone();
+    app.run_on_main_thread(move || {
+        for (label, webview) in app_handle.webviews() {
+            if label.starts_with("panel-") {
+                if let Err(e) = webview.close() {
+                    eprintln!("[close_panel_webviews] failed '{}': {}", label, e);
+                }
             }
         }
     })
@@ -151,7 +226,11 @@ async fn control_youtube_webview(
         format!("window.__canvasYouTubeControl && window.__canvasYouTubeControl.{method}();");
     let app_handle = app.clone();
     app.run_on_main_thread(move || {
-        if let Some(win) = app_handle.get_webview_window(&label) {
+        if let Some(webview) = app_handle.get_webview(&label) {
+            if let Err(e) = webview.eval(&script) {
+                eprintln!("[control_youtube_webview] failed '{}': {}", label, e);
+            }
+        } else if let Some(win) = app_handle.get_webview_window(&label) {
             if let Err(e) = win.eval(&script) {
                 eprintln!("[control_youtube_webview] failed '{}': {}", label, e);
             }
@@ -313,44 +392,182 @@ fn read_device_identity(stream: &mut std::os::unix::net::UnixStream) -> Result<S
     }
 }
 
-#[tauri::command]
-fn create_panel_webview(
-    app: AppHandle,
+#[derive(serde::Deserialize, Clone)]
+struct PanelSpec {
     label: String,
     url: String,
     x: i32,
     y: i32,
     width: u32,
     height: u32,
-    title: String,
     visible: bool,
     ingress_session: Option<String>,
     init_script: Option<String>,
-) -> Result<(), String> {
+}
+
+/// GTK widget name of the GtkFixed that hosts the controller and all panel
+/// webviews with exact geometry.
+const CANVAS_FIXED_NAME: &str = "canvas-webview-fixed";
+
+/// Bumped every time `close_panel_webviews` runs. In-flight panel-creation
+/// batches capture the value at start and abort if it changes, so an older
+/// page load can never re-create panels over a newer one (the frontend can
+/// have several load_page pushes racing at startup).
+static PANEL_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Place a child webview at an exact geometry inside its Tauri window.
+///
+/// Why this exists: Tauri's `Window::add_child` on Linux/GTK does NOT honour
+/// the requested position/size. tauri-runtime-wry routes `WebviewKind::
+/// WindowChild` to `build_gtk(window.default_vbox())`, and wry's
+/// `add_to_container` packs webviews into that vertical GtkBox with
+/// `pack_start(webview, true, true, 0)` — the bounds are discarded. Every
+/// webview in the window (the controller included) then shares the window
+/// height as stacked box rows, which is the "panels render in the wrong
+/// place" bug. wry only applies bounds when the container is a GtkFixed
+/// (`set_size_request(w, h)` + `Fixed::put(w, x, y)`), so we re-parent the
+/// freshly created panel webview — plus any webviews still packed in the
+/// vbox — into a GtkFixed we own, at the exact requested geometry. The
+/// webview keeps its Tauri label, IPC, initialization scripts and TLS
+/// handling; only its GTK parent changes. Must run on the main thread.
+fn place_webview_in_fixed(
+    wk: &webkit2gtk::WebView,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    label: &str,
+) {
+    use gtk::prelude::*;
+
+    // Remember what the caller wants this webview to look like before we
+    // start moving it between containers.
+    let desired_visible = wk.is_visible();
+
+    // The webview Tauri just built is a direct child of the window's default vbox.
+    let vbox = match wk.parent() {
+        Some(parent) => match parent.dynamic_cast::<gtk::Box>() {
+            Ok(box_) => box_,
+            Err(_) => {
+                klog(&format!(
+                    "[fixed-container] '{}' parent is not a GtkBox; leaving layout untouched",
+                    label
+                ));
+                return;
+            }
+        },
+        None => {
+            klog(&format!("[fixed-container] '{}' has no parent widget", label));
+            return;
+        }
+    };
+
+    // Find (or create) the fixed container among the vbox children.
+    let mut existing_fixed: Option<gtk::Fixed> = None;
+    for child in vbox.children() {
+        if child.widget_name() == CANVAS_FIXED_NAME {
+            if let Ok(f) = child.dynamic_cast::<gtk::Fixed>() {
+                existing_fixed = Some(f);
+            }
+        }
+    }
+
+    let fixed = match existing_fixed {
+        Some(f) => f,
+        None => {
+            // First panel for this window: move every webview currently packed
+            // in the box (the controller included) into a new GtkFixed,
+            // preserving each widget's current allocation and visibility.
+            let f = gtk::Fixed::new();
+            f.set_widget_name(CANVAS_FIXED_NAME);
+            for child in vbox.children() {
+                if let Ok(existing) = child.dynamic_cast::<webkit2gtk::WebView>() {
+                    let alloc = existing.allocation();
+                    let visible = existing.is_visible();
+                    // If the widget has not been allocated yet, fall back to
+                    // the toplevel size so the controller stays fullscreen.
+                    let (ax, ay, aw, ah) = if alloc.width() < 2 || alloc.height() < 2 {
+                        match existing.toplevel() {
+                            Some(toplevel) => {
+                                let ta = toplevel.allocation();
+                                (ta.x(), ta.y(), ta.width(), ta.height())
+                            }
+                            None => (alloc.x(), alloc.y(), alloc.width(), alloc.height()),
+                        }
+                    } else {
+                        (alloc.x(), alloc.y(), alloc.width(), alloc.height())
+                    };
+                    vbox.remove(&existing);
+                    f.put(&existing, ax, ay);
+                    existing.set_size_request(aw, ah);
+                    if visible {
+                        existing.show();
+                    } else {
+                        existing.hide();
+                    }
+                    klog(&format!(
+                        "[fixed-container] moved existing webview to {},{} {}x{}",
+                        ax, ay, aw, ah
+                    ));
+                }
+            }
+            vbox.pack_start(&f, true, true, 0);
+            f.show();
+            klog("[fixed-container] created GtkFixed in window vbox");
+            f
+        }
+    };
+
+    // Detach the panel from wherever add_child packed it and place it exactly.
+    if let Some(old_parent) = wk.parent() {
+        if let Ok(container) = old_parent.dynamic_cast::<gtk::Container>() {
+            container.remove(wk);
+        }
+    }
+    fixed.put(wk, x, y);
+    wk.set_size_request(width as i32, height as i32);
+    if desired_visible {
+        wk.show();
+    } else {
+        wk.hide();
+    }
     klog(&format!(
-        "[create_panel_webview] label={} url={}",
-        label, url
+        "[fixed-container] '{}' placed at {},{} {}x{}",
+        label, x, y, width, height
     ));
-    let parsed_url = url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
+}
+
+// Build a single child webview attached to the provided parent window and run it
+// on the main thread. This is the only place that performs `add_child`, so both
+// the one-shot and the batched commands share identical behaviour.
+fn create_one_panel(
+    app: &AppHandle,
+    window: tauri::WebviewWindow,
+    spec: &PanelSpec,
+) -> Result<(), String> {
+    let parsed_url = spec
+        .url
+        .parse::<tauri::Url>()
+        .map_err(|e| e.to_string())?;
     let app_handle = app.clone();
+    let label = spec.label.clone();
+    let visible = spec.visible;
+    let ingress_session = spec.ingress_session.clone();
+    let init_script = spec.init_script.clone();
+    let x = spec.x;
+    let y = spec.y;
+    let width = spec.width;
+    let height = spec.height;
 
     app.run_on_main_thread(move || {
         klog(&format!(
-            "[create_panel_webview] on main thread, building '{}'",
+            "[create_one_panel] on main thread, building '{}'",
             label
         ));
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            &app_handle,
+        let mut builder = tauri::WebviewBuilder::new(
             &label,
             tauri::WebviewUrl::External(parsed_url),
         )
-        .position(x as f64, y as f64)
-        .inner_size(width as f64, height as f64)
-        .decorations(false)
-        .resizable(false)
-        .skip_taskbar(true)
-        .visible(visible)
-        .title(&title)
         .incognito(false);
 
         if let Some(session) = ingress_session {
@@ -374,8 +591,8 @@ fn create_panel_webview(
         builder = builder.on_navigation(move |target| {
             if target.scheme() == "canvas-player" && target.host_str() == Some("close") {
                 klog(&format!("[{}] Canvas player requested close", navigation_label));
-                if let Some(window) = navigation_app.get_webview_window(&navigation_label) {
-                    let _ = window.close();
+                if let Some(webview) = navigation_app.get_webview(&navigation_label) {
+                    let _ = webview.close();
                 }
                 return false;
             }
@@ -383,23 +600,30 @@ fn create_panel_webview(
         });
 
         klog(&format!(
-            "[create_panel_webview] calling builder.build() for '{}'",
-            label
+            "[create_one_panel] adding child '{}' at {},{} {}x{}",
+            label, x, y, width, height
         ));
-        match builder.build() {
+        match window.as_ref().window().add_child(
+            builder,
+            tauri::LogicalPosition::new(x, y),
+            tauri::LogicalSize::new(width, height),
+        ) {
             Err(e) => {
                 klog(&format!(
-                    "[create_panel_webview] BUILD FAILED '{}': {}",
+                    "[create_one_panel] BUILD FAILED '{}': {}",
                     label, e
                 ));
-                eprintln!("[create_panel_webview] failed to build '{}': {}", label, e);
+                eprintln!("[create_one_panel] failed to build '{}': {}", label, e);
             }
-            Ok(win) => {
-                klog(&format!("[create_panel_webview] build OK for '{}'", label));
+            Ok(webview) => {
+                klog(&format!("[create_one_panel] build OK for '{}'", label));
+                if !visible {
+                    let _ = webview.hide();
+                }
                 #[cfg(target_os = "linux")]
                 let label2 = label.clone();
                 #[cfg(target_os = "linux")]
-                let _ = win.with_webview(move |wv| {
+                let _ = webview.with_webview(move |wv| {
                     use webkit2gtk::{ProcessModel, SettingsExt, WebContextExt, WebViewExt};
                     let wk = wv.inner();
 
@@ -457,12 +681,87 @@ fn create_panel_webview(
                         settings.set_enable_page_cache(false);
                         klog(&format!("[{}] webkit settings applied", label2));
                     }
+
+                    // Re-parent the webview into a GtkFixed so the requested
+                    // geometry actually applies on Linux/GTK (Tauri's add_child
+                    // packs it into the window's GtkBox and discards bounds).
+                    place_webview_in_fixed(&wk, x, y, width, height, &label2);
                 });
-                klog(&format!("[create_panel_webview] done '{}'", label));
+                klog(&format!("[create_one_panel] done '{}'", label));
             }
         }
     })
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_panel_webview(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    label: String,
+    url: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    _title: String,
+    visible: bool,
+    ingress_session: Option<String>,
+    init_script: Option<String>,
+) -> Result<(), String> {
+    let spec = PanelSpec {
+        label,
+        url,
+        x,
+        y,
+        width,
+        height,
+        visible,
+        ingress_session,
+        init_script,
+    };
+    create_one_panel(&app, window, &spec)
+}
+
+// Batched creation. A single frontend call hands every panel to Rust; a spawned
+// thread builds them on the main thread with a stabilising gap between each. This
+// keeps panel creation alive even if the controller webview is occluded (and its
+// JS suspended) by a large child panel — the spawned thread does not depend on the
+// controller's event loop.
+#[tauri::command]
+fn create_panel_webviews(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    panels: Vec<PanelSpec>,
+) -> Result<(), String> {
+    // Capture the generation at call time; if close_panel_webviews runs while
+    // this batch is still creating panels (a newer page load arrived), the
+    // batch aborts instead of stacking stale panels over the newer page.
+    let generation = PANEL_GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+    let app2 = app.clone();
+    let window2 = window.clone();
+    std::thread::spawn(move || {
+        for (i, spec) in panels.into_iter().enumerate() {
+            if PANEL_GENERATION.load(std::sync::atomic::Ordering::SeqCst) != generation {
+                klog(&format!(
+                    "[create_panel_webviews] batch superseded by a newer page load before creating '{}'; aborting",
+                    spec.label
+                ));
+                return;
+            }
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(2200));
+            }
+            if let Err(e) = create_one_panel(&app2, window2.clone(), &spec) {
+                klog(&format!(
+                    "[create_panel_webviews] error creating '{}': {}",
+                    spec.label, e
+                ));
+            }
+        }
+        klog("[create_panel_webviews] batch complete");
+    });
+    Ok(())
 }
 
 pub fn run() {
@@ -540,13 +839,17 @@ pub fn run() {
             set_brightness,
             keep_screen_on,
             app_version,
+            display_geometry,
             get_device_identity,
             edge_ipc,
             core_control_config,
             navigate_webview,
             close_webview,
+            set_webview_visibility,
+            close_panel_webviews,
             control_youtube_webview,
             create_panel_webview,
+            create_panel_webviews,
         ])
         .setup(|app| {
             // ── Spawn embedded server sidecar ──────────────────────────────

@@ -7,6 +7,7 @@ interface WebSocketContextType {
   hass: HassConnection | null;
   entities: Record<string, EntityState>;
   error: string | null;
+  callService: (domain: string, service: string, data?: unknown) => Promise<any>;
 }
 
 const EMPTY_CONTEXT: WebSocketContextType = {
@@ -15,11 +16,19 @@ const EMPTY_CONTEXT: WebSocketContextType = {
   hass: null,
   entities: {},
   error: null,
+  callService: async () => {
+    throw new Error('WebSocket not connected');
+  },
 };
 
 const WebSocketContext = createContext<WebSocketContextType>(EMPTY_CONTEXT);
 
 export const useWebSocket = () => useContext(WebSocketContext);
+
+// Trusted-local-client bearer token (VITE_CORE_AUTOMATION_TOKEN). Core's
+// requireAdmin accepts it to grant the display device HA access without a
+// browser session/CSRF — see core/src/auth.ts.
+const HA_TOKEN = (import.meta.env as any).VITE_CORE_AUTOMATION_TOKEN as string | undefined;
 
 interface CoreEntityPayload {
   entity_id?: string;
@@ -63,7 +72,9 @@ export const WebSocketProvider: React.FC<React.PropsWithChildren> = ({ children 
 
   const refreshEntities = useCallback(async () => {
     try {
-      const response = await fetch('/api/ha/entities', { credentials: 'include' });
+      const headers: Record<string, string> = {};
+      if (HA_TOKEN) headers['Authorization'] = `Bearer ${HA_TOKEN}`;
+      const response = await fetch('/api/ha/entities', { credentials: 'include', headers });
       if (!response.ok) throw new Error(`Core HA facade returned ${response.status}`);
       const payload = await response.json() as {
         entities?: EntityState[];
@@ -86,10 +97,12 @@ export const WebSocketProvider: React.FC<React.PropsWithChildren> = ({ children 
   }, [refreshEntities]);
 
   const callService = useCallback(async (domain: string, service: string, data?: unknown) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (HA_TOKEN) headers['Authorization'] = `Bearer ${HA_TOKEN}`;
     const response = await fetch(`/api/ha/services/${encodeURIComponent(domain)}/${encodeURIComponent(service)}`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(data ?? {}),
     });
     if (!response.ok) throw new Error(`Core HA service call returned ${response.status}`);
@@ -115,7 +128,8 @@ export const WebSocketProvider: React.FC<React.PropsWithChildren> = ({ children 
     hass,
     entities,
     error,
-  }), [connected, entities, error, hass]);
+    callService,
+  }), [connected, entities, error, hass, callService]);
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;
 };

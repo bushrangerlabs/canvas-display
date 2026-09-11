@@ -41,6 +41,7 @@ export function selectToolsForRequest(tools: ToolDefinition[], request: string, 
     }
     if (tool.name.startsWith('mcp.afl-mcp.') && queryWords.has('afl')) score += 20;
     if (tool.name.startsWith('mcp.ha-mcp.') && ['home', 'light', 'switch', 'automation', 'entity', 'device'].some(word => queryWords.has(word))) score += 12;
+    if (tool.name.startsWith('mcp.node-red') && ['node', 'red', 'nodered', 'flow', 'flows'].some(word => queryWords.has(word))) score += 15;
     if (tool.name.startsWith('mcp.au-weather.') && ['weather', 'forecast', 'temperature', 'rain', 'wind', 'uv', 'bom'].some(word => queryWords.has(word))) score += 24;
     if (tool.name.startsWith('mcp.bowling.') && ['bowling', 'bowl', 'lane', 'pin', 'strike', 'spare', 'score'].some(word => queryWords.has(word))) score += 20;
     return { tool, score };

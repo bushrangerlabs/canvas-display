@@ -777,7 +777,13 @@ export function registerGateway(
         [deviceId],
       );
 
-      if (controller.observe(parsed)) return;
+      const messageType = (parsed as { type?: unknown }).type;
+      if (
+        controller.observe(parsed) ||
+        messageType === 'stream.ack' ||
+        messageType === 'edge.heartbeat' ||
+        messageType === 'state.reported'
+      ) return;
 
       // Echo unknown messages as an ack placeholder for now.
       ws.send(JSON.stringify({ type: 'ack', sessionId, echo: parsed }));

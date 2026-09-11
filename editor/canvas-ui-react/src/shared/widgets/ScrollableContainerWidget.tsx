@@ -55,6 +55,7 @@ const childComponents: Record<string, React.LazyExoticComponent<React.FC<WidgetP
   lovelacecard:   lazy(() => import('./LovelaceCardWidget')),
   keyboard:       lazy(() => import('./KeyboardWidget')),
   shape:          lazy(() => import('./ShapeWidget')),
+  customdashboard: lazy(() => import('./CustomDashboardWidget')),
 };
 
 // ─── Metadata ─────────────────────────────────────────────────────────────────

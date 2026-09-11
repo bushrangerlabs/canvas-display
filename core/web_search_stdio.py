@@ -85,6 +85,37 @@ TOOLS = [
             },
             "required": ["topic"]
         }
+    },
+    {
+        "name": "search_node_red_nodes",
+        "description": (
+            "Search for Node-RED node packages by capability or keyword (e.g. 'hue lights', "
+            "'mqtt bridge', 'spotify control'). Queries the npm registry (packages installable "
+            "via the node-red mcp install-node tool) and optionally GitHub (source repos that "
+            "are NOT directly installable - Node-RED only installs from npm; GitHub-only nodes "
+            "must be published to npm or installed manually). Use this before claiming a node "
+            "type does not exist."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What the node should do, e.g. 'spotify', 'hue', 'thermostat schedule'"
+                },
+                "include_github": {
+                    "type": "boolean",
+                    "description": "Also search GitHub for source repositories (default true). GitHub-only nodes cannot be installed via install-node.",
+                    "default": True
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results per source (1-20, default 8)",
+                    "default": 8
+                }
+            },
+            "required": ["query"]
+        }
     }
 ]
 
@@ -210,6 +241,106 @@ def _wikipedia_lookup(topic: str, sentences: int = 5) -> dict[str, Any]:
         return {"error": str(e), "topic": topic}
 
 
+def _http_get_json(url: str, timeout: int = 15) -> dict:
+    """GET a JSON document with a small timeout and browser-ish UA."""
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        "User-Agent": "canvas-core-mcp/1.1 (+home assistant integration)",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+
+def _npm_node_search(query: str, limit: int) -> list[dict]:
+    """Search the npm registry for Node-RED node packages.
+
+    Node-RED's admin API only installs from the npm registry, so these results
+    are directly installable via the node-red mcp install-node tool.
+    """
+    text = f"{query} keywords:node-red-contrib node-red".strip()
+    url = (
+        "https://registry.npmjs.org/-/v1/search?"
+        + urllib.parse.urlencode({"text": text, "size": min(limit * 3, 40)})
+    )
+    try:
+        data = _http_get_json(url)
+    except Exception as e:
+        return [{"error": f"npm registry search failed: {e}"}]
+
+    results = []
+    for obj in data.get("objects", []):
+        pkg = obj.get("package", {})
+        name = str(pkg.get("name", ""))
+        keywords = [str(k).lower() for k in pkg.get("keywords", [])]
+        is_node_red = (
+            name.lower().startswith("node-red")
+            or "node-red-contrib" in keywords
+            or "node-red" in keywords
+        )
+        if not is_node_red:
+            continue
+        results.append({
+            "name": name,
+            "version": pkg.get("version"),
+            "description": pkg.get("description", ""),
+            "keywords": pkg.get("keywords", [])[:8],
+            "npm_url": (pkg.get("links", {}) or {}).get("npm", f"https://www.npmjs.com/package/{name}"),
+            "last_publish": pkg.get("date", ""),
+            "search_score": obj.get("score", {}).get("final", 0),
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _github_node_search(query: str, limit: int) -> list[dict]:
+    """Search GitHub for Node-RED node source repositories.
+
+    NOTE for the agent: GitHub-only repos are NOT installable via Node-RED's
+    admin API (npm registry only). They must be published to npm or installed
+    manually on the Node-RED host.
+    """
+    q = urllib.parse.urlencode({
+        "q": f"{query} node-red in:name,description,readme",
+        "per_page": min(limit, 20),
+        "sort": "updated",
+    })
+    try:
+        data = _http_get_json(f"https://api.github.com/search/repositories?{q}")
+    except Exception as e:
+        return [{"error": f"GitHub search failed: {e}"}]
+
+    results = []
+    for repo in data.get("items", [])[:limit]:
+        results.append({
+            "repo": repo.get("full_name", ""),
+            "description": repo.get("description", ""),
+            "url": repo.get("html_url", ""),
+            "stars": repo.get("stargazers_count", 0),
+            "last_push": repo.get("pushed_at", ""),
+            "install": "NOT installable via install-node (npm registry only) unless published to npm",
+        })
+    return results
+
+
+def _search_node_red_nodes(query: str, include_github: bool, limit: int) -> dict:
+    query = query.strip()
+    if not query:
+        return {"error": "query is required"}
+    out: dict[str, Any] = {
+        "query": query,
+        "npm": _npm_node_search(query, limit),
+    }
+    if include_github:
+        out["github"] = _github_node_search(query, limit)
+    out["note"] = (
+        "npm results are installable with the node-red mcp install-node tool "
+        "(npm registry only). GitHub-only repos are NOT installable through "
+        "Node-RED's admin API unless published to npm."
+    )
+    return out
+
+
 async def handle(msg: dict) -> None:
     req_id = msg.get("id")
     method = msg.get("method", "")
@@ -220,7 +351,7 @@ async def handle(msg: dict) -> None:
             "jsonrpc": "2.0", "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "canvas-web-search", "version": "1.0.0"},
+                "serverInfo": {"name": "canvas-web-search", "version": "1.1.0"},
                 "capabilities": {"tools": {}},
             }
         })
@@ -241,6 +372,12 @@ async def handle(msg: dict) -> None:
                 result = _wikipedia_lookup(
                     topic=str(args.get("topic", "")),
                     sentences=int(args.get("sentences", 5)),
+                )
+            elif tool_name == "search_node_red_nodes":
+                result = _search_node_red_nodes(
+                    query=str(args.get("query", "")),
+                    include_github=bool(args.get("include_github", True)),
+                    limit=max(1, min(20, int(args.get("limit", 8)))),
                 )
             else:
                 result = {"error": f"Unknown tool: {tool_name}"}

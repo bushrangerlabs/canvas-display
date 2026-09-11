@@ -352,6 +352,9 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
   const [tab, setTab] = useState(0);
   const [audioConfig, setAudioConfig] = useState<Record<string, any>>({});
   const [voiceConfig, setVoiceConfig] = useState<Record<string, any>>({});
+  const [displayWidth, setDisplayWidth] = useState<number | ''>('');
+  const [displayHeight, setDisplayHeight] = useState<number | ''>('');
+  const [savingDisplay, setSavingDisplay] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -397,6 +400,8 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
       localStorage.removeItem(acceptanceStorageKey(device.id));
     }
     setAcceptanceLoadedDevice(device.id);
+    setDisplayWidth(device.display_width ?? '');
+    setDisplayHeight(device.display_height ?? '');
     setLoading(true); setError(null);
     coreApi.getDeviceAudio(device.id)
       .then(r => {
@@ -453,6 +458,20 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
       onRefresh();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
+  }
+
+  async function saveDisplay() {
+    if (!device) return;
+    setSavingDisplay(true); setError(null);
+    try {
+      const width = displayWidth === '' || Number.isNaN(Number(displayWidth)) ? null : Number(displayWidth);
+      const height = displayHeight === '' || Number.isNaN(Number(displayHeight)) ? null : Number(displayHeight);
+      if (width !== null && width <= 0) throw new Error('Width must be a positive number of pixels.');
+      if (height !== null && height <= 0) throw new Error('Height must be a positive number of pixels.');
+      await coreApi.updateDevice(device.id, { display_width: width, display_height: height });
+      onRefresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSavingDisplay(false); }
   }
 
   async function runTest(kind: 'mic' | 'speaker' | 'wakeword') {
@@ -668,6 +687,27 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
                 <DetailRow label="Paired" value={device.paired ? 'yes' : 'no'} />
                 <DetailRow label="Last seen" value={fmtRelative(device.last_seen)} />
                 <DetailRow label="Cert fingerprint" value={device.cert_fingerprint ?? '—'} mono />
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2">Display dimensions</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Native screen resolution in pixels. The Editor canvas and Pages layout previews use these to match the real device instead of assuming 16:9.
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <TextField
+                    label="Width (px)" type="number" size="small" value={displayWidth}
+                    onChange={e => setDisplayWidth(e.target.value === '' ? '' : Number(e.target.value))}
+                    slotProps={{ htmlInput: { min: 1, step: 1 } }} sx={{ width: 140 }}
+                  />
+                  <Typography variant="body2" color="text.secondary">×</Typography>
+                  <TextField
+                    label="Height (px)" type="number" size="small" value={displayHeight}
+                    onChange={e => setDisplayHeight(e.target.value === '' ? '' : Number(e.target.value))}
+                    slotProps={{ htmlInput: { min: 1, step: 1 } }} sx={{ width: 140 }}
+                  />
+                  <Button size="small" variant="contained" onClick={saveDisplay} disabled={savingDisplay}>
+                    {savingDisplay ? <CircularProgress size={14} /> : 'Save'}
+                  </Button>
+                </Stack>
               </Stack>
             )}
 

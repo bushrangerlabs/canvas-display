@@ -29,6 +29,7 @@ import { AnthropicLlm } from './cloud/anthropic.js';
 import { GeminiLlm } from './cloud/gemini.js';
 import { GroqLlm } from './cloud/groq.js';
 import { AzureOpenAiLlm } from './cloud/azure.js';
+import { CodexLlm } from './cloud/codex.js';
 import { OllamaLlm } from './local/ollama.js';
 
 /** A raw provider config entry as it appears in the JSON env var. */
@@ -179,6 +180,17 @@ function buildLlmProvider(
         apiVersion: typeof config.apiVersion === 'string' ? config.apiVersion : undefined,
         baseUrl: config.baseUrl ? String(config.baseUrl) : undefined,
         temperature: typeof config.temperature === 'number' ? config.temperature : undefined,
+        timeoutMs: typeof config.timeoutMs === 'number' ? config.timeoutMs : undefined,
+        fetchImpl,
+        name: typeof config.name === 'string' ? config.name : undefined,
+      });
+    case 'codex':
+      return new CodexLlm({
+        apiKey: String(config.apiKey ?? ''),
+        model: String(config.model ?? 'codex-mini-latest'),
+        baseUrl: config.baseUrl ? String(config.baseUrl) : undefined,
+        temperature: typeof config.temperature === 'number' ? config.temperature : undefined,
+        maxTokens: typeof config.maxTokens === 'number' ? config.maxTokens : undefined,
         timeoutMs: typeof config.timeoutMs === 'number' ? config.timeoutMs : undefined,
         fetchImpl,
         name: typeof config.name === 'string' ? config.name : undefined,

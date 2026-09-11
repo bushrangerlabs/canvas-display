@@ -92,6 +92,13 @@ pub struct EdgeSessionOptions {
     /// Loopback compatibility renderer base URL. Production points this at the legacy display
     /// server while native scene rendering is migrated; tests leave it unset.
     pub scene_server_url: Option<String>,
+    /// Optional bearer token for the compatibility renderer API. Required when the renderer is
+    /// Core itself, where page and audio command routes remain admin-protected.
+    pub scene_server_token: Option<String>,
+    /// Core already owns the kiosk browser socket and delivers page commands itself. In this
+    /// mode Edge acknowledges the desired scene without posting it back to Core, avoiding a
+    /// state.desired -> command -> state.desired delivery loop.
+    pub scene_renderer_managed_by_core: bool,
 }
 
 /// A snapshot of internal counters, mirroring the TS reference's `get snapshot()` accessor. Used
@@ -162,6 +169,8 @@ pub struct EdgeSession {
     domain_outcomes: HashMap<Domain, DomainOutcome>,
     desired_hardware: Option<HardwareAdapters>,
     scene_server_url: Option<String>,
+    scene_server_token: Option<String>,
+    scene_renderer_managed_by_core: bool,
 }
 
 fn default_core_stream_epoch() -> Uuid {
@@ -253,6 +262,8 @@ impl EdgeSession {
             domain_outcomes: HashMap::new(),
             desired_hardware: options.desired_hardware,
             scene_server_url: options.scene_server_url,
+            scene_server_token: options.scene_server_token,
+            scene_renderer_managed_by_core: options.scene_renderer_managed_by_core,
             device_id: options.device_id,
             installation_id: options.installation_id,
             public_key_fingerprint: options.public_key_fingerprint,
@@ -565,6 +576,10 @@ impl EdgeSession {
         let Some(scene) = self.desired_state.scene.as_ref() else {
             return;
         };
+        if self.scene_renderer_managed_by_core {
+            self.domain_outcomes.insert(Domain::Scene, DomainOutcome::Applied);
+            return;
+        }
         let Some(base_url) = self.scene_server_url.as_ref() else {
             self.domain_outcomes.insert(
                 Domain::Scene,
@@ -580,12 +595,17 @@ impl EdgeSession {
         } else {
             serde_json::json!({ "page_id": revision_id, "page_data": scene.page })
         };
-        let result = reqwest::blocking::Client::new()
+        let request = reqwest::blocking::Client::new()
             .post(format!(
                 "{}/api/commands/page",
                 base_url.trim_end_matches('/')
             ))
-            .json(&command)
+            .json(&command);
+        let request = match self.scene_server_token.as_deref() {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        let result = request
             .send()
             .map_err(|error| error.to_string())
             .and_then(|response| {
@@ -614,9 +634,14 @@ impl EdgeSession {
         let Some(base_url) = self.scene_server_url.as_ref() else {
             return;
         };
-        let result = reqwest::blocking::Client::new()
+        let request = reqwest::blocking::Client::new()
             .post(format!("{}/api/audio/volume", base_url.trim_end_matches('/')))
-            .json(&serde_json::json!({ "level": volume }))
+            .json(&serde_json::json!({ "level": volume }));
+        let request = match self.scene_server_token.as_deref() {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        let result = request
             .send()
             .map_err(|error| error.to_string())
             .and_then(|response| {

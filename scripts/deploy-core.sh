@@ -9,7 +9,7 @@ npm --prefix "$REPO_ROOT/core" run build
 tar czf - -C "$REPO_ROOT" \
   core/src core/test core/dist core/public core/package.json core/package-lock.json \
   core/tsconfig.json core/Dockerfile core/docker-compose.yml core/nginx.conf core/.env.example \
-  core/au-weather-mcp-http \
+  core/au-weather-mcp-http core/web_search_stdio.py \
   tests/hermes | ssh "$REMOTE" "cd $DEST && tar xzf -"
 ssh "$REMOTE" "cd $DEST/core && COMPOSE_IGNORE_ORPHANS=true docker compose up -d --build 2>&1" | tail -6
 ssh "$REMOTE" "cd $DEST/core && docker compose restart tls-proxy >/dev/null"

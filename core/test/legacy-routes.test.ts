@@ -457,13 +457,56 @@ test('page assignment upserts per device, appears in page results, displays with
   const display = await fastify.inject({
     method: 'POST', url: `/api/pages/${first.json().id}/display`, payload: { device_id: 'display-1' },
   });
-  assert.deepEqual(display.json(), { delivered: false });
+  assert.equal(display.json().delivered, false);
   const assignment = await pool.query('SELECT page_id FROM device_page_assignments WHERE device_id = $1', ['display-1']);
   assert.equal(assignment.rows[0].page_id, second.json().id);
 
   await fastify.inject({ method: 'DELETE', url: `/api/pages/${second.json().id}` });
   const afterDelete = await pool.query('SELECT 1 FROM device_page_assignments WHERE device_id = $1', ['display-1']);
   assert.equal(afterDelete.rowCount, 0);
+});
+
+test('assignment replaces the persistent default, force preserves it, and unassign restores history', async () => {
+  const deliveries: string[] = [];
+  const { fastify, pool } = await buildServer({
+    onDisplayPage: async (page) => { deliveries.push(page.id); },
+  });
+  await pool.query("INSERT INTO devices (id, name) VALUES ('display-1', 'Display 1')");
+  const first = (await fastify.inject({ method: 'POST', url: '/api/pages', payload: { name: 'First' } })).json();
+  const second = (await fastify.inject({ method: 'POST', url: '/api/pages', payload: { name: 'Second' } })).json();
+
+  const assign = await fastify.inject({
+    method: 'PUT', url: `/api/pages/${first.id}/assign`, payload: { device_id: 'display-1' },
+  });
+  assert.equal(assign.statusCode, 200);
+  assert.equal(assign.json().delivered, true);
+  let state = await pool.query('SELECT active_page_id, default_page_id, history FROM device_page_state WHERE device_id = $1', ['display-1']);
+  assert.equal(state.rows[0].active_page_id, null);
+  assert.equal(state.rows[0].default_page_id, first.id);
+
+  const force = await fastify.inject({
+    method: 'POST', url: `/api/pages/${second.id}/display`, payload: { device_id: 'display-1' },
+  });
+  assert.equal(force.statusCode, 200);
+  assert.equal(force.json().delivered, true);
+  assert.equal(force.json().persistent_page_id, first.id);
+  state = await pool.query('SELECT active_page_id, default_page_id FROM device_page_state WHERE device_id = $1', ['display-1']);
+  assert.equal(state.rows[0].active_page_id, second.id);
+  assert.equal(state.rows[0].default_page_id, first.id);
+
+  await fastify.inject({
+    method: 'POST', url: `/api/pages/${first.id}/display`, payload: { device_id: 'display-1' },
+  });
+  const unassign = await fastify.inject({
+    method: 'DELETE', url: `/api/pages/${first.id}/assign/display-1`,
+  });
+  assert.equal(unassign.statusCode, 200);
+  assert.equal(unassign.json().delivered, true);
+  state = await pool.query('SELECT active_page_id, default_page_id, history FROM device_page_state WHERE device_id = $1', ['display-1']);
+  assert.equal(state.rows[0].active_page_id, second.id);
+  assert.equal(state.rows[0].default_page_id, null);
+  assert.deepEqual(state.rows[0].history, []);
+  assert.equal(deliveries.at(-1), second.id);
 });
 
 test('assignment routes verify page and device and support explicit removal', async () => {

@@ -32,6 +32,7 @@ export type ProviderKind =
   | 'gemini'
   | 'groq'
   | 'azure'
+  | 'codex'
   | 'llama-cpp'
   | 'ollama'
   | 'vllm'

@@ -99,6 +99,8 @@ export interface Intelligence {
   audioFocus: FocusManager;
   /** Re-register MCP tools from the current MCP client into the tool registry. */
   reloadMcpTools(): Promise<void>;
+  /** Timestamp (Date.now()) of the last successful MCP tool registration. */
+  getMcpToolsLastRefreshAt(): number;
   /** Runtime callbacks supplied after Core storage/gateway initialization. */
   setToolContext(context: Partial<ToolContext>): void;
   getToolContext(): Partial<ToolContext>;
@@ -303,13 +305,17 @@ export function createIntelligence(
   // Register all tools from the MultiMcpManager into the tool registry
   // as namespaced tools: mcp.<server_name>.<tool_name>
   // This lets the intent router and AI chat discover and use MCP tools.
+  let lastMcpToolRefreshAt = 0;
   async function registerMcpTools(): Promise<void> {
     if (!(providers.mcp instanceof MultiMcpManager)) return;
     try {
       const tools = await providers.mcp.listTools();
       for (const tool of tools) {
         const aggregated = tool as import('./providers/multi-mcp.js').AggregatedMcpTool;
-        const mcpName = `mcp.${aggregated.namespacedName}`;
+        // Sanitize for LLM function-name rules: server names may contain
+        // spaces or other characters that OpenAI/Anthropic tool-name
+        // patterns reject (e.g. a server named "node-red mcp").
+        const mcpName = `mcp.${aggregated.namespacedName}`.replace(/[^a-zA-Z0-9_.-]/g, '_');
         const needsConfirmation = mcpToolRequiresConfirmation(aggregated.namespacedName);
         toolRegistry.register({
           name: mcpName,
@@ -338,6 +344,7 @@ export function createIntelligence(
         });
       }
       console.log(`[core][mcp] registered ${tools.length} MCP tools into tool registry`);
+      lastMcpToolRefreshAt = Date.now();
     } catch (err) {
       console.error('[core][mcp] failed to register MCP tools:', err instanceof Error ? err.message : err);
     }
@@ -862,9 +869,15 @@ export function createIntelligence(
     discardAudioBuffer,
     audioFocus,
     reloadMcpTools: async (): Promise<void> => {
+      // MCP servers can change their exposed tool set at runtime (e.g. HA-MCP
+      // only exposes write tools after read-only mode is disabled), so the
+      // manager's cached tool list must be dropped before re-registering —
+      // otherwise reloadMcpTools() just re-registers the same stale tools.
+      if (providers.mcp instanceof MultiMcpManager) providers.mcp.invalidateToolCache();
       toolRegistry.clearMcpTools();
       await registerMcpTools();
     },
+    getMcpToolsLastRefreshAt: (): number => lastMcpToolRefreshAt,
     setToolContext: (context): void => { toolContext = { ...toolContext, ...context }; },
     getToolContext: (): Partial<ToolContext> => ({ ...toolContext }),
   };

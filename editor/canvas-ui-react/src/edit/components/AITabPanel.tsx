@@ -18,7 +18,9 @@ import {
     Select,
     TextField,
     Tooltip,
-    Typography
+    Typography,
+    FormControlLabel,
+    Switch
 } from '@mui/material';
 import React, { useEffect, useRef, useState } from 'react';
 import type {
@@ -86,6 +88,9 @@ export const AITabPanel: React.FC<AITabPanelProps> = ({ currentView, selectedWid
     const saved = localStorage.getItem('canvasui_ai_provider');
     return (saved as AIProvider) || 'ollama';
   });
+  const [freeformMode, setFreeformMode] = useState<boolean>(() => {
+    return localStorage.getItem('canvasui_ai_freeform') === 'true';
+  });
   const [apiKey, setApiKey] = useState<string>(() => {
     return localStorage.getItem('canvasui_openai_apikey') || '';
   });
@@ -140,6 +145,7 @@ export const AITabPanel: React.FC<AITabPanelProps> = ({ currentView, selectedWid
     if (!conversationServiceInstance) {
       console.log('[AITabPanel] Creating new ConversationService instance (module-level singleton)');
       conversationServiceInstance = new ConversationService(hass);
+      conversationServiceInstance.setFreeformMode(freeformMode);
     } else {
       console.log('[AITabPanel] Reusing existing ConversationService instance');
     }
@@ -726,6 +732,14 @@ export const AITabPanel: React.FC<AITabPanelProps> = ({ currentView, selectedWid
     console.log('[AITabPanel] Chat history cleared (service + UI)');
   };
 
+  // Sync free-form HTML mode into the service instance
+  useEffect(() => {
+    localStorage.setItem('canvasui_ai_freeform', freeformMode ? 'true' : 'false');
+    if (conversationServiceInstance) {
+      conversationServiceInstance.setFreeformMode(freeformMode);
+    }
+  }, [freeformMode]);
+
   // Handle entity selection dialog
   const handleOpenEntityDialog = () => {
     setEntityDialogOpen(true);
@@ -855,6 +869,29 @@ export const AITabPanel: React.FC<AITabPanelProps> = ({ currentView, selectedWid
             </IconButton>
           </span>
         </Tooltip>
+      </Box>
+
+      {/* Free-form HTML mode toggle */}
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={freeformMode}
+              onChange={(e) => setFreeformMode(e.target.checked)}
+              disabled={loading}
+            />
+          }
+          label={
+            <Box component="span">
+              <Typography variant="body2" component="span">Free-form HTML</Typography>
+              <Typography variant="caption" component="span" display="block" color="text.secondary">
+                AI generates raw HTML/CSS/JS dashboards
+              </Typography>
+            </Box>
+          }
+          sx={{ m: 0 }}
+        />
       </Box>
 
       {/* Error Message */}

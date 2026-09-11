@@ -14,6 +14,7 @@ interface WebSocketContextType {
   hass: HassConnection | null;
   entities: Record<string, EntityState>;
   error: string | null;
+  callService: (domain: string, service: string, data?: any) => Promise<any>;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -429,6 +430,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children, 
     hass,
     entities,
     error,
+    callService,
   };
 
   return (

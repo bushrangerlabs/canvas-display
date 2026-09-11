@@ -11,7 +11,7 @@ import LinkIcon from '@mui/icons-material/Link';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import WebIcon from '@mui/icons-material/Web';
-import { ApiError, coreApi, type DeviceRow, type LegacyPage, type PagePanel, type SceneRecord } from '../api/client';
+import { ApiError, coreApi, type DeviceRow, type LegacyPage, type PageAssignmentActionResult, type PagePanel, type SceneRecord } from '../api/client';
 import { ErrorBanner, LoadingBox, PageBody, PageHeader } from '../components/ui';
 
 type PanelDraft = Omit<PagePanel, 'id'>;
@@ -42,6 +42,8 @@ export default function PagesPage() {
   const [nameDialog, setNameDialog] = useState<'create' | 'rename' | null>(null);
   const [panelDialog, setPanelDialog] = useState<PagePanel | 'new' | null>(null);
   const [playlistPageId, setPlaylistPageId] = useState('');
+  const [deliveryNotice, setDeliveryNotice] = useState<{ severity: 'success' | 'warning'; msg: string } | null>(null);
+  const [deviceActionKind, setDeviceActionKind] = useState<'assign' | 'unassign' | 'force' | null>(null);
 
   const selected = pages.find(page => page.id === selectedId) ?? null;
   const availableDevices = useMemo(
@@ -83,13 +85,38 @@ export default function PagesPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function mutate(action: () => Promise<unknown>, preferredId?: string) {
+  const selectedDevice = devices.find(d => d.id === deviceId) ?? null;
+  const previewAspect =
+    selectedDevice?.display_width && selectedDevice?.display_height
+      ? `${selectedDevice.display_width} / ${selectedDevice.display_height}`
+      : '16 / 9';
+  const previewDimsLabel =
+    selectedDevice?.display_width && selectedDevice?.display_height
+      ? `${selectedDevice.display_width}×${selectedDevice.display_height} screen · up to five tiled or layered panels`
+      : '16:9 screen · up to five tiled or layered panels';
+  /** Native pixel size of the selected display (null until a device is chosen). */
+  const previewPx: { width: number; height: number } | null =
+    selectedDevice?.display_width && selectedDevice?.display_height
+      ? { width: selectedDevice.display_width, height: selectedDevice.display_height }
+      : null;
+  /** Pixel rect of a panel on the selected display, for % → px conversion. */
+  const panelPixelSize = (panel: Pick<PagePanel, 'x' | 'y' | 'w' | 'h'>) =>
+    previewPx
+      ? {
+          left: Math.round((panel.x / 100) * previewPx.width),
+          top: Math.round((panel.y / 100) * previewPx.height),
+          width: Math.round((panel.w / 100) * previewPx.width),
+          height: Math.round((panel.h / 100) * previewPx.height),
+        }
+      : null;
+
+  async function mutate(action: () => Promise<unknown>, preferredId?: string): Promise<unknown> {
     setBusy(true);
     setError(null);
     try {
-      await action();
+      const result = await action();
       await load(preferredId);
-      return true;
+      return result ?? true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setAuthRequired(true);
       setError(errorMessage(err));
@@ -158,17 +185,56 @@ export default function PagesPage() {
 
   async function deviceAction(kind: 'assign' | 'unassign' | 'force') {
     if (!selected || !deviceId) return;
-    const calls = {
-      assign: () => coreApi.assignPage(selected.id, deviceId),
-      unassign: () => coreApi.unassignPage(selected.id, deviceId),
-      force: () => coreApi.forceDisplayPage(selected.id, deviceId),
-    };
-    await mutate(calls[kind], selected.id);
+    setDeliveryNotice(null);
+    setDeviceActionKind(kind);
+    try {
+      const calls = {
+        assign: () => coreApi.assignPage(selected.id, deviceId),
+        unassign: () => coreApi.unassignPage(selected.id, deviceId),
+        force: () => coreApi.forceDisplayPage(selected.id, deviceId),
+      };
+      const res = await mutate(calls[kind], selected.id) as PageAssignmentActionResult | false | undefined;
+      if (!res) return;
+
+      const deviceName = selectedDevice?.name ?? 'the selected device';
+      const persistentPage = res.persistent_page_id
+        ? pages.find(page => page.id === res.persistent_page_id)?.name
+        : null;
+      if (kind === 'assign') {
+        setDeliveryNotice({
+          severity: res.delivered ? 'success' : 'warning',
+          msg: res.delivered
+            ? `“${selected.name}” is now the persistent page for ${deviceName} and was displayed.`
+            : res.detail ?? `“${selected.name}” was assigned to ${deviceName}.`,
+        });
+      } else if (kind === 'force') {
+        const assignment = persistentPage
+          ? ` Persistent assignment remains “${persistentPage}”.`
+          : ' No persistent assignment was changed.';
+        setDeliveryNotice({
+          severity: res.delivered ? 'success' : 'warning',
+          msg: res.delivered
+            ? `“${selected.name}” is now displayed on ${deviceName}.${assignment}`
+            : res.detail ?? `Display override requested for ${deviceName}.${assignment}`,
+        });
+      } else {
+        const needsAttention = Boolean(res.detail && /offline|no fallback|no longer exists/i.test(res.detail));
+        setDeliveryNotice({
+          severity: needsAttention ? 'warning' : 'success',
+          msg: res.detail ?? `Persistent assignment removed from ${deviceName}.`,
+        });
+      }
+    } finally {
+      setDeviceActionKind(null);
+    }
   }
 
   const assignedDevices = selected?.assigned_device_ids
     .map(id => devices.find(device => device.id === id) ?? { id, name: id, status: 'unknown' }) ?? [];
   const selectedAssigned = !!selected?.assigned_device_ids.includes(deviceId);
+  const deviceAssignedPage = deviceId
+    ? pages.find(page => page.assigned_device_ids.includes(deviceId)) ?? null
+    : null;
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <PageHeader
@@ -189,7 +255,7 @@ export default function PagesPage() {
                 <Divider />
                 <List dense disablePadding>
                   {pages.map(page => (
-                    <ListItemButton key={page.id} selected={page.id === selectedId} onClick={() => { setSelectedId(page.id); setDeviceId(''); }}>
+                    <ListItemButton key={page.id} selected={page.id === selectedId} onClick={() => { setSelectedId(page.id); setDeviceId(''); setDeliveryNotice(null); }}>
                       <ListItemText primary={page.name} secondary={`${page.panels.length} WebView${page.panels.length === 1 ? '' : 's'}`} />
                     </ListItemButton>
                   ))}
@@ -215,11 +281,11 @@ export default function PagesPage() {
                     <Stack direction="row" sx={{ alignItems: 'center', mb: 1.5 }}>
                       <Box sx={{ flex: 1 }}>
                         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Layout preview</Typography>
-                        <Typography variant="caption" color="text.secondary">16:9 screen · up to five tiled or layered panels</Typography>
+                        <Typography variant="caption" color="text.secondary">{previewDimsLabel}</Typography>
                       </Box>
                       <Button size="small" startIcon={<AddIcon />} variant="outlined" disabled={selected.panels.length >= 5 || busy} onClick={() => setPanelDialog('new')}>Add panel</Button>
                     </Stack>
-                    <Box sx={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', bgcolor: '#090912', border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+                    <Box sx={{ position: 'relative', width: '100%', aspectRatio: previewAspect, bgcolor: '#090912', border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
                       {selected.panels.map((panel, index) => (
                         <Box key={panel.id} onClick={() => setPanelDialog(panel)} sx={{
                           position: 'absolute', left: `${panel.x}%`, top: `${panel.y}%`, width: `${panel.w}%`, height: `${panel.h}%`,
@@ -227,6 +293,14 @@ export default function PagesPage() {
                           border: 1, borderColor: 'primary.main', bgcolor: 'rgba(108,99,255,0.18)', p: { xs: 0.5, sm: 1 }, cursor: 'pointer', overflow: 'hidden',
                         }}>
                           <Typography variant="caption" sx={{ fontWeight: 700 }}>{index + 1}. {panel.name}</Typography>
+                          {(() => {
+                            const px = panelPixelSize(panel);
+                            return px ? (
+                              <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.4, color: '#b9b9ff', whiteSpace: 'nowrap' }}>
+                                {px.width}×{px.height} px @ {px.left},{px.top}
+                              </Typography>
+                            ) : null;
+                          })()}
                           <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>
                             {panel.content_type === 'scene'
                               ? `Scene: ${scenes.find(scene => scene.id === panel.scene_id)?.name ?? panel.scene_id}`
@@ -241,7 +315,11 @@ export default function PagesPage() {
                         <Stack key={panel.id} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                           <Typography variant="body2" sx={{ minWidth: 100, fontWeight: 600 }}>{panel.name}</Typography>
                           <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1 }}>
-                            {panel.content_type === 'scene' ? `Scene ${panel.scene_id}` : panel.url} · {panel.x}, {panel.y}, {panel.w}, {panel.h}% · layer {panel.z_index}
+                            {(() => {
+                              const px = panelPixelSize(panel);
+                              const base = `${panel.content_type === 'scene' ? `Scene ${panel.scene_id}` : panel.url} · ${panel.x}, ${panel.y}, ${panel.w}, ${panel.h}% · layer ${panel.z_index}`;
+                              return px ? `${base} · ${px.width}×${px.height} px` : base;
+                            })()}
                           </Typography>
                           <IconButton size="small" onClick={() => setPanelDialog(panel)}><EditIcon fontSize="small" /></IconButton>
                           <IconButton size="small" color="error" onClick={() => removePanel(panel)}><DeleteIcon fontSize="small" /></IconButton>
@@ -250,26 +328,42 @@ export default function PagesPage() {
                     </Stack>
                   </Paper>
 
-                  <Paper sx={{ p: 2 }}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Device assignment</Typography>
-                    <Typography variant="caption" color="text.secondary">Assign persistently or temporarily force this page onto a Core device.</Typography>
+                   <Paper sx={{ p: 2 }}>
+                     <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Device assignment</Typography>
+                     <Typography variant="caption" color="text.secondary">Assign a persistent default page, or force this page as a temporary display override.</Typography>
+                     {deliveryNotice && (
+                       <Alert severity={deliveryNotice.severity} sx={{ mt: 1 }} onClose={() => setDeliveryNotice(null)}>
+                         {deliveryNotice.msg}
+                      </Alert>
+                    )}
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 2, alignItems: { sm: 'center' } }}>
                       <FormControl size="small" sx={{ minWidth: 240, flex: 1 }}>
                         <InputLabel>Display device</InputLabel>
-                        <Select label="Display device" value={deviceId} onChange={event => setDeviceId(event.target.value)}>
+                        <Select label="Display device" value={deviceId} onChange={event => { setDeviceId(event.target.value); setDeliveryNotice(null); }}>
                           {availableDevices.map(device => <MenuItem key={device.id} value={device.id}>{device.name} · {device.architecture} · {device.authority_mode} · {device.status}</MenuItem>)}
                         </Select>
                       </FormControl>
-                      <Button size="small" variant="contained" startIcon={<LinkIcon />} disabled={!deviceId || selectedAssigned || busy} onClick={() => deviceAction('assign')}>Assign</Button>
-                      <Button size="small" startIcon={<LinkOffIcon />} disabled={!deviceId || !selectedAssigned || busy} onClick={() => deviceAction('unassign')}>Unassign</Button>
-                      <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} disabled={!deviceId || busy} onClick={() => deviceAction('force')}>Force display now</Button>
-                    </Stack>
-                    {availableDevices.length === 0 && <Alert severity="info" sx={{ mt: 2 }}>No display devices are registered with Core.</Alert>}
-                    <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap', gap: 1 }}>
-                      {assignedDevices.length === 0 ? <Typography variant="body2" color="text.secondary">No persistent assignments.</Typography> : assignedDevices.map(device => (
-                        <Chip key={device.id} label={`${device.name} · ${device.status}`} color={device.status === 'online' ? 'success' : 'default'} variant="outlined" />
-                      ))}
-                    </Stack>
+                       <Button size="small" variant="contained" startIcon={<LinkIcon />} disabled={!deviceId || selectedAssigned || busy} onClick={() => deviceAction('assign')}>{deviceActionKind === 'assign' ? 'Assigning…' : deviceAssignedPage ? 'Reassign' : 'Assign'}</Button>
+                       <Button size="small" startIcon={<LinkOffIcon />} disabled={!deviceId || !selectedAssigned || busy} onClick={() => deviceAction('unassign')}>{deviceActionKind === 'unassign' ? 'Unassigning…' : 'Unassign'}</Button>
+                       <Tooltip title="Display this page now without changing the persistent assignment">
+                         <span><Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} disabled={!deviceId || busy} onClick={() => deviceAction('force')}>{deviceActionKind === 'force' ? 'Forcing…' : 'Force display now'}</Button></span>
+                       </Tooltip>
+                     </Stack>
+                     {selectedDevice && (
+                       <Alert severity={selectedAssigned ? 'success' : 'info'} sx={{ mt: 1.5 }}>
+                         {selectedAssigned
+                           ? `“${selected.name}” is the persistent page for ${selectedDevice.name}.`
+                           : deviceAssignedPage
+                             ? `${selectedDevice.name} is currently assigned to “${deviceAssignedPage.name}”. Assigning this page will replace that assignment.`
+                             : `${selectedDevice.name} has no persistent page assignment.`}
+                       </Alert>
+                     )}
+                     {availableDevices.length === 0 && <Alert severity="info" sx={{ mt: 2 }}>No display devices are registered with Core.</Alert>}
+                     <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap', gap: 1 }}>
+                       {assignedDevices.length === 0 ? <Typography variant="body2" color="text.secondary">No persistent assignments.</Typography> : assignedDevices.map(device => (
+                         <Chip key={device.id} label={`${device.name} · ${device.status}`} color={device.status === 'online' ? 'success' : 'default'} variant={device.id === deviceId ? 'filled' : 'outlined'} clickable onClick={() => { setDeviceId(device.id); setDeliveryNotice(null); }} />
+                       ))}
+                     </Stack>
                   </Paper>
                 </Stack>
               ) : pages.length > 0 ? <Paper sx={{ p: 3, flex: 1 }}><Typography color="text.secondary">Select a page to edit it.</Typography></Paper> : null}
@@ -279,7 +373,7 @@ export default function PagesPage() {
       </PageBody>
 
       <NameDialog open={nameDialog !== null} title={nameDialog === 'create' ? 'New page' : 'Rename page'} initialName={nameDialog === 'rename' ? selected?.name ?? '' : ''} busy={busy} onClose={() => setNameDialog(null)} onSave={saveName} />
-      <PanelDialog panel={panelDialog} scenes={scenes} busy={busy} onClose={() => setPanelDialog(null)} onSave={savePanel} />
+      <PanelDialog panel={panelDialog} scenes={scenes} busy={busy} pixelSize={previewPx} onClose={() => setPanelDialog(null)} onSave={savePanel} />
     </Box>
   );
 }
@@ -292,7 +386,7 @@ function NameDialog({ open, title, initialName, busy, onClose, onSave }: { open:
   return <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth><DialogTitle>{title}</DialogTitle><DialogContent><TextField autoFocus fullWidth size="small" label="Page name" value={name} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void submit(); }} sx={{ mt: 1 }} />{error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}</DialogContent><DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" disabled={busy || !name.trim()} onClick={submit}>Save</Button></DialogActions></Dialog>;
 }
 
-function PanelDialog({ panel, scenes, busy, onClose, onSave }: { panel: PagePanel | 'new' | null; scenes: SceneRecord[]; busy: boolean; onClose: () => void; onSave: (draft: PanelDraft) => Promise<void> }) {
+function PanelDialog({ panel, scenes, busy, pixelSize, onClose, onSave }: { panel: PagePanel | 'new' | null; scenes: SceneRecord[]; busy: boolean; pixelSize?: { width: number; height: number } | null; onClose: () => void; onSave: (draft: PanelDraft) => Promise<void> }) {
   const [draft, setDraft] = useState<PanelDraft>(EMPTY_PANEL);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -307,5 +401,5 @@ function PanelDialog({ panel, scenes, busy, onClose, onSave }: { panel: PagePane
   }, [panel]);
   const setNumber = (key: 'x' | 'y' | 'w' | 'h', value: string) => setDraft(current => ({ ...current, [key]: Number(value) }));
   async function submit() { try { setError(null); await onSave(draft); } catch (err) { setError(errorMessage(err)); } }
-  return <Dialog open={panel !== null} onClose={onClose} maxWidth="sm" fullWidth><DialogTitle>{panel === 'new' ? 'Add panel' : 'Edit panel'}</DialogTitle><DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField size="small" label="Name" value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /><FormControl size="small"><InputLabel>Content</InputLabel><Select label="Content" value={draft.content_type} onChange={event => setDraft(current => ({ ...current, content_type: event.target.value as 'url' | 'scene' }))}><MenuItem value="url">Internal or external URL</MenuItem><MenuItem value="scene">Scene</MenuItem></Select></FormControl>{draft.content_type === 'url' ? <TextField size="small" label="URL" type="url" value={draft.url ?? ''} onChange={event => setDraft(current => ({ ...current, url: event.target.value }))} helperText="Full http:// or https:// URL loaded by this panel" /> : <FormControl size="small"><InputLabel>Scene</InputLabel><Select label="Scene" value={draft.scene_id ?? ''} onChange={event => setDraft(current => ({ ...current, scene_id: event.target.value }))}>{scenes.filter(scene => scene.status === 'published').map(scene => <MenuItem key={scene.id} value={scene.id}>{scene.name} · revision {scene.revision}</MenuItem>)}</Select></FormControl>}<Stack direction="row" spacing={1}>{(['x', 'y', 'w', 'h'] as const).map(key => <TextField key={key} size="small" label={`${key.toUpperCase()} %`} type="number" value={draft[key]} onChange={event => setNumber(key, event.target.value)} slotProps={{ htmlInput: { min: key === 'w' || key === 'h' ? 1 : 0, max: 100 } }} />)}</Stack><Stack direction="row" spacing={1}><TextField size="small" label="Layer" type="number" value={draft.z_index} onChange={event => setDraft(current => ({ ...current, z_index: Number(event.target.value) }))} /><TextField size="small" label="Opacity" type="number" value={draft.opacity} onChange={event => setDraft(current => ({ ...current, opacity: Number(event.target.value) }))} slotProps={{ htmlInput: { min: 0, max: 1, step: 0.05 } }} /></Stack>{error && <Alert severity="error">{error}</Alert>}</Stack></DialogContent><DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" disabled={busy} onClick={submit}>Save</Button></DialogActions></Dialog>;
+  return <Dialog open={panel !== null} onClose={onClose} maxWidth="sm" fullWidth><DialogTitle>{panel === 'new' ? 'Add panel' : 'Edit panel'}</DialogTitle><DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField size="small" label="Name" value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} /><FormControl size="small"><InputLabel>Content</InputLabel><Select label="Content" value={draft.content_type} onChange={event => setDraft(current => ({ ...current, content_type: event.target.value as 'url' | 'scene' }))}><MenuItem value="url">Internal or external URL</MenuItem><MenuItem value="scene">Scene</MenuItem></Select></FormControl>{draft.content_type === 'url' ? <TextField size="small" label="URL" type="url" value={draft.url ?? ''} onChange={event => setDraft(current => ({ ...current, url: event.target.value }))} helperText="Full http:// or https:// URL loaded by this panel" /> : <FormControl size="small"><InputLabel>Scene</InputLabel><Select label="Scene" value={draft.scene_id ?? ''} onChange={event => setDraft(current => ({ ...current, scene_id: event.target.value }))}>{scenes.filter(scene => scene.status === 'published').map(scene => <MenuItem key={scene.id} value={scene.id}>{scene.name} · revision {scene.revision}</MenuItem>)}</Select></FormControl>}<Stack direction="row" spacing={1}>{(['x', 'y', 'w', 'h'] as const).map(key => <TextField key={key} size="small" label={`${key.toUpperCase()} %`} type="number" value={draft[key]} onChange={event => setNumber(key, event.target.value)} slotProps={{ htmlInput: { min: key === 'w' || key === 'h' ? 1 : 0, max: 100 } }} />)}</Stack>{pixelSize && (() => { const pxLeft = Math.round((draft.x / 100) * pixelSize.width); const pxTop = Math.round((draft.y / 100) * pixelSize.height); const pxW = Math.round((draft.w / 100) * pixelSize.width); const pxH = Math.round((draft.h / 100) * pixelSize.height); return <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>On a {pixelSize.width}×{pixelSize.height} display: origin {pxLeft},{pxTop} px · size {pxW}×{pxH} px</Typography>; })()}<Stack direction="row" spacing={1}><TextField size="small" label="Layer" type="number" value={draft.z_index} onChange={event => setDraft(current => ({ ...current, z_index: Number(event.target.value) }))} /><TextField size="small" label="Opacity" type="number" value={draft.opacity} onChange={event => setDraft(current => ({ ...current, opacity: Number(event.target.value) }))} slotProps={{ htmlInput: { min: 0, max: 1, step: 0.05 } }} /></Stack>{error && <Alert severity="error">{error}</Alert>}</Stack></DialogContent><DialogActions><Button onClick={onClose}>Cancel</Button><Button variant="contained" disabled={busy} onClick={submit}>Save</Button></DialogActions></Dialog>;
 }

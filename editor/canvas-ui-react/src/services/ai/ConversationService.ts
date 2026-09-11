@@ -16,6 +16,7 @@ import { getOpenAIClient, type OpenAIMessage, type VisionContent } from './OpenA
 import { getOpenWebUIClient, type OpenWebUIMessage } from './OpenWebUIClient';
 import {
     buildGenerationPrompt,
+    buildFreeformPrompt,
     extractExportedView,
     type SelectedEntity,
 } from './PromptBuilder';
@@ -113,6 +114,7 @@ export class ConversationService {
   private copilotProxyToken: string = '';
   private copilotProxyUrl: string = 'http://localhost:3000/api';
   private requestTimeoutMs: number = 300000; // 5 minute default
+  private freeformMode: boolean = false; // Free-form HTML dashboard generation
   
   private pendingImageDataUrl?: string; // Pending image for vision AI request
 
@@ -347,6 +349,19 @@ export class ConversationService {
 
   getRequestTimeout(): number {
     return this.requestTimeoutMs;
+  }
+
+  /**
+   * Enable/disable free-form HTML dashboard generation.
+   * When true, the AI emits custom_dashboard widgets (html/css/js) instead of
+   * the structured widget catalog.
+   */
+  setFreeformMode(enabled: boolean): void {
+    this.freeformMode = enabled;
+  }
+
+  getFreeformMode(): boolean {
+    return this.freeformMode;
   }
 
   getMessages(): ChatMessage[] {
@@ -760,7 +775,8 @@ export class ConversationService {
     userRequest: string,
     entities: SelectedEntity[],
     viewId: string,
-    viewName: string
+    viewName: string,
+    mode?: 'widget' | 'freeform'
   ): Promise<GenerationResult> {
     try {
       console.group('🎨 [AI Dashboard Generator]');
@@ -769,6 +785,8 @@ export class ConversationService {
       console.log('Provider:', this.provider);
       console.log('Model:', this.model);
 
+      const useFreeform = mode ? mode === 'freeform' : this.freeformMode;
+
       // Add user message to chat history
       this.chatHistory.push({
         role: 'user',
@@ -776,22 +794,37 @@ export class ConversationService {
         timestamp: Date.now(),
       });
 
-      // Build minimal prompt (skip widget catalog for Open WebUI - file provides it)
-      // Pass current widgets for edit mode context
-      const skipCatalog = this.provider === 'openwebui';
+      // Build prompt based on mode
       const currentWidgets = this.canvasState?.widgets || [];
-      const prompt = buildGenerationPrompt(
-        userRequest, 
-        entities, 
-        viewId, 
-        viewName, 
-        skipCatalog,
-        currentWidgets,
-        this.canvasState?.viewWidth || 1920,
-        this.canvasState?.viewHeight || 1080
-      );
+      let prompt: string;
+      if (useFreeform) {
+        // Free-form HTML mode: instruct the AI to emit custom_dashboard widgets
+        // carrying raw html/css/js. No structured widget catalog is needed.
+        prompt = buildFreeformPrompt(
+          userRequest,
+          entities,
+          viewId,
+          viewName,
+          currentWidgets,
+          this.canvasState?.viewWidth || 1920,
+          this.canvasState?.viewHeight || 1080
+        );
+      } else {
+        // Widget mode: skip widget catalog for Open WebUI (file provides it)
+        const skipCatalog = this.provider === 'openwebui';
+        prompt = buildGenerationPrompt(
+          userRequest,
+          entities,
+          viewId,
+          viewName,
+          skipCatalog,
+          currentWidgets,
+          this.canvasState?.viewWidth || 1920,
+          this.canvasState?.viewHeight || 1080
+        );
+      }
 
-      console.log('[generateView] Mode:', currentWidgets.length > 0 ? 'EDIT' : 'CREATE');
+      console.log('[generateView] Mode:', useFreeform ? 'FREEFORM HTML' : (currentWidgets.length > 0 ? 'EDIT' : 'CREATE'));
       console.log('[generateView] Current widgets:', currentWidgets.length);
 
       // Single AI call
@@ -891,13 +924,15 @@ export class ConversationService {
         text,
         this.selectedEntities,
         'ai-generated',
-        'AI Generated Dashboard'
+        'AI Generated Dashboard',
+        this.freeformMode ? 'freeform' : 'widget'
       );
 
       if (result.success && result.exportedView) {
-        // VALIDATION: In edit mode, AI should return at least as many widgets as we have
+        // VALIDATION: In widget edit mode, AI should return at least as many widgets as we have.
+        // Skip this guard in free-form HTML mode - the AI restructures the dashboard differently.
         const newWidgetCount = result.exportedView.view.widgets.length;
-        if (isEditMode && newWidgetCount < currentWidgetCount) {
+        if (isEditMode && !this.freeformMode && newWidgetCount < currentWidgetCount) {
           console.error(`[sendMessage] ❌ VALIDATION FAILED: AI returned only ${newWidgetCount} widgets but we have ${currentWidgetCount} on canvas`);
           console.error('[sendMessage] This would delete widgets. Rejecting AI response.');
           return {

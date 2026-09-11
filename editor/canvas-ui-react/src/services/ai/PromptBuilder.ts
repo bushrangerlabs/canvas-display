@@ -300,6 +300,133 @@ function sanitizeJson(json: string): string {
 }
 
 /**
+ * Build prompt for the FREE-FORM HTML mode.
+ *
+ * In this mode the AI generates one or more "custom_dashboard" widgets whose
+ * config carries raw html/css/js. The JS uses the global `CanvasHermes` bridge
+ * (injected at runtime) to read Home Assistant entity states and call services.
+ * Unlike widget mode, the big structured widget catalog is omitted - the AI
+ * only needs the CanvasHermes API reference below.
+ */
+export function buildFreeformPrompt(
+  userRequest: string,
+  selectedEntities: SelectedEntity[],
+  viewId: string,
+  viewName: string,
+  currentWidgets: any[] = [],
+  viewWidth: number = 1920,
+  viewHeight: number = 1080
+): string {
+  const entityList = selectedEntities.length > 0
+    ? selectedEntities.map(e => `${e.entity_id} (${e.friendly_name})`).join(', ')
+    : 'No entities selected';
+
+  const timestamp = new Date().toISOString();
+  const isEditMode = currentWidgets.length > 0;
+
+  const canvasBoundsSection = `CANVAS BOUNDS:
+The view is ${viewWidth}px wide × ${viewHeight}px tall.
+All widget positions must satisfy: x + width ≤ ${viewWidth} and y + height ≤ ${viewHeight}.
+Start widgets at x ≥ 10, y ≥ 10.`;
+
+  const currentWidgetsSection = isEditMode
+    ? `
+CURRENT WIDGETS ON CANVAS (return the COMPLETE updated view, preserving unchanged widgets):
+\`\`\`json
+{
+  "version": "2.0.0",
+  "exportedAt": "${timestamp}",
+  "view": {
+    "id": "${viewId}",
+    "name": "${viewName}",
+    "widgets": ${JSON.stringify(currentWidgets, null, 2)}
+  }
+}
+\`\`\`
+Copy each existing widget's "id" exactly - do NOT generate new IDs for them.
+`
+    : '';
+
+  const canvasHermesApi = `CANVAS_HERMES API (available to your JavaScript as the global \`CanvasHermes\`):
+
+  // Read a single entity's state + attributes
+  CanvasHermes.getState('light.living_room')   // => { state, attributes, last_changed, last_updated } | undefined
+
+  // Read every entity at once
+  CanvasHermes.getAllStates()                  // => { 'entity.id': {...}, ... }
+
+  // Subscribe to live updates (called immediately + on every state change)
+  const unsubscribe = CanvasHermes.subscribe((states) => {
+    console.log('light.living_room =', states['light.living_room'].state);
+  });
+
+  // Call a Home Assistant service
+  await CanvasHermes.callService('light', 'turn_on', { entity_id: 'light.living_room', brightness_pct: 60 });
+
+RULES:
+- You may use any HTML/CSS/JS you like inside the widget (charts, custom layouts, animations).
+- Entity states update live; re-render your UI inside the subscribe callback.
+- Do NOT reference the parent page or external globals - only \`CanvasHermes\` is provided.
+- Keep \`<script>\` content as valid JS (do not include the literal string </script>).`;
+
+  const outputFormat = `=== OUTPUT FORMAT ===
+
+STRUCTURE (one or more custom_dashboard widgets - compose a full dashboard from several):
+{
+  "version": "2.0.0",
+  "exportedAt": "${timestamp}",
+  "view": {
+    "id": "${viewId}",
+    "name": "${viewName}",
+    "widgets": [
+      {
+        "id": "cd-1",
+        "type": "custom_dashboard",
+        "name": "Weather Panel",
+        "position": { "x": 10, "y": 10, "width": 600, "height": 400, "zIndex": 1 },
+        "config": {
+          "html": "<div id='app'>...</div>",
+          "css": "#app { color: #fff; font-family: sans-serif; }",
+          "js": "CanvasHermes.subscribe((s) => { document.getElementById('app').textContent = s['sensor.temp'].state; });"
+        },
+        "bindings": {}
+      }
+    ]
+  }
+}
+
+CRITICAL RULES:
+1. version, exportedAt and the view wrapper are required.
+2. Every widget MUST have: id, type ("custom_dashboard"), name, position {x,y,width,height,zIndex}, config {html,css,js}, bindings {}.
+3. Position values are PIXELS.
+4. Put the visual markup in "html", styling in "css", behaviour/entity binding in "js".
+5. Use CanvasHermes (above) to connect entities - do not hardcode values that exist as entities.
+6. RESPOND WITH ONLY THE JSON - no explanations, no markdown text outside the JSON.`;
+
+  return `
+You are a Home Assistant dashboard expert building a FREE-FORM dashboard using raw HTML, CSS and JavaScript.
+
+${isEditMode
+  ? 'You are EDITING an existing dashboard - preserve all widgets unless the user asks to change them.'
+  : 'You are creating a NEW dashboard from scratch.'}
+
+USER REQUEST:
+${userRequest}
+
+${canvasBoundsSection}
+
+AVAILABLE ENTITIES:
+${entityList}
+
+${currentWidgetsSection}
+
+${canvasHermesApi}
+
+${outputFormat}
+`.trim();
+}
+
+/**
  * Extract ExportedView JSON from AI response
  * Handles markdown code blocks and plain JSON
  */

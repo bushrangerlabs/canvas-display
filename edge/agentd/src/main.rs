@@ -467,6 +467,13 @@ fn main() {
         std::env::var("CANVAS_EDGE_SCENE_SERVER_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8099".to_string()),
     );
+    session_options.scene_server_token = std::env::var("CANVAS_EDGE_SCENE_SERVER_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty());
+    session_options.scene_renderer_managed_by_core = matches!(
+        std::env::var("CANVAS_EDGE_SCENE_RENDERER_MODE").as_deref(),
+        Ok("core")
+    );
     enrollment_outcome.apply_to(&mut session_options);
     let session = EdgeSession::new(session_options);
     let transport_handle = transport::spawn(

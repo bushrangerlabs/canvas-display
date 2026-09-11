@@ -9,7 +9,7 @@
  * `temperature`, `timeoutMs`.
  */
 import type { ChatMessage, ChatWithToolsResult, HealthStatus } from '../types.js';
-import type { FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
+import type { ChatWithToolsOptions, FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
 
 export interface OpenRouterLlmOptions {
   /** OpenRouter API key (sk-or-...). */
@@ -52,7 +52,7 @@ export class OpenRouterLlm implements LlmProvider {
     this.referer = opts.referer;
     this.title = opts.title;
     this.temperature = opts.temperature ?? 0.7;
-    this.timeoutMs = opts.timeoutMs ?? 120_000;
+    this.timeoutMs = opts.timeoutMs ?? 300_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.name = opts.name ?? 'openrouter';
   }
@@ -99,7 +99,11 @@ export class OpenRouterLlm implements LlmProvider {
     }
   }
 
-  async chatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult> {
+  async chatWithTools(
+    messages: ChatMessage[],
+    tools: ToolDefinition[],
+    opts?: ChatWithToolsOptions,
+  ): Promise<ChatWithToolsResult> {
     const url = `${this.baseUrl}/chat/completions`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -109,6 +113,13 @@ export class OpenRouterLlm implements LlmProvider {
         messages,
         temperature: this.temperature,
       };
+      if (opts?.maxTokens != null) {
+        body.max_tokens = opts.maxTokens;
+      }
+      if (opts?.disableThinking) {
+        // OpenRouter's standard knob for reasoning models (Claude, qwen3, etc.).
+        body.reasoning = { enabled: false };
+      }
       if (tools.length > 0) body.tools = tools;
       const res = await this.fetchImpl(url, {
         method: 'POST',
