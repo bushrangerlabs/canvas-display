@@ -534,12 +534,11 @@ export function routeIntent(transcript: string): IntentResult {
       confidence: 0.9,
       entities: [{ id: `media_player.${deviceName}`, domain: 'media_player' }],
       tool_calls: [
-        { tool: 'media.search', arguments: { query, media_type: 'music' } },
-        { tool: 'media.play', arguments: { device: deviceName, media_type: 'music' } },
+        { tool: 'media.play', arguments: { query, source: 'music_assistant' } },
       ],
       clarification_needed: false,
-      response: `Playing ${query} in the ${room_name(room)}.`,
-      matched_pattern: 'media_play',
+      response: `Playing ${query} from Music Assistant.`,
+      matched_pattern: 'media_play_music_assistant',
     };
   }
 
@@ -694,6 +693,8 @@ function room_name(key: string): string {
 export interface IntentRouterOptions {
   /** Optional LLM provider for fallback on unknown intents. */
   llm?: LlmProvider;
+  /** Resolves the currently assigned routing provider at request time. */
+  llmResolver?: () => LlmProvider | undefined;
 }
 
 /**
@@ -703,10 +704,12 @@ export interface IntentRouterOptions {
  */
 export class IntentRouter {
   private readonly llm?: LlmProvider;
+  private readonly llmResolver?: () => LlmProvider | undefined;
   private policy: RequestRoutingPolicy = DEFAULT_REQUEST_ROUTING_POLICY;
 
   constructor(opts: IntentRouterOptions = {}) {
     this.llm = opts.llm;
+    this.llmResolver = opts.llmResolver;
   }
 
   setPolicy(policy: RequestRoutingPolicy): void {
@@ -719,7 +722,7 @@ export class IntentRouter {
 
   async classify(transcript: string): Promise<RequestClassification> {
     const deterministic = this.asRouterResult(routeIntent(transcript));
-    return classifyRequest(transcript, deterministic, this.policy, this.llm);
+    return classifyRequest(transcript, deterministic, this.policy, this.llmResolver?.() ?? this.llm);
   }
 
   /**
@@ -729,9 +732,17 @@ export class IntentRouter {
   async route(transcript: string): Promise<RouterResult> {
     const deterministic = this.asRouterResult(routeIntent(transcript));
     if (!transcript.trim()) return deterministic;
-    if (deterministic.intent === 'unknown'
-        && /^\s*(?:explain(?:ing)?|why\b|how\s+(?:does|do|is|are|can)\b)/i.test(transcript)) return deterministic;
-    const classification = await classifyRequest(transcript, deterministic, this.policy, this.llm);
+    // Ordinary questions go straight to the conversation/tool planner. Running a
+    // separate classifier first adds an LLM round trip without changing their
+    // execution path. Keep AI classification for ambiguous action requests where
+    // it can select media, display, or device behavior.
+    if (deterministic.intent === 'unknown') {
+      const looksLikeQuestion = /^\s*(?:who|what|when|where|why|which|explain(?:ing)?|tell\s+me|how\s+(?:does|do|is|are|can|would|could|should))\b/i.test(transcript)
+        || /\?\s*$/.test(transcript);
+      const actionDomainHint = /\b(?:play|watch|listen|show|display|navigate|open|pause|resume|stop|skip|volume|channel)\b/i.test(transcript);
+      if (looksLikeQuestion && !actionDomainHint) return deterministic;
+    }
+    const classification = await classifyRequest(transcript, deterministic, this.policy, this.llmResolver?.() ?? this.llm);
     if (this.policy.debugLogging) {
       console.log(`[intel][routing] domain=${classification.domain} intent=${classification.intent} classifier=${classification.classifier} confidence=${classification.confidence}`);
     }

@@ -4,11 +4,15 @@ import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { loadConfig } from './config.js';
 import { getPool, migrate } from './db.js';
+
+const execFileAsync = promisify(execFile);
 import { registerGateway } from './gateway.js';
 import { createIntelligence, type Intelligence } from './intelligence.js';
-import type { LlmProvider } from './providers/llm.js';
+import { parseContentAsToolCalls, type LlmProvider } from './providers/llm.js';
 import { createHomeAssistantClient, type HomeAssistantClient } from './providers/ha.js';
 import {
   registerAuth,
@@ -18,6 +22,7 @@ import {
 import {
   registerDeviceRoutes,
   PgDeviceRepository,
+  recordDeviceHello,
 } from './devices.js';
 import {
   registerStateRoutes,
@@ -40,6 +45,7 @@ import {
   registerAssetRoutes,
   PgAssetRepository,
 } from './assets.js';
+import { registerIconRoutes, PgIconRepository } from './icons.js';
 import { MqttNavigationService } from './mqtt-navigation.js';
 import {
   registerScheduleRoutes,
@@ -69,9 +75,14 @@ import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, see
 import { installLogger, setLevel, getLevel } from './logger.js';
 import type { LogLevel } from './logger.js';
 import { registerLogRoutes } from './log-routes.js';
+import { registerAiLogRoutes } from './ai-log.js';
+import { resolveYouTubeWatchUrl, resolveYouTubeQueue, buildYouTubePlaylistUrl, resolveYouTubeStreams as resolveYouTubeStreamsFn, type YouTubeSearchOptions } from './youtube.js';
 import { policyFromSettings } from './request-routing.js';
-import { confirmationDigest, mcpCallRequiresConfirmation, selectToolsForRequest } from './mcp-policy.js';
+import { confirmationDigest, mcpCallRequiresConfirmation, normalizeToolArguments, resolveToolName, selectToolsForRequest } from './mcp-policy.js';
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
+import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-drafts.js';
+import { advertiseCore } from './discovery.js';
+import { CORE_VERSION } from './version.js';
 
 /**
  * Canvas Core — centralized control plane and AI brain (plan doc §20.5, D-009..D-013).
@@ -193,6 +204,50 @@ async function main(): Promise<void> {
     );
   };
 
+  const normalizeVoicePhrase = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+  const rebuildVoiceCommandIndex = async (): Promise<number> => {
+    const templates = await pool.query<{
+      id: string; domain: string; action: string; phrase_template: string; service: string | null;
+      priority: number; requires_confirmation: boolean;
+    }>('SELECT id, domain, action, phrase_template, service, priority, requires_confirmation FROM voice_command_templates WHERE enabled=true');
+    const entities = await pool.query<{ entity_id: string; domain: string; friendly_name: string | null }>(
+      'SELECT entity_id, domain, friendly_name FROM ha_entities WHERE friendly_name IS NOT NULL AND btrim(friendly_name) <> \'\'',
+    );
+    const aliases = await pool.query<{ entity_id: string; alias: string }>('SELECT entity_id, alias FROM voice_entity_aliases');
+    const namesByEntity = new Map<string, string[]>();
+    for (const entity of entities.rows) namesByEntity.set(entity.entity_id, [entity.friendly_name!]);
+    for (const alias of aliases.rows) namesByEntity.set(alias.entity_id, [...(namesByEntity.get(alias.entity_id) ?? []), alias.alias]);
+    const rows: Array<[string, string, string, string, string, string | null, number, boolean]> = [];
+    for (const template of templates.rows) {
+      for (const entity of entities.rows) {
+        if (entity.domain !== template.domain) continue;
+        for (const name of namesByEntity.get(entity.entity_id) ?? []) {
+          const phrase = normalizeVoicePhrase(template.phrase_template.replaceAll('{name}', name));
+          if (phrase) rows.push([phrase, template.id, entity.entity_id, entity.domain, template.action, template.service, template.priority, template.requires_confirmation]);
+        }
+      }
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM voice_command_index');
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO voice_command_index(phrase, template_id, entity_id, domain, action, service, priority, requires_confirmation)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, row,
+        );
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    return rows.length;
+  };
+
   const reconcileHaEntityCache = async (): Promise<number> => {
     if (!ha) return 0;
     const entities = await ha.refreshEntities();
@@ -201,6 +256,7 @@ async function main(): Promise<void> {
     if (ids.length > 0) {
       await pool.query('DELETE FROM ha_entities WHERE NOT (entity_id = ANY($1::text[]))', [ids]);
     }
+    await rebuildVoiceCommandIndex();
     return entities.length;
   };
 
@@ -300,6 +356,7 @@ async function main(): Promise<void> {
     return { transcript, classification: await intelligence.intentRouter.classify(transcript) };
   });
   await registerLogRoutes(fastify, requireAdmin);
+  await registerAiLogRoutes(fastify, requireAdmin);
 
   // MCP server registry — load from DB and wire into the intelligence providers.
   // After loading, replace the env-var-based MCP client with a DB-backed MultiMcpManager.
@@ -361,6 +418,10 @@ async function main(): Promise<void> {
     ? Number(process.env.CANVAS_CORE_ASSET_QUOTA_BYTES)
     : DEFAULT_QUOTA_BYTES;
   await registerAssetRoutes(fastify, { repo: assetRepo, storagePath: assetStoragePath, requireAdmin, quotaBytes: assetQuotaBytes });
+
+  // --- Custom icon storage (server-persisted so every browser/kiosk sees the same icons) ---
+  const iconRepo = new PgIconRepository(pool);
+  await registerIconRoutes(fastify, { repo: iconRepo, requireAdmin });
 
   // --- Phase 4 garbage collection routes (plan doc §25 Phase 4 checklist) ---
   const gcRepo = new PgGcRepository(pool);
@@ -465,7 +526,7 @@ async function main(): Promise<void> {
   fastify.get('/api', async () => ({
     status: 'ok',
     role: 'canvas-core',
-    version: '0.1.0',
+    version: CORE_VERSION,
     docs: '/health',
     endpoints: {
       health: '/health',
@@ -500,6 +561,7 @@ async function main(): Promise<void> {
   fastify.get('/health', async () => ({
     status: 'ok',
     role: 'canvas-core',
+    version: CORE_VERSION,
     gatewayPath: config.gatewayPath,
   }));
 
@@ -663,6 +725,230 @@ async function main(): Promise<void> {
       source: envToken ? 'env' : dbToken ? 'db' : 'none',
       token: active ?? null,
       coreUrl: `http://${fastify.server.address() ? (fastify.server.address() as import('net').AddressInfo).address : 'localhost'}:${config.port}`,
+    };
+  });
+
+  // --- YouTube login cookies (Netscape format) for an authenticated / ad-free session.Authoritative
+  //     value comes from the DB so it can be set at runtime; env `YOUTUBE_COOKIES` is the bootstrap. ---
+  const getYoutubeCookies = async (): Promise<string> => {
+    const row = await pool.query<{ value: string }>(
+      'SELECT value FROM settings WHERE key = $1', ['youtube_cookies'],
+    );
+    const db = row.rows[0]?.value ?? '';
+    return db || config.youtubeCookies || '';
+  };
+
+  fastify.get('/api/admin/youtube/cookies', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async () => ({ cookies: await getYoutubeCookies() }));
+
+  fastify.put('/api/admin/youtube/cookies', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request) => {
+    const body = request.body as { cookies?: string } | undefined;
+    const cookies = (body?.cookies ?? '').trim();
+    await pool.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=now()',
+      ['youtube_cookies', cookies],
+    );
+    return { ok: true, stored: cookies.length > 0 };
+  });
+
+  // --- Piper TTS voice selection (per-request Wyoming voice) ---
+  const PIPER_VOICES = [
+    'en_US-lessac-medium', 'en_US-ryan-medium', 'en_US-norman-medium', 'en_US-bryce-medium',
+    'en_GB-alan-low', 'en_GB-cori-medium', 'en_US-ljspeech-medium', 'jarvis-high',
+  ];
+
+  const getPiperVoice = async (): Promise<string> => {
+    const row = await pool.query<{ value: string }>(
+      'SELECT value FROM settings WHERE key = $1', ['piper_voice'],
+    );
+    const db = row.rows[0]?.value ?? '';
+    return db || config.piperVoice || 'en_US-lessac-medium';
+  };
+
+  fastify.get('/api/admin/piper/voice', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async () => {
+    let voices = PIPER_VOICES;
+    try {
+      const discovered = await intelligence.providers.tts?.listVoices?.();
+      if (discovered && discovered.length > 0) voices = [...discovered].sort();
+    } catch { /* keep the curated fallback list */ }
+    return { voice: await getPiperVoice(), voices };
+  });
+
+  fastify.put('/api/admin/piper/voice', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request) => {
+    const body = request.body as { voice?: string } | undefined;
+    const voice = (body?.voice ?? '').trim();
+    await pool.query(
+      'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=now()',
+      ['piper_voice', voice],
+    );
+    intelligence.providers.tts?.setVoice?.(voice || undefined);
+    return { ok: true, voice: voice || null };
+  });
+
+  // --- Per-device page roles (home / weather / news / custom) used by the voice assistant ---
+  fastify.get('/api/admin/devices/:id/page-roles', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = await pool.query('SELECT page_roles FROM devices WHERE id = $1', [id]);
+    if (row.rowCount === 0) {
+      reply.code(404);
+      return { error: 'device_not_found' };
+    }
+    return { deviceId: id, pageRoles: row.rows[0]?.page_roles ?? {} };
+  });
+
+  fastify.put('/api/admin/devices/:id/page-roles', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { pageRoles?: Record<string, string> } | undefined;
+    const roles = body?.pageRoles ?? {};
+    const exists = await pool.query('SELECT 1 FROM devices WHERE id = $1', [id]);
+    if (exists.rowCount === 0) {
+      reply.code(404);
+      return { error: 'device_not_found' };
+    }
+    await pool.query('UPDATE devices SET page_roles = $2 WHERE id = $1', [id, JSON.stringify(roles)]);
+    return { ok: true, deviceId: id, pageRoles: roles };
+  });
+
+  // --- Remotely show / hide / restart an edge app (Android or Linux) ---
+  fastify.post('/api/admin/devices/:id/app', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { action?: string } | undefined;
+    const action = body?.action;
+    if (action !== 'show' && action !== 'hide' && action !== 'restart') {
+      reply.code(400);
+      return { error: "action must be 'show', 'hide' or 'restart'" };
+    }
+    const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [id]);
+    if (archRow.rowCount === 0) {
+      reply.code(404);
+      return { error: 'device_not_found' };
+    }
+    const architecture = String(archRow.rows[0]?.architecture ?? '').toLowerCase();
+    let result: unknown;
+    if (gateway.isConnected(id)) {
+      result = await gateway.requestAction(id, `app.${action}`, {});
+    } else {
+      result = await requestDeviceAction(id, 'device_http', {
+        path: `/api/app/${action}`,
+        http_method: 'POST',
+        body: {},
+      }, 15_000);
+    }
+    // Log the device's own report so the Core log shows what the edge app did (or
+    // whether it timed out), not just that the HTTP request arrived.
+    if (result && typeof result === 'object' && 'ok' in result && (result as { ok?: unknown }).ok !== true) {
+      reply.code(409);
+      return { ok: false, deviceId: id, action, result };
+    }
+    request.log.info({ deviceId: id, architecture, action, result }, 'edge app action completed');
+    return { ok: true, deviceId: id, action, result };
+  });
+
+  // --- Knowledge/search page display timeout (auto-dismiss on the originating edge device) ---
+  const getKnowledgeDisplaySeconds = async (): Promise<number> => {
+    const row = await pool.query<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'knowledge_display_seconds'",
+    );
+    const raw = row.rows[0]?.value;
+    const db = raw != null && raw !== '' ? Number(raw) : NaN;
+    return Number.isFinite(db) && db >= 0 ? db : config.knowledgeDisplaySeconds;
+  };
+
+  fastify.get('/api/admin/knowledge-display', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async () => ({ seconds: await getKnowledgeDisplaySeconds() }));
+
+  fastify.put('/api/admin/knowledge-display', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request) => {
+    const body = request.body as { seconds?: number } | undefined;
+    const seconds = Math.max(0, Math.round(body?.seconds ?? 0));
+    await pool.query(
+      "INSERT INTO settings (key, value) VALUES ('knowledge_display_seconds', $1) ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=now()",
+      [String(seconds)],
+    );
+    return { ok: true, seconds };
+  });
+
+  // --- Ad-free YouTube player: core resolves direct streams (yt-dlp + Premium cookies)
+  //     and serves one shared HTML5 <video> player page for every edge device. ---
+  const YOUTUBE_PLAYER_PAGE =
+    '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<style>body{margin:0;background:#000}video{width:100vw;height:100vh;object-fit:contain}</style></head>' +
+    '<body><video id="v" controls autoplay playsinline></video>' +
+    '<script>var u=__URLS__;var i=0;var v=document.getElementById("v");' +
+    'function n(){if(i<u.length){v.src=u[i];v.play().catch(function(){});i++;}}v.onended=n;n();</script>' +
+    '</body></html>';
+
+  type YouTubeStreamEntry = { urls: string[]; expiresAt: number };
+  const youtubeStreamEntries = new Map<string, YouTubeStreamEntry>();
+
+  function storeYouTubeStreams(urls: string[]): string {
+    const id = randomUUID().slice(0, 12);
+    youtubeStreamEntries.set(id, { urls, expiresAt: Date.now() + 6 * 60 * 60_000 });
+    return id;
+  }
+
+  async function writeYoutubeCookiesFile(cookies: string): Promise<string> {
+    const file = `/tmp/youtube-cookies-${process.pid}.txt`;
+    await import('node:fs/promises').then((fs) => fs.writeFile(file, cookies, { mode: 0o600 }));
+    return file;
+  }
+
+  fastify.get('/media/youtube/player/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = youtubeStreamEntries.get(id);
+    if (!entry || entry.expiresAt < Date.now()) {
+      reply.type('text/html').send(
+        '<!doctype html><html><body style="background:#000;color:#fff;font-family:sans-serif;display:grid;place-items:center;height:100vh">This video stream expired.</body></html>',
+      );
+      return;
+    }
+    reply.type('text/html').send(YOUTUBE_PLAYER_PAGE.replace('__URLS__', JSON.stringify(entry.urls)));
+  });
+
+  // Device-facing voice config (public, no admin session — an Edge device only knows its
+  // own id). Lets any Edge (e.g. the Android native client) fetch its wake-word settings
+  // and the shared voice bridge token entirely from Core, instead of configuring them
+  // locally on-device. Mirrors the admin-editable `devices.voice_config`/`audio_config`
+  // columns set by `PUT /api/admin/devices/:id/voice`.
+  fastify.get<{ Params: { id: string } }>('/api/devices/:id/voice-config', async (request, reply) => {
+    const { id } = request.params;
+    const res = await pool.query<{ voice_config: Record<string, unknown> | null; audio_config: Record<string, unknown> | null }>(
+      'SELECT voice_config, audio_config FROM devices WHERE id = $1', [id],
+    );
+    if (res.rowCount === 0) {
+      reply.code(404);
+      return { error: 'device_not_found' };
+    }
+    const voice = res.rows[0].voice_config ?? {};
+    const audio = res.rows[0].audio_config ?? {};
+    const token = await resolveEdgeVoiceToken('');
+    return {
+      wake_word: voice.wake_word ?? 'hey_jarvis',
+      wake_threshold: voice.wake_threshold ?? 0.5,
+      wake_enabled: voice.wake_enabled ?? false,
+      wake_ack_enabled: voice.wake_ack_enabled ?? true,
+      wake_ack_sound: voice.wake_ack_sound ?? 'builtin:ready_up',
+      good_intent_enabled: voice.good_intent_enabled ?? true,
+      good_intent_sound: voice.good_intent_sound ?? 'builtin:digital_pop',
+      no_intent_enabled: voice.no_intent_enabled ?? true,
+      no_intent_sound: voice.no_intent_sound ?? 'builtin:wood_tap',
+      mic_device: audio.mic_device ?? 'default',
+      edge_voice_token: token,
     };
   });
 
@@ -950,6 +1236,52 @@ async function main(): Promise<void> {
     },
   );
 
+  // GET /api/knowledge-card/latest - latest AI knowledge card for display polling.
+  fastify.get('/api/knowledge-card/latest', async (_request, reply) => {
+    const result = await pool.query<{ knowledge_card: unknown; created_at: Date }>(
+      `SELECT knowledge_card, created_at
+       FROM voice_turns
+       WHERE knowledge_card IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    );
+    const row = result.rows[0];
+    if (!row) return reply.send({ empty: true });
+
+    const raw = row.knowledge_card;
+    let parsed: Record<string, unknown> | null = null;
+    if (raw && typeof raw === 'object') {
+      parsed = raw as Record<string, unknown>;
+    } else if (typeof raw === 'string') {
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!parsed) return reply.send({ empty: true });
+
+    const title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+    const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
+    if (!title || !body) return reply.send({ empty: true });
+
+    const timestamp = row.created_at instanceof Date
+      ? row.created_at.toISOString()
+      : new Date(row.created_at).toISOString();
+    const age = Date.now() - new Date(timestamp).getTime();
+    if (!Number.isFinite(age) || age > 90_000) return reply.send({ empty: true });
+
+    return reply.send({
+      title,
+      body,
+      source_url: typeof parsed.source_url === 'string' ? parsed.source_url : undefined,
+      source_label: typeof parsed.source_label === 'string' ? parsed.source_label : undefined,
+      image_url: typeof parsed.image_url === 'string' ? parsed.image_url : undefined,
+      show_url: typeof parsed.show_url === 'string' ? parsed.show_url : undefined,
+      timestamp,
+    });
+  });
+
   // --- Alert Broadcast (push overlays to display devices) -------------------
   // Display devices poll GET /api/edge/alert/pending, display shows AnnouncementWidget alert.
   {
@@ -1008,15 +1340,20 @@ async function main(): Promise<void> {
     if (ha) {
       const doorbellCooldownMs = 10_000;
       const lastDoorbellFire = new Map<string, number>();
+      let lastAnyDoorbellFire = 0;
       ha.onEntityChange((entityId, entity) => {
         const attrs = entity.attributes as Record<string, unknown> | undefined ?? {};
-        const isDoorbellEntity =
-          (attrs.device_class === 'doorbell' || entityId.toLowerCase().includes('doorbell'))
-          && entity.state === 'on';
+        const lowerEntityId = entityId.toLowerCase();
+        const hasDoorbellClass = attrs.device_class === 'doorbell';
+        const isDoorbellBinarySensor =
+          lowerEntityId.startsWith('binary_sensor.') && lowerEntityId.includes('doorbell');
+        const isDoorbellEntity = (hasDoorbellClass || isDoorbellBinarySensor) && entity.state === 'on';
         if (!isDoorbellEntity) return;
         const now = Date.now();
+        if (now - lastAnyDoorbellFire < doorbellCooldownMs) return; // global debounce across related entities
         const lastFire = lastDoorbellFire.get(entityId) ?? 0;
         if (now - lastFire < doorbellCooldownMs) return; // debounce
+        lastAnyDoorbellFire = now;
         lastDoorbellFire.set(entityId, now);
 
         const friendlyName = (attrs.friendly_name as string | undefined) ?? entityId;
@@ -1180,6 +1517,83 @@ async function main(): Promise<void> {
     }
   });
 
+  fastify.get('/api/admin/ha/entity-aliases', { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) }, async () => {
+    const result = await pool.query(
+      `SELECT a.alias, a.entity_id, e.friendly_name, a.created_at
+       FROM voice_entity_aliases a JOIN ha_entities e ON e.entity_id=a.entity_id
+       ORDER BY a.alias`,
+    );
+    return { aliases: result.rows };
+  });
+
+  fastify.get('/api/admin/voice-command-templates', { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) }, async () => {
+    const [templates, index] = await Promise.all([
+      pool.query('SELECT id, domain, action, phrase_template, service, priority, enabled, requires_confirmation, created_at, updated_at FROM voice_command_templates ORDER BY domain, priority DESC, id'),
+      pool.query(`SELECT domain, COUNT(*)::integer AS commands,
+                         COUNT(DISTINCT phrase)::integer AS phrases,
+                         COUNT(*) FILTER (WHERE phrase IN (SELECT phrase FROM voice_command_index GROUP BY phrase HAVING COUNT(DISTINCT entity_id) > 1))::integer AS ambiguous
+                  FROM voice_command_index GROUP BY domain ORDER BY domain`),
+    ]);
+    return { templates: templates.rows, index: index.rows };
+  });
+
+  fastify.post('/api/admin/voice-command-templates/rebuild', { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) }, async () => {
+    return { ok: true, commands: await rebuildVoiceCommandIndex() };
+  });
+
+  fastify.put('/api/admin/voice-command-templates/:id', { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) }, async (request, reply) => {
+    const id = String((request.params as { id: string }).id ?? '').trim();
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const domain = String(body.domain ?? '').trim().toLowerCase();
+    const action = String(body.action ?? '').trim().toLowerCase();
+    const phraseTemplate = String(body.phrase_template ?? '').trim().toLowerCase();
+    const service = body.service == null || body.service === '' ? null : String(body.service).trim().toLowerCase();
+    const priority = Math.max(0, Math.min(10_000, Math.round(Number(body.priority ?? 100))));
+    if (!/^[a-z0-9][a-z0-9_-]{1,79}$/.test(id) || !/^[a-z0-9_]+$/.test(domain) || !/^[a-z0-9_]+$/.test(action)
+      || !phraseTemplate.includes('{name}') || phraseTemplate.length > 160) {
+      return reply.code(400).send({ error: 'invalid_voice_command_template' });
+    }
+    await pool.query(
+      `INSERT INTO voice_command_templates(id, domain, action, phrase_template, service, priority, enabled, requires_confirmation, updated_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())
+       ON CONFLICT(id) DO UPDATE SET domain=EXCLUDED.domain, action=EXCLUDED.action, phrase_template=EXCLUDED.phrase_template,
+         service=EXCLUDED.service, priority=EXCLUDED.priority, enabled=EXCLUDED.enabled,
+         requires_confirmation=EXCLUDED.requires_confirmation, updated_at=now()`,
+      [id, domain, action, phraseTemplate, service, priority, body.enabled !== false, body.requires_confirmation === true],
+    );
+    return { ok: true, commands: await rebuildVoiceCommandIndex() };
+  });
+
+  fastify.delete('/api/admin/voice-command-templates/:id', { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) }, async (request, reply) => {
+    const id = String((request.params as { id: string }).id ?? '').trim();
+    const result = await pool.query('DELETE FROM voice_command_templates WHERE id=$1', [id]);
+    if (!result.rowCount) return reply.code(404).send({ error: 'unknown_voice_command_template' });
+    return { ok: true, commands: await rebuildVoiceCommandIndex() };
+  });
+
+  fastify.put('/api/admin/ha/entity-aliases/:alias', { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) }, async (request, reply) => {
+    const alias = String((request.params as { alias: string }).alias ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const entityId = String((request.body as { entity_id?: string } | undefined)?.entity_id ?? '').trim();
+    if (!/^[a-z0-9][a-z0-9 -]{1,79}$/.test(alias) || !/^[a-z_]+\.[a-z0-9_]+$/.test(entityId)) {
+      return reply.code(400).send({ error: 'invalid_alias_or_entity_id' });
+    }
+    const entity = await pool.query('SELECT 1 FROM ha_entities WHERE entity_id=$1', [entityId]);
+    if (!entity.rowCount) return reply.code(404).send({ error: 'unknown_entity' });
+    await pool.query(
+      `INSERT INTO voice_entity_aliases(alias, entity_id) VALUES($1, $2)
+       ON CONFLICT(alias) DO UPDATE SET entity_id=EXCLUDED.entity_id`,
+      [alias, entityId],
+    );
+    return { ok: true, alias, entity_id: entityId };
+  });
+
+  fastify.delete('/api/admin/ha/entity-aliases/:alias', { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) }, async (request, reply) => {
+    const alias = String((request.params as { alias: string }).alias ?? '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const result = await pool.query('DELETE FROM voice_entity_aliases WHERE alias=$1', [alias]);
+    if (!result.rowCount) return reply.code(404).send({ error: 'unknown_alias' });
+    return { ok: true };
+  });
+
   fastify.get('/api/ha/entities/:entityId', { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) }, async (request, reply) => {
     if (!ha) {
       reply.code(503);
@@ -1241,6 +1655,43 @@ async function main(): Promise<void> {
   });
 
   // Minimal admin API stub — Phase 2 expands this (auth, devices, scenes, commands).
+  // Compatibility registration for the existing Android/Linux browser clients.
+  // Their legacy /ws hello establishes a socket but does not create a row in the
+  // PostgreSQL device registry used by the Core Devices page.
+  fastify.post<{ Body: {
+    id?: string;
+    name?: string;
+    platform?: string;
+    app_version?: string;
+    invitation_token?: string;
+    screen_width?: number;
+    screen_height?: number;
+  } }>('/api/devices/register', async (request, reply) => {
+    const body = request.body ?? {};
+    const deviceId = body.id?.trim() || `browser-${randomUUID()}`;
+    const device = await recordDeviceHello(deviceRepo, {
+      deviceId,
+      name: body.name?.trim() || deviceId,
+      architecture: body.platform?.trim() || 'browser',
+      protocolVersion: body.app_version?.trim() || 'legacy-browser',
+      capabilities: ['browser'],
+      // Tauri browser clients use the legacy authenticated local WebSocket
+      // channel and cannot complete the native Ed25519 enrollment handshake.
+      // Treat their explicit registration as the pairing event; native Edge
+      // agents continue to use invitation-backed enrollment on /gateway/v1.
+      paired: body.platform?.trim() === 'android' || body.platform?.trim() === 'linux',
+      invitationToken: body.invitation_token?.trim() || undefined,
+    });
+    await pool.query(
+      `UPDATE devices SET display_width = COALESCE($2, display_width),
+        display_height = COALESCE($3, display_height)
+       WHERE id = $1`,
+      [deviceId, body.screen_width ?? null, body.screen_height ?? null],
+    );
+    reply.code(200);
+    return device;
+  });
+
   fastify.get('/api/devices', async () => {
     const pool = getPool(config);
     const result = await pool.query(
@@ -1335,6 +1786,12 @@ async function main(): Promise<void> {
   // by Core's Postgres. The /ws WebSocket here is the browser/editor channel (separate
   // from the device gateway at /gateway/v1 and the voice session at /ws/voice).
   const deliverPageToDevice = async (page: import('./legacy-routes.js').PageRow, deviceId: string) => {
+      const deviceRow = await pool.query(
+        'SELECT architecture, protocol_version FROM devices WHERE id = $1',
+        [deviceId],
+      );
+      const architecture = String(deviceRow.rows[0]?.architecture ?? '').toLowerCase();
+      const gatewayConnected = gateway.isConnected(deviceId);
       const overrides = await pool.query(
         `SELECT panel_id, content, visible
          FROM device_panel_state
@@ -1358,14 +1815,26 @@ async function main(): Promise<void> {
           };
         }),
       };
-      // The kiosk browser is connected to Core's legacy WebSocket. Deliver its
-      // visual command here rather than making Edge post the same command back
-      // to Core, which otherwise recursively issues another desired state.
-      sendCommand(deviceId, {
-        type: 'load_page',
-        page_id: page.id,
-        page_data: effectivePage,
-      });
+      // A live Gateway v1 session is authoritative regardless of the registry's
+      // historical architecture/protocol labels. Only disconnected legacy clients
+      // receive the browser command path.
+      if (!gatewayConnected) {
+        sendCommand(deviceId, {
+          type: 'load_page',
+          page_id: page.id,
+          page_data: effectivePage,
+        });
+      }
+      // Android/Linux Tauri clients use the legacy browser WebSocket and do
+      // not connect to the native Edge gateway or report scene state there.
+      // The command above is the complete delivery path for those clients.
+      if (!gatewayConnected && (architecture === 'android' || architecture === 'linux' || architecture === 'browser')) {
+        return {
+          revision: 0,
+          application: { scene: { status: 'applied', reason: 'legacy_browser_websocket' } },
+          result: { type: 'legacy_browser_delivery' },
+        };
+      }
       const revision = await setDesiredState(
         stateRepo,
         deviceId,
@@ -1458,25 +1927,99 @@ async function main(): Promise<void> {
   await mqttNavigation.start();
   intelligence.setToolContext({
     haClient: ha,
-    resolveHaEntities: async (query) => {
+    parseHaIntent: async (transcript) => {
+      const [entities, aliases, areas] = await Promise.all([
+        pool.query<{ friendly_name: string }>('SELECT friendly_name FROM ha_entities WHERE friendly_name IS NOT NULL AND btrim(friendly_name) <> \'\''),
+        pool.query<{ alias: string }>('SELECT alias FROM voice_entity_aliases'),
+        pool.query<{ name: string }>('SELECT name FROM ha_areas'),
+      ]);
+      const names = [...entities.rows.map(row => row.friendly_name), ...aliases.rows.map(row => row.alias)];
+      const areaNames = areas.rows.map(row => row.name);
+      try {
+        const { stdout } = await execFileAsync('python3', [
+          path.join(process.cwd(), 'ha_intents_stdio.py'), transcript, JSON.stringify(names), JSON.stringify(areaNames),
+        ], { timeout: 2_000, maxBuffer: 128 * 1024 });
+        const result = JSON.parse(stdout) as { matched?: boolean; intent?: string; slots?: Record<string, unknown> };
+        return result.matched && result.intent ? { intent: result.intent, slots: result.slots ?? {} } : null;
+      } catch (error) {
+        console.warn('[intel][ha-grammar] parse failed:', error instanceof Error ? error.message : error);
+        return null;
+      }
+    },
+    resolveVoiceCommands: async (phrase) => {
+      const result = await pool.query(
+        `SELECT i.entity_id, i.domain, i.action, i.service, i.priority, i.requires_confirmation,
+                e.friendly_name, e.state
+         FROM voice_command_index i JOIN ha_entities e ON e.entity_id=i.entity_id
+         WHERE i.phrase=$1 ORDER BY i.priority DESC, i.entity_id`,
+        [normalizeVoicePhrase(phrase)],
+      );
+      return result.rows.map(row => ({
+        entityId: String(row.entity_id), domain: String(row.domain), action: String(row.action),
+        service: row.service ? String(row.service) : undefined, priority: Number(row.priority),
+        requiresConfirmation: Boolean(row.requires_confirmation), friendlyName: row.friendly_name ? String(row.friendly_name) : undefined,
+        state: String(row.state),
+      }));
+    },
+    resolveHaEntities: async (query, options = {}) => {
+      if (options.exact) {
+        const target = normalizeVoicePhrase(query);
+        if (!target) return [];
+        const domainClause = options.domains?.length ? 'AND e.domain = ANY($2::text[])' : '';
+        const params: unknown[] = options.domains?.length ? [target, options.domains] : [target];
+        const result = await pool.query(
+          `SELECT e.entity_id, e.friendly_name, e.domain, e.state,
+             COALESCE(d.name_by_user, d.name) AS device_name, a.name AS area_name,
+             COALESCE(array_agg(DISTINCT aa.alias) FILTER (WHERE aa.alias IS NOT NULL), '{}') AS aliases
+           FROM ha_entities e
+           LEFT JOIN ha_entity_registry r ON r.entity_id=e.entity_id
+           LEFT JOIN ha_devices d ON d.device_id=r.device_id
+           LEFT JOIN ha_areas a ON a.area_id=COALESCE(r.area_id, d.area_id)
+           LEFT JOIN voice_entity_aliases aa ON aa.entity_id=e.entity_id
+           WHERE (
+             regexp_replace(lower(COALESCE(e.friendly_name, '')), '[^a-z0-9]+', ' ', 'g') = $1
+             OR EXISTS (
+               SELECT 1 FROM voice_entity_aliases exact_alias
+               WHERE exact_alias.entity_id=e.entity_id
+                 AND regexp_replace(lower(exact_alias.alias), '[^a-z0-9]+', ' ', 'g') = $1
+             )
+           ) ${domainClause}
+           GROUP BY e.entity_id, e.friendly_name, e.domain, e.state, d.name_by_user, d.name, a.name
+           ORDER BY e.entity_id`,
+          params,
+        );
+        return result.rows.map(row => ({
+          entityId: String(row.entity_id),
+          friendlyName: row.friendly_name ? String(row.friendly_name) : undefined,
+          domain: String(row.domain),
+          state: String(row.state),
+          deviceName: row.device_name ? String(row.device_name) : undefined,
+          areaName: row.area_name ? String(row.area_name) : undefined,
+          aliases: Array.isArray(row.aliases) ? row.aliases.map(String) : [],
+        }));
+      }
       const terms = query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 3).slice(0, 8);
       if (terms.length === 0) return [];
       const patterns = terms.map(term => `%${term}%`);
       const result = await pool.query(
         `SELECT e.entity_id, e.friendly_name, e.domain, e.state,
-                COALESCE(d.name_by_user, d.name) AS device_name, a.name AS area_name
+           COALESCE(d.name_by_user, d.name) AS device_name, a.name AS area_name,
+           COALESCE(array_agg(DISTINCT aa.alias) FILTER (WHERE aa.alias IS NOT NULL), '{}') AS aliases
          FROM ha_entities e
          LEFT JOIN ha_entity_registry r ON r.entity_id=e.entity_id
          LEFT JOIN ha_devices d ON d.device_id=r.device_id
          LEFT JOIN ha_areas a ON a.area_id=COALESCE(r.area_id, d.area_id)
+          LEFT JOIN voice_entity_aliases aa ON aa.entity_id=e.entity_id
          WHERE EXISTS (
            SELECT 1 FROM unnest($1::text[]) pattern
            WHERE lower(e.entity_id) LIKE pattern OR lower(COALESCE(e.friendly_name, '')) LIKE pattern
               OR lower(COALESCE(d.name_by_user, d.name, '')) LIKE pattern
               OR lower(COALESCE(a.name, '')) LIKE pattern
+            OR lower(COALESCE(aa.alias, '')) LIKE pattern
          )
+          GROUP BY e.entity_id, e.friendly_name, e.domain, e.state, d.name_by_user, d.name, a.name
          ORDER BY e.friendly_name NULLS LAST, e.entity_id
-         LIMIT 12`,
+          LIMIT 30`,
         [patterns],
       );
       return result.rows.map(row => ({
@@ -1486,16 +2029,99 @@ async function main(): Promise<void> {
         state: String(row.state),
         deviceName: row.device_name ? String(row.device_name) : undefined,
         areaName: row.area_name ? String(row.area_name) : undefined,
+        aliases: Array.isArray(row.aliases) ? row.aliases.map(String) : [],
       }));
     },
     playMedia: async (query, source, deviceId, mediaKind) => {
       if (!deviceId || deviceId === 'unknown') {
         return { ok: false, message: 'I could not identify which display requested playback.' };
       }
+      if (source === 'music_assistant') {
+        // Music Assistant playback is resolved by the device's local Display server
+        // (which talks to HA/Music Assistant). Android has no local server, so it is
+        // not supported there yet — see the HA media_player workstream item.
+        try {
+          const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+          if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+            return { ok: false, message: 'Music Assistant playback is not supported on Android yet.' };
+          }
+          const result = await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/play',
+            http_method: 'POST',
+            body: { source: 'music_assistant', url: query, title: query },
+          }, 20_000);
+          return {
+            ok: true,
+            message: `Playing "${query}" from Music Assistant.`,
+            data: { device_id: deviceId, source, result, playback_started: true },
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            message: `I could not play "${query}" from Music Assistant: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          };
+        }
+      }
       if (source !== 'youtube') {
         return { ok: false, message: `Media source "${source}" is not supported on the device yet.` };
       }
       try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          const wantsPlaylist =
+            ['artist', 'album', 'playlist', 'music'].includes(mediaKind ?? '') || /\bplaylist\b/i.test(query);
+          const ytOptions: YouTubeSearchOptions = {
+            apiKey: config.youtubeApiKey,
+            regionCode: config.youtubeRegionCode,
+            relevanceLanguage: config.youtubeRelevanceLanguage,
+            safeSearch: config.youtubeSafeSearch,
+            allowYtDlpFallback: true,
+          };
+          let url: string;
+          let message: string;
+          let playlist = wantsPlaylist;
+          try {
+            const cookies = await getYoutubeCookies();
+            const cookiesFile = cookies ? await writeYoutubeCookiesFile(cookies) : undefined;
+            const streams = await resolveYouTubeStreamsFn(query, '', { ...ytOptions, cookiesFile });
+            const id = storeYouTubeStreams(streams.urls);
+            url = `${config.youtubePlayerOrigin}/media/youtube/player/${id}`;
+            playlist = streams.playlist;
+            message = streams.playlist
+              ? `Playing the YouTube playlist for "${query}".`
+              : `Playing "${query}" on YouTube.`;
+          } catch {
+            if (wantsPlaylist) {
+              const queue = await resolveYouTubeQueue(query, '', ytOptions).catch(() => null);
+              if (queue?.playlistId) {
+                url = buildYouTubePlaylistUrl(queue.playlistId);
+                message = `Playing the YouTube playlist for "${query}".`;
+              } else {
+                url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+                message = `I couldn't find a "${query}" playlist, so I opened YouTube search.`;
+              }
+            } else {
+              const resolved = await resolveYouTubeWatchUrl(query, '', ytOptions).catch(() => null);
+              if (resolved) {
+                url = resolved;
+                message = `Playing "${query}" on YouTube.`;
+              } else {
+                url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+                message = `I couldn't auto-pick a result for "${query}", so I opened YouTube search.`;
+              }
+            }
+          }
+          const result = await gateway.requestAction(
+            deviceId, 'media.play', { source: 'youtube', query, url, playlist }, 20_000,
+          );
+          return {
+            ok: true,
+            message,
+            data: { device_id: deviceId, source, result, url, playlist, playback_started: true },
+          };
+        }
         const playlistSelection = ['artist', 'album', 'playlist', 'music'].includes(mediaKind ?? '')
           ? await getPlaylistSelectionPage()
           : { layout: [], page: null };
@@ -1587,10 +2213,50 @@ async function main(): Promise<void> {
       if (!deviceId || deviceId === 'unknown') {
         return { ok: false, message: 'I could not identify which display requested media control.' };
       }
+      if (source === 'music_assistant') {
+        try {
+          const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+          if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+            return { ok: false, message: 'Music Assistant control is not supported on Android yet.' };
+          }
+          const result = await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/control',
+            http_method: 'POST',
+            body: { source: 'music_assistant', action },
+          }, 10_000);
+          const verb = {
+            pause: 'Paused Music Assistant playback',
+            resume: 'Resumed Music Assistant playback',
+            stop: 'Stopped Music Assistant playback',
+            next: 'Skipped to the next Music Assistant track',
+          }[action] ?? 'Updated Music Assistant playback';
+          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
+        } catch (error) {
+          return {
+            ok: false,
+            message: `I could not control Music Assistant playback: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          };
+        }
+      }
       if (source !== 'youtube') {
         return { ok: false, message: `Media source "${source}" is not supported on the device yet.` };
       }
       try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          const result = await gateway.requestAction(
+            deviceId, 'media.control', { source, action }, 10_000,
+          );
+          const verb = {
+            pause: 'Paused YouTube playback',
+            resume: 'Resumed YouTube playback',
+            stop: 'Stopped YouTube playback',
+            next: 'Skipped to the next YouTube result',
+          }[action];
+          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
+        }
         const result = await controlDeviceMedia(deviceId, action, source);
         const verb = {
           pause: 'Paused YouTube playback',
@@ -1634,6 +2300,78 @@ async function main(): Promise<void> {
           : 'No connected device accepted the page.',
         data: { page_id: pageId, delivered },
       };
+    },
+    goHome: async deviceId => {
+      if (!deviceId || deviceId === 'unknown') {
+        return { ok: false, message: 'I could not identify which display to navigate.' };
+      }
+      try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        const nativeAndroid = String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android';
+        if (nativeAndroid) {
+          await gateway.requestAction(deviceId, 'navigate.home', {}, 10_000);
+          return { ok: true, message: 'Returned to the home screen.' };
+        }
+        // Legacy kiosk (no home action): stop media so the sidecar returns to its scene.
+        await requestDeviceAction(deviceId, 'device_http', {
+          path: '/api/media/control',
+          http_method: 'POST',
+          body: { source: 'youtube', action: 'stop' },
+        }, 10_000);
+        return { ok: true, message: 'Returned to the home screen.' };
+      } catch (error) {
+        return { ok: false, message: `I could not return to the home screen: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    },
+    navigateRole: async (role, deviceId) => {
+      if (!deviceId || deviceId === 'unknown') {
+        return { ok: false, message: 'I could not identify which display to navigate.' };
+      }
+      try {
+        const devRow = await pool.query('SELECT page_roles FROM devices WHERE id = $1', [deviceId]);
+        const pageRoles = (devRow.rows[0]?.page_roles ?? {}) as Record<string, string>;
+        const pageId = pageRoles[role];
+        if (!pageId) {
+          return { ok: false, message: `No "${role}" page is configured for this display.` };
+        }
+        const pageRes = await pool.query('SELECT * FROM pages WHERE id = $1', [pageId]);
+        if (pageRes.rowCount === 0) {
+          return { ok: false, message: `The "${role}" page no longer exists.` };
+        }
+        const panels = await pool.query('SELECT * FROM page_panels WHERE page_id = $1 ORDER BY position, id', [pageId]);
+        const page = { ...pageRes.rows[0], panels: panels.rows } as import('./legacy-routes.js').PageRow;
+        await deliverPageToDevice(page, deviceId);
+        return { ok: true, message: `Displayed the ${role} page.` };
+      } catch (error) {
+        return { ok: false, message: `I could not open the ${role} page: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    },
+    openUrl: async (url, deviceId, opts) => {
+      if (!deviceId || deviceId === 'unknown') {
+        return { ok: false, message: 'I could not identify which display to navigate.' };
+      }
+      if (!/^https?:\/\//i.test(url)) {
+        return { ok: false, message: 'Invalid URL.' };
+      }
+      try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        const nativeAndroid = String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android';
+        const seconds = await getKnowledgeDisplaySeconds();
+        const revertAfterMs = opts?.revertAfterMs ?? (seconds > 0 ? seconds * 1000 : 0);
+        if (nativeAndroid) {
+          await gateway.requestAction(deviceId, 'navigate.search', { url, revert_after_ms: revertAfterMs }, 10_000);
+          return { ok: true, message: 'Opened the page on the display.' };
+        }
+        // Legacy Linux kiosk: open via its local sidecar's /api/media/open (floating overlay).
+        await requestDeviceAction(deviceId, 'device_http', {
+          path: '/api/media/open',
+          http_method: 'POST',
+          body: { url, revert_after_ms: revertAfterMs },
+        }, 10_000);
+        return { ok: true, message: 'Opened the page on the display.' };
+      } catch (error) {
+        return { ok: false, message: `I could not open that page: ${error instanceof Error ? error.message : String(error)}` };
+      }
     },
     setPanel: async command => {
       if (command.contentType === 'url' && (!command.url || !/^https?:\/\//i.test(command.url))) {
@@ -1893,6 +2631,20 @@ async function main(): Promise<void> {
   void flowExecutor.startScheduler().catch(err =>
     console.warn('[flows] scheduler startup error:', (err as Error).message)
   );
+  // Periodically look for recurring AI-fallback requests with no matching flow
+  // and ask the conversation model to draft one (always created disabled — an
+  // administrator must review and enable it from the Flow editor).
+  await migrateFlowAiDraftsTable(pool);
+  const AUTOMATION_GAP_INTERVAL_MS = 30 * 60_000;
+  const checkAutomationGaps = () => {
+    const conversationProvider = intelligence.registry?.getLlmProvider('conversation') ?? intelligence.providers.llm;
+    if (!conversationProvider) return;
+    runAutomationGapDetection(pool, flowRepo, conversationProvider).catch(err =>
+      console.warn('[core][auto-flow] gap detection failed:', (err as Error).message)
+    );
+  };
+  setInterval(checkAutomationGaps, AUTOMATION_GAP_INTERVAL_MS);
+  setTimeout(checkAutomationGaps, 60_000);
   intelligence.setToolContext({
     invokeVoiceFlow: async (transcript, deviceId) => {
       if (!flowExecutor) return { matched: false };
@@ -1922,6 +2674,42 @@ async function main(): Promise<void> {
     settingsChanged: async updatedKeys => {
       if (updatedKeys.some(key => key.startsWith('mqtt_'))) await mqttNavigation.start();
       if (updatedKeys.some(key => key.startsWith('request_routing_'))) await reloadRequestRoutingPolicy();
+      const voiceCueKeys = [
+        'voice_wake_ack_enabled', 'voice_wake_ack_sound',
+        'voice_good_intent_enabled', 'voice_good_intent_sound',
+        'voice_no_intent_enabled', 'voice_no_intent_sound',
+      ];
+      if (updatedKeys.some(key => voiceCueKeys.includes(key))) {
+        const values = await pool.query<{ key: string; value: string }>(
+          'SELECT key, value FROM settings WHERE key = ANY($1::text[])',
+          [voiceCueKeys],
+        );
+        const setting = Object.fromEntries(values.rows.map(row => [row.key, row.value]));
+        const cueConfig = {
+          wake_ack_enabled: setting.voice_wake_ack_enabled !== '0',
+          wake_ack_sound: setting.voice_wake_ack_sound || 'builtin:ready_up',
+          good_intent_enabled: setting.voice_good_intent_enabled !== '0',
+          good_intent_sound: setting.voice_good_intent_sound || 'builtin:digital_pop',
+          no_intent_enabled: setting.voice_no_intent_enabled !== '0',
+          no_intent_sound: setting.voice_no_intent_sound || 'builtin:wood_tap',
+        };
+        const devices = await pool.query<{ id: string }>('SELECT id FROM devices WHERE revoked_at IS NULL');
+        await pool.query(
+          `UPDATE devices SET voice_config = COALESCE(voice_config, '{}'::jsonb) || $1::jsonb WHERE revoked_at IS NULL`,
+          [JSON.stringify(cueConfig)],
+        );
+        await Promise.allSettled(devices.rows.flatMap(({ id }) => [
+          gateway.requestAction(id, 'voice.reload_config'),
+          requestDeviceAction(id, 'device_http', {
+            path: '/api/settings',
+            http_method: 'PUT',
+            body: Object.fromEntries(voiceCueKeys.map(key => [key, setting[key] ?? ''])),
+          }).then(() => requestDeviceAction(id, 'device_http', {
+            path: '/api/settings/voice/restart',
+            http_method: 'POST',
+          }, 15_000)),
+        ]));
+      }
     },
     connectedDeviceIds: () => gateway.connectedDeviceIds(),
   });
@@ -2135,6 +2923,9 @@ async function main(): Promise<void> {
       '- Node-RED edits are staged on the server; call the deploy tool to make them live and tell the user you did.',
       '- If a tool call fails with "not available", the MCP tool list was refreshed — retry once using an exact function name from the provided list.',
       '- Prefer the fewest tool calls that answer the request, and summarise tool output in your reply instead of dumping it.',
+      '- Use only the exact function names provided in the tool definitions. Never invent aliases such as ha-get-state, get-height, or search-wikipedia.',
+      '- For Home Assistant, entity_id must be a full ID such as light.desk or sun.sun; use the supplied entity candidates and do not guess friendly names.',
+      '- Answer stable general-knowledge questions from your own knowledge when you know the answer. Use lookup tools for current, changing, local, or explicitly researched information.',
     ].join('\n');
 
     try {
@@ -2151,6 +2942,13 @@ async function main(): Promise<void> {
           maxTokens: body.options?.maxTokens ?? 4000,
           disableThinking: body.options?.disableThinking,
         });
+        if ((!result.toolCalls || result.toolCalls.length === 0) && result.content) {
+          const recovered = parseContentAsToolCalls(result.content);
+          if (recovered) {
+            result.toolCalls = recovered;
+            result.content = '';
+          }
+        }
 
         // Accumulate assistant content.
         if (result.content) {
@@ -2176,31 +2974,48 @@ async function main(): Promise<void> {
         for (const tc of result.toolCalls) {
           let toolResult: string;
           try {
-            const params = JSON.parse(tc.function.arguments);
+            const rawParams = JSON.parse(tc.function.arguments);
+            const canonicalToolName = resolveToolName(
+              tc.function.name,
+              intelligence.toolRegistry.listTools('admin'),
+            ) ?? tc.function.name;
+            const params = normalizeToolArguments(canonicalToolName, rawParams);
+            const resolveEntityId = async (value: unknown): Promise<unknown> => {
+              if (typeof value !== 'string') return value;
+              if (value.includes('.') && ha?.getEntity(value)) return value;
+              const searchValue = value.includes('.') ? value.replace(/^[^.]+\./, '').replace(/_/g, ' ') : value;
+              const resolver = intelligence.getToolContext().resolveHaEntities;
+              if (!resolver) return value;
+              const exact = await resolver(searchValue, { exact: true });
+              if (exact.length === 1) return exact[0].entityId;
+              const fuzzy = await resolver(searchValue);
+              return fuzzy.length === 1 ? fuzzy[0].entityId : value;
+            };
+            if ('entity_id' in params) params.entity_id = await resolveEntityId(params.entity_id);
 
             // Check if this is an MCP tool (namespaced as mcp.<name> or just <name> from MCP).
-            const nativeTool = intelligence.toolRegistry.getTool(tc.function.name);
+            const nativeTool = intelligence.toolRegistry.getTool(canonicalToolName);
             if (nativeTool) {
               if (mcpCallRequiresConfirmation(nativeTool.name, params)) {
                 const token = randomUUID();
-                const digest = confirmationDigest(tc.function.name, params);
+                const digest = confirmationDigest(nativeTool.name, params);
                 pendingAdminMcp.set(token, {
-                  tool: tc.function.name,
+                  tool: nativeTool.name,
                   params,
                   digest,
                   expiresAt: Date.now() + 60_000,
                 });
 
                 return {
-                  reply: `Confirmation required before running ${tc.function.name}.`,
+                  reply: `Confirmation required before running ${nativeTool.name}.`,
                   providerId,
                   model,
-                  pendingConfirmation: { token, tool: tc.function.name, params, expiresAt: new Date(Date.now() + 60_000).toISOString() },
+                  pendingConfirmation: { token, tool: nativeTool.name, params, expiresAt: new Date(Date.now() + 60_000).toISOString() },
                 };
               }
               // Execute via native tool registry.
               const execResult = await intelligence.toolRegistry.executeTool(
-                tc.function.name,
+                nativeTool.name,
                 params,
                 {
                   ...intelligence.getToolContext(),
@@ -2211,7 +3026,7 @@ async function main(): Promise<void> {
                   mcp: mcpClient,
                 },
               );
-              if (tc.function.name.endsWith('.ha_get_camera_image') && execResult.ok) {
+              if (nativeTool.name.endsWith('.ha_get_camera_image') && execResult.ok) {
                 const blocks = Array.isArray(execResult.data) ? execResult.data as Array<Record<string, unknown>> : [];
                 const image = blocks.find(block => block.type === 'image' && typeof block.data === 'string');
                 if (image) {
@@ -2344,6 +3159,8 @@ async function main(): Promise<void> {
     return { reply: confirmationReply, toolResult: result };
   });
 
+  const discovery = advertiseCore(config);
+  fastify.addHook('onClose', async () => discovery.stop());
   await fastify.listen({ host: config.host, port: config.port });
   console.log(`[core] listening on http://${config.host}:${config.port}`);
 
