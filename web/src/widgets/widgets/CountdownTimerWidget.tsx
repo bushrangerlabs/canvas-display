@@ -8,6 +8,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useVisibility } from '../../hooks/useVisibility';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 export const CountdownTimerWidgetMetadata: WidgetMetadata = {
   name: 'Countdown Timer',
@@ -132,14 +134,18 @@ const CountdownTimerWidget: React.FC<WidgetProps> = ({ config }) => {
   const currentRingColor = done ? doneColor : ringColor;
   const fontSize = Math.max(16, size * 0.22);
 
+  const universalStyle = useResolvedUniversalStyle(config.config.style);
+
   if (!isVisible) return null;
 
+  const containerStyle = applyUniversalStyles(universalStyle, {
+    width, height, backgroundColor,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    boxSizing: 'border-box',
+  });
+
   return (
-    <div style={{
-      width, height, backgroundColor,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      boxSizing: 'border-box',
-    }}>
+    <div style={containerStyle}>
       <div style={{ position: 'relative', width: size, height: size, cursor: 'pointer' }}
         onClick={toggle} title={running ? 'Pause' : done ? 'Reset' : 'Start'}>
         <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>

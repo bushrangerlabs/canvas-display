@@ -3,28 +3,32 @@
  * Migrated to Phase 44 standards (Feb 15, 2026)
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useWebSocket } from '../providers/WebSocketProvider';
 import type { WidgetProps } from '../types';
 import type { WidgetMetadata } from '../types/metadata';
 import { applyUniversalStyles } from '../utils/styleBuilder';
 import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
+import { buildHtmlSrcDoc, isTransparentCssColor } from './htmlSrcDoc';
 
-const HtmlWidget: React.FC<WidgetProps> = ({ config }) => {
-  // Phase 44: Config destructuring with defaults
+const BRIDGE_TAG = '__canvasHermes';
+
+const HtmlWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const {
     html: htmlContent = '<div>Enter HTML here</div>',
     htmlEntity = '',
     useEntityHtml = false,
     htmlAttribute = '',
+    css: cssContent = '',
+    js: jsContent = '',
     backgroundColor = 'transparent',
     padding = 8,
     overflow = 'auto',
   } = config.config;
 
-  const { entities } = useWebSocket();
+  const { entities, callService } = useWebSocket();
   const universalStyle = useResolvedUniversalStyle(config.config.style || config.config as any);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Get HTML from entity attribute, entity state, or static config
   const getHtml = (): string => {
@@ -41,13 +45,30 @@ const HtmlWidget: React.FC<WidgetProps> = ({ config }) => {
     return htmlContent;
   };
 
-  // Update HTML content
+  const effectiveHtml = getHtml();
+  const srcDoc = useMemo(
+    () => buildHtmlSrcDoc(effectiveHtml, cssContent, jsContent, backgroundColor),
+    [effectiveHtml, cssContent, jsContent, backgroundColor],
+  );
+
   useEffect(() => {
-    if (containerRef.current) {
-      const html = getHtml();
-      containerRef.current.innerHTML = html;
+    function onMessage(ev: MessageEvent) {
+      if (ev.source !== iframeRef.current?.contentWindow || !ev.data?.[BRIDGE_TAG]) return;
+      if (ev.data.type === 'ready' || ev.data.type === 'requestEntities') {
+        iframeRef.current?.contentWindow?.postMessage({ [BRIDGE_TAG]: true, type: 'entities', entities }, '*');
+      } else if (ev.data.type === 'callService') {
+        const respond = (result: unknown, error?: string) => iframeRef.current?.contentWindow?.postMessage({ [BRIDGE_TAG]: true, type: 'callResult', id: ev.data.id, result, error }, '*');
+        if (!callService) return respond(null, 'Entity service not available');
+        Promise.resolve(callService(ev.data.domain, ev.data.service, ev.data.data)).then(result => respond(result)).catch(error => respond(null, error?.message || 'Service call failed'));
+      }
     }
-  }, [htmlContent, htmlEntity, useEntityHtml, htmlAttribute, entities]);
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [entities, callService]);
+
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ [BRIDGE_TAG]: true, type: 'entities', entities }, '*');
+  }, [entities]);
 
   const baseStyle: React.CSSProperties = {
     width: '100%',
@@ -60,9 +81,20 @@ const HtmlWidget: React.FC<WidgetProps> = ({ config }) => {
   const finalStyle = applyUniversalStyles(universalStyle, baseStyle);
 
   return (
-    <div
-      ref={containerRef}
-      style={finalStyle}
+    <iframe
+      ref={iframeRef}
+      title="HTML Widget"
+      srcDoc={srcDoc}
+      style={{
+        ...finalStyle,
+        width: '100%',
+        height: '100%',
+        border: 'none',
+        display: 'block',
+        background: isTransparentCssColor(backgroundColor) ? 'transparent' : backgroundColor,
+        backgroundColor: isTransparentCssColor(backgroundColor) ? 'transparent' : backgroundColor,
+        pointerEvents: isEditMode ? 'none' : 'auto',
+      }}
     />
   );
 };

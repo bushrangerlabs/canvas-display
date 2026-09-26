@@ -124,8 +124,19 @@ export interface StateResult {
   payload: Record<string, unknown>;
 }
 
+export interface DeviceActionResult {
+  ok: boolean;
+  [key: string]: unknown;
+}
+
 interface PendingCommand {
   resolve: (result: CommandResult) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
+interface PendingAction {
+  resolve: (result: DeviceActionResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }
@@ -150,6 +161,7 @@ export function commandRequestDigest(
 export class GatewayController {
   private readonly connections = new Map<string, GatewayConnection>();
   private readonly pending = new Map<string, PendingCommand>();
+  private readonly pendingActions = new Map<string, PendingAction>();
   private readonly pendingState = new Map<
     string,
     {
@@ -171,9 +183,62 @@ export class GatewayController {
     return [...this.connections.keys()];
   }
 
+  isConnected(deviceId: string): boolean {
+    return this.connections.get(deviceId)?.ws.readyState === 1 /* WebSocket.OPEN */;
+  }
+
+  /**
+   * Sends a `device.action` request to a gateway-v1-connected device and awaits its
+   * `device.action_result` response. This is the gateway-v1 equivalent of the legacy
+   * sidecar's `device_http` bridge — for devices (like Android) that have no local HTTP
+   * server to relay a request into, but do have a live WebSocket the device itself can
+   * read requests from and answer directly (e.g. enumerating AudioDeviceInfo, playing a
+   * test tone, or capturing a short mic sample).
+   */
+  requestAction(
+    deviceId: string,
+    action: string,
+    payload: Record<string, unknown> = {},
+    timeoutMs = 15_000,
+  ): Promise<DeviceActionResult> {
+    const connection = this.connections.get(deviceId);
+    if (!connection || connection.ws.readyState !== connection.ws.OPEN) {
+      return Promise.reject(new Error(`device ${deviceId} is not connected via gateway`));
+    }
+    const requestId = randomUUID();
+    const envelope = {
+      type: 'device.action',
+      request_id: requestId,
+      action,
+      payload,
+      sent_at: new Date().toISOString(),
+    };
+    return new Promise<DeviceActionResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingActions.delete(requestId);
+        reject(new Error(`device ${deviceId} did not respond to ${action} within ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.pendingActions.set(requestId, { resolve, reject, timer });
+      connection.ws.send(JSON.stringify(envelope), (error) => {
+        if (!error) return;
+        clearTimeout(timer);
+        this.pendingActions.delete(requestId);
+        reject(error);
+      });
+    });
+  }
+
   observe(message: unknown): boolean {
     if (!message || typeof message !== 'object') return false;
-    const envelope = message as { type?: unknown; payload?: unknown; correlation_id?: unknown };
+    const envelope = message as { type?: unknown; payload?: unknown; correlation_id?: unknown; request_id?: unknown };
+    if (envelope.type === 'device.action_result' && typeof envelope.request_id === 'string') {
+      const waiting = this.pendingActions.get(envelope.request_id);
+      if (!waiting) return false;
+      clearTimeout(waiting.timer);
+      this.pendingActions.delete(envelope.request_id);
+      waiting.resolve((envelope.payload as DeviceActionResult) ?? { ok: false });
+      return true;
+    }
     if (
       envelope.type === 'state.reported' &&
       typeof envelope.correlation_id === 'string' &&
@@ -745,6 +810,46 @@ export function registerGateway(
               : randomUUID(),
           nextCoreSequence: welcome.resume.next_core_sequence,
         });
+        // Re-send the persisted active page when a native Edge reconnects.
+        // Without this replay, a healthy reconnect leaves the renderer online
+        // but empty until an operator manually forces the page again.
+        const activeState = await getPool(config).query<{ active_page_id: string | null; default_page_id: string | null }>(
+          'SELECT active_page_id, default_page_id FROM device_page_state WHERE device_id = $1',
+          [deviceId],
+        );
+        const replayPageId = activeState.rows[0]?.active_page_id ?? activeState.rows[0]?.default_page_id;
+        if (replayPageId) {
+          const pageResult = await getPool(config).query('SELECT * FROM pages WHERE id = $1', [replayPageId]);
+          const panelsResult = await getPool(config).query('SELECT * FROM page_panels WHERE page_id = $1 ORDER BY position, id', [replayPageId]);
+          const page = pageResult.rows[0];
+          if (page) {
+            const scene = {
+              revision_id: replayPageId,
+              page: {
+                id: page.id,
+                name: page.name,
+                floating_config: page.floating_config ?? null,
+                panels: panelsResult.rows,
+              },
+            };
+            controller.sendRaw(deviceId, {
+              type: 'state.desired',
+              protocol: 1,
+              payload_version: 1,
+              message_id: randomUUID(),
+              stream_epoch: coreStreamEpoch,
+              sequence: welcome.resume.next_core_sequence,
+              sent_at: new Date().toISOString(),
+              payload: {
+                authority_epoch: authority?.authority_mode === 'core' ? authority.authority_epoch : randomUUID(),
+                revision: 1,
+                desired_digest: `sha256:${createHash('sha256').update(JSON.stringify(scene)).digest('hex')}`,
+                state: { scene },
+              },
+            });
+            console.log(`[core][gateway] replayed active page ${replayPageId} to ${deviceId}`);
+          }
+        }
         console.log(`[core][gateway] device connected: ${deviceId} (session ${sessionId})`);
         return;
       }

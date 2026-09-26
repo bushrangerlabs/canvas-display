@@ -19,6 +19,7 @@ import { Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogCont
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { listen } from '@tauri-apps/api/event';
 import { nanoid } from 'nanoid';
 import { clearConfig, saveDeviceId, type AppConfig } from '../store/config';
 import { useServerSocket } from '../hooks/useServerSocket';
@@ -178,6 +179,45 @@ async function closeAllPanelWindows() {
       .filter(w => w.label.startsWith('panel-') || w.label === 'floating')
       .map(w => w.close().catch(() => {}))
   );
+}
+
+interface PanelLoadResult {
+  label: string;
+  ok: boolean;
+  error?: string | null;
+}
+
+async function waitForPanelLoads(labels: string[], timeoutMs = 75_000): Promise<void> {
+  if (labels.length === 0) throw new Error('page has no visible panels');
+  const pending = new Set(labels);
+  await new Promise<void>(async (resolve, reject) => {
+    let settled = false;
+    let unlisten: (() => void) | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      unlisten?.();
+      if (error) reject(error); else resolve();
+    };
+    const timer = window.setTimeout(
+      () => finish(new Error(`panel load timed out: ${[...pending].join(', ')}`)),
+      timeoutMs,
+    );
+    try {
+      unlisten = await listen<PanelLoadResult>('panel-load-result', event => {
+        if (!pending.has(event.payload.label)) return;
+        if (!event.payload.ok) {
+          finish(new Error(event.payload.error || `panel ${event.payload.label} failed to load`));
+          return;
+        }
+        pending.delete(event.payload.label);
+        if (pending.size === 0) finish();
+      });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 function resolvePanelUrl(panel: PagePanel, config: AppConfig, _deviceId: string): string {
@@ -396,13 +436,17 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
     }));
     panelLabelsRef.current = specs.map(s => s.label);
+    const visibleLabels = specs.filter(spec => spec.visible).map(spec => spec.label);
+    const loaded = waitForPanelLoads(visibleLabels);
     try {
       // Single call hands every panel to Rust, which builds them on a spawned
       // thread (with a gap between each) regardless of whether the controller
       // webview is later occluded/suspended by a large child panel.
       await invoke('create_panel_webviews', { panels: specs });
+      await loaded;
     } catch (e) {
       console.error('[openPanelWindows] create_panel_webviews error:', e);
+      throw e;
     }
 
     if (floating?.url) {
@@ -508,38 +552,57 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
               '/api/media/play',
               '/api/media/control',
               '/api/knowledge-card',
+              '/api/app/restart',
+              '/api/app/show',
+              '/api/app/hide',
             ]);
             if (!allowed.has(path)) throw new Error(`Device HTTP path is not allowed: ${path}`);
-            const response = await fetch(`http://127.0.0.1:3100${path}`, {
-              method: String(cmd.payload?.http_method ?? 'POST'),
-              headers: { 'content-type': 'application/json' },
-              body: cmd.payload?.body === undefined ? undefined : JSON.stringify(cmd.payload.body),
-            });
-            result = await response.json();
-            if (!response.ok) {
-              const detail = result && typeof result === 'object' && 'error' in result
-                ? String((result as { error?: unknown }).error)
-                : `HTTP ${response.status}`;
-              throw new Error(detail);
-            }
-            if (path === '/api/media/play') {
-              const playerUrl = result && typeof result === 'object' && 'url' in result
-                ? String((result as { url?: unknown }).url ?? '')
-                : '';
-              if (!playerUrl) throw new Error('Device media response did not include a player URL');
-              const fullscreen = Boolean(result && typeof result === 'object'
-                && 'backend' in result
-                && String((result as { backend?: unknown }).backend) === 'youtube_iframe_api');
-              await openFloatingUrl(playerUrl, fullscreen);
-            }
-            if (path === '/api/media/control') {
-              const action = String(cmd.payload?.body?.action ?? '');
-              if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
-                throw new Error(`Unsupported YouTube control: ${action}`);
+
+            // Hide/show are performed locally by the kiosk window itself, keeping
+            // the Core WebSocket and rendering alive for instant resume.
+            if (path === '/api/app/hide') {
+              await invoke('set_kiosk_visible', { visible: false }).catch(console.error);
+              result = { action: 'hide', hidden: true };
+            } else if (path === '/api/app/show') {
+              await invoke('set_kiosk_visible', { visible: true }).catch(console.error);
+              result = { action: 'show', shown: true };
+            } else {
+              const response = await fetch(`http://127.0.0.1:3100${path}`, {
+                method: String(cmd.payload?.http_method ?? 'POST'),
+                headers: { 'content-type': 'application/json' },
+                body: cmd.payload?.body === undefined ? undefined : JSON.stringify(cmd.payload.body),
+              });
+              result = await response.json();
+              if (!response.ok) {
+                const detail = result && typeof result === 'object' && 'error' in result
+                  ? String((result as { error?: unknown }).error)
+                  : `HTTP ${response.status}`;
+                throw new Error(detail);
               }
-              await invoke('control_youtube_webview', { label: 'floating', action });
-              if (action === 'stop') {
-                await invoke('close_webview', { label: 'floating' }).catch(console.error);
+              if (path === '/api/media/play') {
+                // Only the YouTube iframe backend renders in a WebView. mpv-backed
+                // audio (radio_browser / direct_audio / music_assistant) plays locally
+                // through the sidecar's mpv process and needs no window.
+                const backend = result && typeof result === 'object' && 'backend' in result
+                  ? String((result as { backend?: unknown }).backend ?? '')
+                  : '';
+                if (backend === 'youtube_iframe_api') {
+                  const playerUrl = result && typeof result === 'object' && 'url' in result
+                    ? String((result as { url?: unknown }).url ?? '')
+                    : '';
+                  if (!playerUrl) throw new Error('Device media response did not include a player URL');
+                  await openFloatingUrl(playerUrl, true);
+                }
+              }
+              if (path === '/api/media/control') {
+                const action = String(cmd.payload?.body?.action ?? '');
+                if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
+                  throw new Error(`Unsupported YouTube control: ${action}`);
+                }
+                await invoke('control_youtube_webview', { label: 'floating', action });
+                if (action === 'stop') {
+                  await invoke('close_webview', { label: 'floating' }).catch(console.error);
+                }
               }
             }
           } else if (cmd.action === 'navigate_scene') {
@@ -605,8 +668,32 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
           floating_config: pageData?.floating_config ?? null,
         };
         setLoadedPage(page);
-        await cachePage(page);
-        await openPanelWindows(page.panels, page.floating_config);
+        try {
+          await openPanelWindows(page.panels, page.floating_config);
+          await cachePage(page);
+          respond({ type: 'render_result', request_id: String(cmd.request_id ?? ''), ok: true, page_id: page.page_id, phase: 'rendered' });
+        } catch (error) {
+          respond({
+            type: 'render_result',
+            request_id: String(cmd.request_id ?? ''),
+            ok: false,
+            page_id: page.page_id,
+            phase: 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
+
+      case 'local_action': {
+        const requestId = String(cmd.request_id ?? '');
+        try {
+          if (cmd.action !== 'show' && cmd.action !== 'hide') throw new Error(`Unsupported local action: ${cmd.action}`);
+          await invoke('set_kiosk_visible', { visible: cmd.action === 'show' });
+          respond({ type: 'local_action_result', request_id: requestId, ok: true, result: { action: cmd.action } });
+        } catch (error) {
+          respond({ type: 'local_action_result', request_id: requestId, ok: false, error: error instanceof Error ? error.message : String(error) });
+        }
         break;
       }
 
@@ -706,6 +793,16 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     serverUrl: controlChannel.serverUrl,
     deviceId: controlChannel.deviceId || deviceId,
     enabled:   appState === 'ready' && !!deviceId,
+    onCommand: handleCommand,
+  });
+
+  // The Rust Edge Agent owns the Gateway v1 connection and applies desired scenes by
+  // posting them to the embedded loopback sidecar. Keep a second local renderer socket
+  // so that path can wait for a real panel-load result before the Agent reports applied.
+  useServerSocket({
+    serverUrl: 'http://127.0.0.1:3100',
+    deviceId,
+    enabled: appState === 'ready' && !!deviceId,
     onCommand: handleCommand,
   });
 

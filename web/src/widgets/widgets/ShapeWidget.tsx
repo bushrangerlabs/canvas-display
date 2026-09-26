@@ -74,7 +74,7 @@ const ShapeWidget: React.FC<WidgetProps> = ({ config }) => {
 
   // Stroke — from universal Border tab
   const strokeColor     = style.borderColor ?? '#00d4ff';
-  const strokeWidth     = typeof style.borderWidth === 'number' ? style.borderWidth : 2;
+  const strokeWidth     = style.borderVisible === false ? 0 : (typeof style.borderWidth === 'number' ? style.borderWidth : 2);
   const strokeDashArray = (() => {
     switch (style.borderStyle) {
       case 'dashed': return '8 4';

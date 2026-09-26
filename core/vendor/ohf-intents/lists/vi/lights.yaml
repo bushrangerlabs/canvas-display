@@ -1,0 +1,38 @@
+language: vi
+lists:
+  color_temperature_names:
+    values:
+      - in: (ánh nến|nến)
+        out: 1900
+      - in: (trắng ấm|vàng ấm)
+        out: 2700
+      - in: (trắng lạnh|trắng mát|trung tính)
+        out: 4000
+      - in: (ánh sáng ban ngày|ban ngày)
+        out: 6500
+  color:
+    values:
+      - in: trắng
+        out: white
+      - in: đen
+        out: black
+      - in: đỏ
+        out: red
+      - in: cam
+        out: orange
+      - in: vàng
+        out: yellow
+      - in: xanh lá
+        out: green
+      - in: xanh dương
+        out: blue
+      - in: tím
+        out: purple
+      - in: nâu
+        out: brown
+  brightness_level:
+    values:
+      - in: (tối đa|cực đại|cao nhất|hết mức)
+        out: 100
+      - in: (tối thiểu|thấp nhất)
+        out: 1

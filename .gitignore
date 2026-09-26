@@ -32,3 +32,10 @@ local.properties
 
 # Local evidence/scratch artifacts (ROM images, screenshots, TLS material)
 artifacts/
+
+# Python bytecode and local scratch output
+__pycache__/
+*.pyc
+apk-inspect.*/
+javac.*.args
+files_and_folders.txt

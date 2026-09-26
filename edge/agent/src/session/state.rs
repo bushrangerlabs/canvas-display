@@ -232,11 +232,14 @@ fn message_type_name(message: &DeviceV1ControlMessage) -> &'static str {
 }
 
 impl EdgeSession {
+    pub(crate) fn local_action_server(&self) -> Option<(&str, Option<&str>)> {
+        self.scene_server_url.as_deref().map(|url| (url, self.scene_server_token.as_deref()))
+    }
     pub fn new(options: EdgeSessionOptions) -> Self {
         Self {
             agent_version: options
                 .agent_version
-                .unwrap_or_else(|| "0.3.0-phase0".to_string()),
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             architecture: options.architecture.unwrap_or_else(native_architecture),
             clock_uncertainty_ms: options.clock_uncertainty_ms.unwrap_or(0),
             clock: options.clock.unwrap_or_else(|| Box::new(default_clock)),

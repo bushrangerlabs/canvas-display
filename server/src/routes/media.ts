@@ -270,8 +270,10 @@ function isLikelyAudioStreamUrl(value: string | undefined): boolean {
   const candidate = value.trim().toLowerCase();
   if (!candidate) return false;
 
-  // Common direct stream formats and URL patterns.
-  if (/\.(m3u8|m3u|mp3|aac|ogg|opus|flac|pls)(\?|$)/i.test(candidate)) return true;
+  // Common direct stream formats and URL patterns. Includes the container
+  // formats Core's broadcast store serves (wav/m4a/mp4/webm) so a recorded
+  // broadcast URL is never mistaken for a webpage.
+  if (/\.(m3u8|m3u|mp3|aac|ogg|opus|flac|pls|wav|m4a|mp4|webm)(\?|$)/i.test(candidate)) return true;
   if (/\/(live|stream|radio)\b/i.test(candidate)) return true;
   if (/\b(stream|icecast|shoutcast)\b/i.test(candidate)) return true;
 
@@ -1583,6 +1585,22 @@ export async function mediaRoutes(app: FastifyInstance) {
       },
     });
     return reply.code(response.statusCode).headers({ 'content-type': 'application/json' }).send(response.json());
+  });
+
+  app.post<{ Body: { url?: string; panel_id?: string; revert_after_ms?: number } }>('/media/open', async (req, reply) => {
+    const body = req.body ?? {};
+    const url = body.url?.trim();
+    if (!url || !/^https?:\/\//i.test(url)) return reply.code(400).send({ error: 'url is required (http/https)' });
+    const revertAfterMs = Number(body.revert_after_ms ?? 0);
+    if (body.panel_id) {
+      broadcast({ type: 'command', action: 'navigate_panel', payload: { panel_id: body.panel_id, url } }, 'browser');
+    } else {
+      broadcast({ type: 'command', action: 'show_floating', payload: { url } }, 'browser');
+    }
+    if (revertAfterMs > 0) {
+      setTimeout(() => broadcast({ type: 'command', action: 'hide_floating', payload: {} }, 'browser'), revertAfterMs);
+    }
+    return { success: true, url, revert_after_ms: revertAfterMs };
   });
 
   app.post<{ Body: MediaPlayBody }>('/media/play', async (req, reply) => {

@@ -2005,9 +2005,12 @@ async function main(): Promise<void> {
   const broadcastFanOut = async (clip: BroadcastClip): Promise<{ edges: number; ha: number }> => {
     const url = broadcastUrl(clip);
     const deviceIds = gateway.connectedDeviceIds();
+    console.log(`[core][broadcast] fan-out gateway devices: ${JSON.stringify(deviceIds)}`);
     const edgeResults = await Promise.allSettled(deviceIds.map(async (deviceId) => {
       const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-      if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+      const architecture = String(archRow.rows[0]?.architecture ?? '').toLowerCase();
+      console.log(`[core][broadcast] -> ${deviceId} (arch=${architecture || 'unknown'})`);
+      if (architecture === 'android') {
         await gateway.requestAction(deviceId, 'media.play', { source: 'direct_audio', url, title: clip.title }, 20_000);
       } else {
         await requestDeviceAction(deviceId, 'device_http', {
@@ -2018,6 +2021,11 @@ async function main(): Promise<void> {
       }
       mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: clip.title, url });
     }));
+    for (const [index, result] of edgeResults.entries()) {
+      if (result.status === 'rejected') {
+        console.warn(`[core][broadcast] edge ${deviceIds[index]} failed:`, result.reason instanceof Error ? result.reason.message : result.reason);
+      }
+    }
     const edges = edgeResults.filter(result => result.status === 'fulfilled').length;
     let haCount = 0;
     if (ha) {

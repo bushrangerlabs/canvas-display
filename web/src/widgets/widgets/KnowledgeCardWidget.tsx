@@ -2,6 +2,8 @@ import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 export const KnowledgeCardWidgetMetadata: WidgetMetadata = {
   name: 'Knowledge Card',
@@ -105,7 +107,8 @@ export default function KnowledgeCardWidget({ config, isEditMode }: WidgetProps)
 
   const displayCard = isEditMode ? SAMPLE_CARD : card;
 
-  const style: CSSProperties = {
+  const universalStyle = useResolvedUniversalStyle(config.config.style);
+  const style: CSSProperties = applyUniversalStyles(universalStyle, {
     width,
     height,
     boxSizing: 'border-box',
@@ -116,7 +119,7 @@ export default function KnowledgeCardWidget({ config, isEditMode }: WidgetProps)
     flexDirection: 'column',
     fontFamily: 'system-ui, sans-serif',
     position: 'relative',
-  };
+  });
 
   if (!displayCard || dismissed) {
     return (

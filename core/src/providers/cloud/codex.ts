@@ -1,10 +1,9 @@
 /**
- * OpenAI Codex / Responses API LLM adapter.
+ * OpenAI Responses API LLM adapter.
  *
  * Talks to the OpenAI Responses API at `POST /v1/responses` instead of the
- * Chat Completions endpoint. This is required for Codex-specific models
- * (codex-mini, GPT-5-Codex, GPT-5.3-Codex, etc.) which exclusively support
- * the Responses API format.
+ * Chat Completions endpoint. It supports OpenAI's current general-purpose and
+ * Codex models through one wire format.
  *
  * The Responses API uses a different wire format:
  *   - `instructions` replaces system messages
@@ -17,11 +16,11 @@
  * the Responses API format transparently, so the rest of Canvas Core doesn't
  * need to know about the API difference.
  *
- * Config: `apiKey`, `model` (e.g. "codex-mini-latest", "GPT-5.3-Codex"),
+ * Config: `apiKey`, `model` (for example, "gpt-5" or "codex-mini-latest"),
  * optional `baseUrl`, `temperature`, `maxTokens`, `timeoutMs`.
  */
 import type { ChatMessage, ChatWithToolsResult, HealthStatus } from '../types.js';
-import type { FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
+import type { ChatWithToolsOptions, FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
 
 export interface CodexLlmOptions {
   /** OpenAI API key (sk-...). Required. */
@@ -101,7 +100,7 @@ export class CodexLlm implements LlmProvider {
   async chatWithTools(
     messages: ChatMessage[],
     tools: ToolDefinition[],
-    opts?: { maxTokens?: number; disableThinking?: boolean },
+    opts?: ChatWithToolsOptions,
   ): Promise<ChatWithToolsResult> {
     const url = `${this.baseUrl}/responses`;
     const controller = new AbortController();
@@ -115,6 +114,14 @@ export class CodexLlm implements LlmProvider {
       if (instructions) body.instructions = instructions;
       if (this.temperature !== undefined) body.temperature = this.temperature;
       body.max_output_tokens = opts?.maxTokens ?? this.maxTokens;
+      if (opts?.responseSchema) {
+        body.text = {
+          format: {
+            type: 'json_schema', name: opts.responseSchema.name,
+            strict: true, schema: opts.responseSchema.schema,
+          },
+        };
+      }
       if (tools.length > 0) body.tools = this.toResponsesTools(tools);
 
       const res = await this.fetchImpl(url, {
@@ -158,48 +165,71 @@ export class CodexLlm implements LlmProvider {
     }
   }
 
+  async analyzeImage(prompt: string, imageBase64: string, mimeType: string): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const res = await this.fetchImpl(`${this.baseUrl}/responses`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify({
+          model: this.model,
+          max_output_tokens: this.maxTokens,
+          input: [{
+            type: 'message', role: 'user', content: [
+              { type: 'input_text', text: prompt },
+              { type: 'input_image', image_url: `data:${mimeType};base64,${imageBase64}` },
+            ],
+          }],
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`OpenAI vision ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return this.extractText(await res.json());
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ── Message translation ──────────────────────────────────────────────────
 
   /**
    * Convert a ChatMessage array into Responses API `instructions` + `input`.
    *
-   * Strategy: extract the first system message as `instructions`, flatten
-   * the rest into a single user message containing the full conversation
-   * transcript. This preserves context across multi-turn exchanges without
-   * requiring `previous_response_id` (which Canvas Core doesn't use).
+   * System messages become `instructions`; messages, function calls, and tool
+   * results retain their native Responses API item types. This keeps tool-call
+   * identity intact across orchestration iterations.
    */
   private toResponsesInput(messages: ChatMessage[]): {
     instructions: string;
     input: Array<Record<string, unknown>>;
   } {
     let instructions = '';
-    const conversation: string[] = [];
+    const input: Array<Record<string, unknown>> = [];
 
     for (const msg of messages) {
       if (msg.role === 'system') {
-        instructions = msg.content;
+        instructions = instructions ? `${instructions}\n\n${msg.content}` : msg.content;
       } else if (msg.role === 'user') {
-        conversation.push(`User: ${msg.content}`);
+        input.push({ type: 'message', role: 'user', content: msg.content });
       } else if (msg.role === 'assistant') {
+        if (msg.content) input.push({ type: 'message', role: 'assistant', content: msg.content });
         if (msg.tool_calls && msg.tool_calls.length > 0) {
-          const calls = msg.tool_calls
-            .map((tc) => `[calling ${tc.function.name}(${tc.function.arguments})]`)
-            .join(', ');
-          const textPart = msg.content ? ` — ${msg.content}` : '';
-          conversation.push(`Assistant: ${calls}${textPart}`);
-        } else {
-          conversation.push(`Assistant: ${msg.content}`);
+          for (const call of msg.tool_calls) {
+            input.push({
+              type: 'function_call', call_id: call.id,
+              name: call.function.name, arguments: call.function.arguments,
+            });
+          }
         }
       } else if (msg.role === 'tool') {
-        conversation.push(
-          `[Tool result for ${msg.tool_call_id ?? 'unknown'}]: ${msg.content}`,
-        );
+        input.push({ type: 'function_call_output', call_id: msg.tool_call_id ?? 'unknown', output: msg.content });
       }
     }
 
     return {
       instructions,
-      input: [{ type: 'message', role: 'user', content: conversation.join('\n') }],
+      input,
     };
   }
 

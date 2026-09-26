@@ -231,3 +231,21 @@ test('AiProviderRegistry: DegradedLlm can be registered as a fallback provider',
   const reply = await llm!.chat([{ role: 'user', content: 'anything' }]);
   assert.match(reply, /degraded/i);
 });
+
+test('AiProviderRegistry: rejects conversation providers whose adapter cannot call tools', () => {
+  const registry = new AiProviderRegistry();
+  registry.addProvider('gemini-chat', 'llm', 'gemini', {}, mockLlm('plain chat'));
+  assert.throws(
+    () => registry.assignTask('conversation', 'gemini-chat'),
+    /does not support tool calls/,
+  );
+});
+
+test('AiProviderRegistry: candidates respect local-only policy and put the assignment first', () => {
+  const registry = new AiProviderRegistry();
+  registry.addProvider('local', 'llm', 'llama-cpp', { model: 'qwen' }, mockLlm('local'));
+  registry.addProvider('cloud', 'llm', 'openrouter', { model: 'cloud-model' }, mockLlm('cloud'));
+  registry.assignTask('conversation', 'cloud');
+  assert.deepEqual(registry.getLlmCandidates('conversation').map(candidate => candidate.id), ['cloud', 'local']);
+  assert.deepEqual(registry.getLlmCandidates('conversation', { localOnly: true }).map(candidate => candidate.id), ['local']);
+});

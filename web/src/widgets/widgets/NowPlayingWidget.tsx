@@ -8,6 +8,8 @@ import { useVisibility } from '../../hooks/useVisibility';
 import { useWidget } from '../hooks/useWidget';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 export const NowPlayingWidgetMetadata: WidgetMetadata = {
   name: 'Now Playing',
@@ -85,17 +87,21 @@ const NowPlayingWidget: React.FC<WidgetProps> = ({ config }) => {
     });
   };
 
+  const universalStyle = useResolvedUniversalStyle(config.config.style);
+
   if (!isVisible) return null;
 
   const progressPct = duration > 0 ? Math.min((livePosition / duration) * 100, 100) : 0;
 
+  const containerStyle = applyUniversalStyles(universalStyle, {
+    width, height, backgroundColor, borderRadius,
+    display: 'flex', flexDirection: 'row', alignItems: 'center',
+    overflow: 'hidden', boxSizing: 'border-box', padding: '10px',
+    gap: 12, position: 'relative',
+  });
+
   return (
-    <div style={{
-      width, height, backgroundColor, borderRadius,
-      display: 'flex', flexDirection: 'row', alignItems: 'center',
-      overflow: 'hidden', boxSizing: 'border-box', padding: '10px',
-      gap: 12, position: 'relative',
-    }}>
+    <div style={containerStyle}>
       {/* Album art */}
       <div style={{
         width: height - 20, height: height - 20,

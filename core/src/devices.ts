@@ -209,6 +209,11 @@ export async function revokeDevice(repo: DeviceRepository, id: string): Promise<
   return rowToDevice(res.rows[0]);
 }
 
+export async function deleteDevice(repo: DeviceRepository, id: string): Promise<boolean> {
+  const result = await repo.query('DELETE FROM devices WHERE id = $1', [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
 export interface DeviceUpdate {
   name?: string;
   display_width?: number | null;
@@ -330,6 +335,15 @@ export async function registerDeviceRoutes(
     return legacy.requestDeviceAction(...args);
   });
 
+  // Android has no legacy `device_http` bridge (no local Fastify sidecar), so any
+  // interactive hardware test (mic/speaker/wake-word/cue) that relies on it must
+  // degrade to a clear "not supported on this platform" response instead of the
+  // generic "kiosk is not connected" error a real connectivity problem would show.
+  async function deviceArchitecture(id: string): Promise<string | null> {
+    const row = await repo.query('SELECT architecture FROM devices WHERE id = $1', [id]);
+    return row.rowCount === 0 ? null : (row.rows[0].architecture ?? 'unknown');
+  }
+
   // Create a one-time pairing invitation (admin-only, CSRF-protected).
   fastify.post(
     '/api/admin/devices/invitations',
@@ -349,6 +363,21 @@ export async function registerDeviceRoutes(
         scope: result.scope,
         expires_at: result.expires_at,
       };
+    },
+  );
+
+  // Permanently remove a device and its dependent registry state.
+  fastify.delete(
+    '/api/admin/devices/:id',
+    { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) },
+    async (request, reply) => {
+      const id = (request.params as { id: string }).id;
+      const removed = await deleteDevice(repo, id);
+      if (!removed) {
+        reply.code(404);
+        return { error: 'device_not_found' };
+      }
+      return { ok: true };
     },
   );
 
@@ -449,8 +478,8 @@ export async function registerDeviceRoutes(
       const body = request.body as Record<string, unknown> | undefined;
 
       // Validate device exists
-      const exists = await repo.query('SELECT 1 FROM devices WHERE id = $1', [id]);
-      if (exists.rowCount === 0) {
+      const deviceRow = await repo.query('SELECT architecture FROM devices WHERE id = $1', [id]);
+      if (deviceRow.rowCount === 0) {
         reply.code(404);
         return { error: 'device_not_found' };
       }
@@ -465,6 +494,12 @@ export async function registerDeviceRoutes(
         `UPDATE devices SET audio_config = $1::jsonb WHERE id = $2`,
         [JSON.stringify(audioConfig), id],
       );
+
+      // Android has no legacy device_http bridge — it polls its config from Core
+      // (GET /api/devices/:id/voice-config) instead of receiving a live push.
+      if (deviceRow.rows[0].architecture === 'android') {
+        return { ok: true, applied: false, audio_config: audioConfig, note: 'Saved. Applies next time the device syncs.' };
+      }
 
       try {
         await requestDeviceAction(id, 'device_http', {
@@ -499,8 +534,8 @@ export async function registerDeviceRoutes(
       const { id } = request.params as { id: string };
       const body = request.body as Record<string, unknown> | undefined;
 
-      const exists = await repo.query('SELECT 1 FROM devices WHERE id = $1', [id]);
-      if (exists.rowCount === 0) {
+      const deviceRow = await repo.query('SELECT architecture FROM devices WHERE id = $1', [id]);
+      if (deviceRow.rowCount === 0) {
         reply.code(404);
         return { error: 'device_not_found' };
       }
@@ -528,6 +563,12 @@ export async function registerDeviceRoutes(
         `UPDATE devices SET voice_config = $1::jsonb WHERE id = $2`,
         [JSON.stringify(voiceConfig), id],
       );
+
+      // Android has no legacy device_http bridge — it polls its config from Core
+      // (GET /api/devices/:id/voice-config) instead of receiving a live push.
+      if (deviceRow.rows[0].architecture === 'android') {
+        return { ok: true, applied: false, voice_config: voiceConfig, note: 'Saved. Applies next time the device syncs.' };
+      }
 
       try {
         const audioRes = await repo.query('SELECT audio_config FROM devices WHERE id = $1', [id]);
@@ -588,6 +629,9 @@ export async function registerDeviceRoutes(
         reply.code(413);
         return { error: 'voice_cue_too_large' };
       }
+      if ((await deviceArchitecture(id)) === 'android') {
+        return { ok: false, unsupported: true, message: 'Custom voice cue upload is not supported on Android edge devices yet.' };
+      }
       try {
         return await requestDeviceAction(id, 'device_http', {
           path: '/api/settings/voice/cue-upload',
@@ -615,6 +659,25 @@ export async function registerDeviceRoutes(
         reply.code(400);
         return { error: 'invalid_voice_cue' };
       }
+      if ((await deviceArchitecture(id)) === 'android') {
+        if (!gateway?.isConnected(id)) {
+          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+        }
+        try {
+          const result = await gateway.requestAction(id, 'voice.test_cue', {
+            sound: body.sound,
+            volume: body.volume,
+          }, 10_000);
+          return { ...result, device_id: id, note: 'Voice cue played on the selected edge device.' };
+        } catch (error) {
+          reply.code(502);
+          return {
+            ok: false,
+            error: 'voice_cue_test_failed',
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
       try {
         const result = await requestDeviceAction(id, 'device_http', {
           path: '/api/audio/test-cue',
@@ -639,10 +702,44 @@ export async function registerDeviceRoutes(
     { preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }) },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-      const exists = await repo.query('SELECT 1 FROM devices WHERE id = $1', [id]);
-      if (exists.rowCount === 0) {
+      const deviceRow = await repo.query('SELECT architecture FROM devices WHERE id = $1', [id]);
+      if (deviceRow.rowCount === 0) {
         reply.code(404);
         return { error: 'device_not_found' };
+      }
+
+      // Only the Linux sidecar (legacy `device_http` bridge over parec/arecord) supports
+      // live mic/speaker enumeration over that channel. Android has no such bridge, but it
+      // IS reachable over the new gateway-v1 WebSocket, so ask it directly for its real
+      // AudioDeviceInfo list there. Wake words are always the bundled .tflite set (see
+      // app/src/main/assets/openwakeword/) since Android doesn't install models dynamically.
+      if (deviceRow.rows[0].architecture === 'android') {
+        const wakeWords = [
+          { id: 'hey_jarvis', name: 'Hey Jarvis' },
+          { id: 'alexa', name: 'Alexa' },
+          { id: 'hey_mycroft', name: 'Hey Mycroft' },
+          { id: 'hey_rhasspy', name: 'Hey Rhasspy' },
+        ];
+        if (!gateway?.isConnected(id)) {
+          return { microphones: [], speakers: [], wake_words: wakeWords, unsupported: true };
+        }
+        try {
+          const result = await gateway.requestAction(id, 'audio.list_devices');
+          return {
+            microphones: result.microphones ?? [],
+            speakers: result.speakers ?? [],
+            wake_words: wakeWords,
+          };
+        } catch (error) {
+          reply.code(503);
+          return {
+            error: 'audio_devices_unavailable',
+            message: error instanceof Error ? error.message : String(error),
+            microphones: [],
+            speakers: [],
+            wake_words: wakeWords,
+          };
+        }
       }
 
       try {
@@ -689,6 +786,21 @@ export async function registerDeviceRoutes(
       const micDevice = body.device?.trim() || (audioConfig?.mic_device as string) || 'default';
       const durationMs = Math.max(500, Math.min(5000, Math.round(body.duration_ms ?? 3000)));
 
+      if ((await deviceArchitecture(id)) === 'android') {
+        if (!gateway?.isConnected(id)) {
+          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+        }
+        try {
+          const result = await gateway.requestAction(id, 'audio.test_mic', {
+            duration_ms: durationMs,
+          }, durationMs + 5_000);
+          return { device_id: id, mic_device: micDevice, ...result, note: 'Microphone capture completed.' };
+        } catch (error) {
+          reply.code(502);
+          return { ok: false, error: 'mic_test_failed', message: error instanceof Error ? error.message : String(error) };
+        }
+      }
+
       try {
         const result = await requestDeviceAction(id, 'device_http', {
           path: '/api/audio/test-mic',
@@ -728,6 +840,18 @@ export async function registerDeviceRoutes(
       const audioConfig = configRes.rows[0]?.audio_config as Record<string, unknown> | undefined;
       const speakerDevice = body.device?.trim() || (audioConfig?.speaker_device as string) || 'default';
       const volume = Math.max(0, Math.min(100, Math.round(body.volume ?? Number(audioConfig?.speaker_volume ?? 90))));
+      if ((await deviceArchitecture(id)) === 'android') {
+        if (!gateway?.isConnected(id)) {
+          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+        }
+        try {
+          const result = await gateway.requestAction(id, 'audio.test_speaker', { volume }, 10_000);
+          return { ok: true, device_id: id, speaker_device: speakerDevice, volume, result, note: 'Speaker test tone played.' };
+        } catch (error) {
+          reply.code(502);
+          return { ok: false, error: 'speaker_test_failed', message: error instanceof Error ? error.message : String(error) };
+        }
+      }
       try {
         const result = await requestDeviceAction(id, 'device_http', {
           path: '/api/audio/test-speaker',
@@ -767,6 +891,35 @@ export async function registerDeviceRoutes(
       const threshold = Math.max(0.1, Math.min(0.9, body.wake_threshold ?? voiceConfig?.wake_threshold ?? 0.5));
       const micDevice = body.mic_device?.trim() || audioConfig?.mic_device || 'default';
       const timeoutMs = Math.max(2_000, Math.min(30_000, Math.round(body.timeout_ms ?? 15_000)));
+
+      if ((await deviceArchitecture(id)) === 'android') {
+        if (!gateway?.isConnected(id)) {
+          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+        }
+        try {
+          const result = await gateway.requestAction(id, 'voice.test_wakeword', {
+            wake_word: wakeWord,
+            wake_threshold: threshold,
+            timeout_ms: timeoutMs,
+          }, timeoutMs + 5_000);
+          return {
+            ...result,
+            device_id: id,
+            mic_device: micDevice,
+            note: result.detected
+              ? `Detected “${String(result.wake_word ?? wakeWord)}”.`
+              : `No “${String(result.wake_word ?? wakeWord)}” detection before timeout.`,
+          };
+        } catch (error) {
+          reply.code(502);
+          return {
+            ok: false,
+            detected: false,
+            error: 'wakeword_test_failed',
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
 
       try {
         const result = await requestDeviceAction(id, 'device_http', {

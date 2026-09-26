@@ -9,6 +9,7 @@
  * `temperature`, `timeoutMs`.
  */
 import type { ChatMessage, ChatWithToolsResult, HealthStatus } from '../types.js';
+import { parseContentAsToolCalls } from '../llm.js';
 import type { ChatWithToolsOptions, FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
 
 export interface OpenRouterLlmOptions {
@@ -147,16 +148,21 @@ export class OpenRouterLlm implements LlmProvider {
       if (!message) {
         throw new Error('OpenRouter response missing choices[0].message');
       }
+      const toolCalls = (message.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.function.name,
+          arguments: tc.function.arguments,
+        },
+      }));
+      if (toolCalls.length === 0 && tools.length > 0 && message.content) {
+        const contentToolCalls = parseContentAsToolCalls(message.content);
+        if (contentToolCalls) return { content: '', toolCalls: contentToolCalls };
+      }
       return {
         content: message.content ?? '',
-        toolCalls: (message.tool_calls ?? []).map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
+        toolCalls,
       };
     } finally {
       clearTimeout(timer);

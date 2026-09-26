@@ -12,7 +12,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db/index';
-import { broadcast } from '../ws/index';
+import { broadcast, requestPageRender } from '../ws/index';
 
 function getPageWithPanels(db: ReturnType<typeof getDb>, pageId: string) {
   const page = db.prepare('SELECT * FROM pages WHERE id = ?').get(pageId) as any;
@@ -63,8 +63,13 @@ export async function commandRoutes(app: FastifyInstance) {
       const pageData = body.page_data;
       const pageId = String(pageData.id ?? body.page_id ?? '');
       if (!pageId) return reply.code(400).send({ error: 'inline page requires an id' });
-      broadcast({ type: 'load_page', page_id: pageId, page_data: pageData }, 'browser');
-      return { success: true, page_id: pageId, page_name: pageData.name ?? pageId, inline: true };
+      try {
+        const rendered = await requestPageRender(pageId, pageData);
+        if (!rendered.ok) return reply.code(409).send({ success: false, ...rendered });
+        return { success: true, page_id: pageId, page_name: pageData.name ?? pageId, inline: true, phase: rendered.phase };
+      } catch (error) {
+        return reply.code(504).send({ success: false, error: error instanceof Error ? error.message : String(error) });
+      }
     }
 
     const db = getDb();

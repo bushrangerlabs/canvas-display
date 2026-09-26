@@ -1,6 +1,6 @@
 {
   "name": "@canvas-display/core",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Canvas Core - centralized control plane, AI brain, and device gateway (Phase 2)",
   "type": "module",
@@ -19,6 +19,7 @@
     "@fastify/static": "^7.0.4",
     "@fastify/websocket": "^11.0.0",
     "@noble/ed25519": "^2.1.0",
+    "bonjour-service": "^1.4.4",
     "dotenv": "^16.4.5",
     "fastify": "^4.27.0",
     "mqtt": "^5.15.2",

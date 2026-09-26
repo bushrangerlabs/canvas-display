@@ -18,6 +18,7 @@ import EditorIcon from '@mui/icons-material/EditNote';
 import IntelligenceIcon from '@mui/icons-material/Psychology';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogsIcon from '@mui/icons-material/Terminal';
+import TimelineIcon from '@mui/icons-material/Timeline';
 import MenuIcon from '@mui/icons-material/Menu';
 import HubIcon from '@mui/icons-material/Hub';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { label: 'Automations',  path: '/flows',        icon: <AccountTreeIcon fontSize="small" /> },
   { label: 'Settings',     path: '/settings',     icon: <SettingsIcon fontSize="small" /> },
   { label: 'Logs',         path: '/logs',         icon: <LogsIcon fontSize="small" /> },
+  { label: 'AI Log',       path: '/ai-log',       icon: <TimelineIcon fontSize="small" /> },
 ];
 
 export interface SessionInfo {
@@ -64,16 +66,18 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
 
   const [coreOk, setCoreOk] = useState<boolean | null>(null);
+  const [coreVersion, setCoreVersion] = useState('0.3.0');
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const [health, sess] = await Promise.all([
-      coreApi.health().then(() => true).catch(() => false),
+      coreApi.health().catch(() => null),
       probeSession(),
     ]);
-    setCoreOk(health);
+    setCoreOk(health !== null);
+    if (health?.version) setCoreVersion(health.version);
     setSession(sess);
   }, []);
 
@@ -157,7 +161,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <Divider />
       <Box sx={{ px: 2, py: 1 }}>
         <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: 10 }}>
-          v0.1 · {new Date().getFullYear()}
+          v{coreVersion} · {new Date().getFullYear()}
         </Typography>
       </Box>
     </Box>
@@ -188,7 +192,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 boxShadow: coreOk ? '0 0 6px rgba(74,222,128,0.7)' : 'none',
               }} />
               <Typography variant="caption" sx={{ color: 'text.secondary', fontFamily: 'monospace' }}>
-                {coreOk === null ? 'core: …' : coreOk ? 'core: online' : 'core: offline'}
+                {coreOk === null ? 'core: …' : coreOk ? `core: v${coreVersion} online` : `core: v${coreVersion} offline`}
               </Typography>
             </Stack>
             <Typography variant="caption" sx={{ color: 'text.disabled', ml: 1, fontFamily: 'monospace', display: { xs: 'none', sm: 'block' } }}>

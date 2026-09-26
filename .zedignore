@@ -1,0 +1,33 @@
+# Node dependencies & package locks
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Compiled frontend distribution paths
+dist/
+build/
+.next/
+out/
+
+# Rust / Cargo build artifacts (Tauri)
+browser/linux/src-tauri/target/
+target/
+
+# Android build outputs & local files
+**/.gradle/
+**/build/
+local.properties
+*.apk
+*.idsig
+
+# System, caches, and archive formats
+.git/
+.cache/
+*.tar.gz
+*.zip
+*.xz
+*.flat
+*.pem
+*.bin
+

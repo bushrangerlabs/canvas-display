@@ -16,7 +16,53 @@
  * concerns and are intentionally not here yet. Tool-calling support was added
  * early (Phase 2.5) so the AI chat endpoint can surface MCP tools.
  */
-import type { ChatMessage, ChatWithToolsResult, HealthStatus } from './types.js';
+import type { ChatMessage, ChatWithToolsResult, HealthStatus, LlmToolCall } from './types.js';
+
+/**
+ * Some models (e.g. Salesforce xLAM) natively emit function calls as a plain
+ * JSON array in the message content — `[{"name": "...", "arguments": {...}}]`
+ * — rather than the OpenAI `tool_calls` field. Detect that exact shape and
+ * convert it to the standard `LlmToolCall[]` structure. Returns null for
+ * anything else (plain text, malformed JSON, wrong shape) so normal content
+ * is never misinterpreted as tool calls.
+ */
+export function parseContentAsToolCalls(content: string): LlmToolCall[] | null {
+  const trimmed = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = trimmed.indexOf('[');
+  const end = trimmed.lastIndexOf(']');
+  if (start < 0 || end <= start) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const calls: LlmToolCall[] = [];
+  for (const [index, entry] of parsed.entries()) {
+    if (!entry || typeof entry !== 'object') return null;
+    const { name, arguments: args } = entry as { name?: unknown; arguments?: unknown };
+    if (typeof name !== 'string' || !name || (typeof args !== 'object' && typeof args !== 'string') || args === null) return null;
+    let normalizedArgs: Record<string, unknown>;
+    if (typeof args === 'string') {
+      try {
+        const parsedArgs = JSON.parse(args) as unknown;
+        if (!parsedArgs || typeof parsedArgs !== 'object' || Array.isArray(parsedArgs)) return null;
+        normalizedArgs = parsedArgs as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    } else {
+      normalizedArgs = args as Record<string, unknown>;
+    }
+    calls.push({
+      id: `call_${index}_${Math.random().toString(36).slice(2, 8)}`,
+      type: 'function',
+      function: { name, arguments: JSON.stringify(normalizedArgs) },
+    });
+  }
+  return calls;
+}
 
 /**
  * An LLM-compatible tool definition (OpenAI `tools` parameter shape).
@@ -76,6 +122,8 @@ export interface ChatWithToolsOptions {
   /** Disable chain-of-thought for reasoning models (e.g. Qwen3) so the
    *  answer lands in `content` quickly instead of being swallowed by thinking. */
   disableThinking?: boolean;
+  /** Request schema-constrained JSON from providers that support it. */
+  responseSchema?: { name: string; schema: Record<string, unknown> };
 }
 
 const DEFAULT_MODEL = 'local';
@@ -205,16 +253,28 @@ export class OpenAiCompatibleLlm implements LlmProvider {
       if (!message) {
         throw new Error('LLM response missing choices[0].message');
       }
+      const structuredToolCalls = (message.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.function.name,
+          arguments: tc.function.arguments,
+        },
+      }));
+      // Some models (e.g. xLAM) don't emit the OpenAI `tool_calls` field at all —
+      // they write their function call(s) as a plain JSON array in `content`
+      // (`[{"name": "...", "arguments": {...}}, ...]`). Detect and convert that
+      // shape so callers always get a consistent ChatWithToolsResult regardless
+      // of which native format the underlying model uses.
+      if (structuredToolCalls.length === 0 && tools.length > 0 && message.content) {
+        const contentToolCalls = parseContentAsToolCalls(message.content);
+        if (contentToolCalls) {
+          return { content: '', toolCalls: contentToolCalls };
+        }
+      }
       return {
         content: message.content ?? '',
-        toolCalls: (message.tool_calls ?? []).map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
+        toolCalls: structuredToolCalls,
       };
     } finally {
       clearTimeout(timer);

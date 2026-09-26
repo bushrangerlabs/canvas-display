@@ -465,7 +465,7 @@ fn main() {
         Some(canvas_edge_agent::hardware::HardwareAdapters::new_real());
     session_options.scene_server_url = Some(
         std::env::var("CANVAS_EDGE_SCENE_SERVER_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8099".to_string()),
+            .unwrap_or_else(|_| "http://127.0.0.1:3100".to_string()),
     );
     session_options.scene_server_token = std::env::var("CANVAS_EDGE_SCENE_SERVER_TOKEN")
         .ok()

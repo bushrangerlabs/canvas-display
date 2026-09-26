@@ -1195,7 +1195,7 @@ export function createIntelligence(
     let audioBuffer: Buffer | undefined;
     // Successful media playback starts audio on the originating device. Do not synthesize an
     // acknowledgement over the top of the requested video/music.
-    const mediaPlaybackStarted = ['media_play', 'media_select', 'media_resume', 'media_next'].includes(intent.intent)
+    const mediaPlaybackStarted = ['media_play', 'media_select', 'media_resume', 'media_next', 'dab_play', 'dispatcharr_play'].includes(intent.intent)
       && toolResult?.ok === true
       && (toolResult.data as { playback_started?: boolean } | undefined)?.playback_started !== false;
     if (!input.skipTts && tts && !mediaPlaybackStarted) {
@@ -1269,6 +1269,7 @@ export function createIntelligence(
 function mapIntentToTool(intent: string): string | undefined {
   const map: Record<string, string> = {
     media_play: 'media.play',
+    dab_play: 'dab.play',
     dispatcharr_play: 'dispatcharr.play',
     announce_broadcast: 'announce.broadcast',
     media_pause: 'media.pause',
@@ -1296,6 +1297,8 @@ function mapIntentSlotsToToolParams(
       return { query: slots.query ?? slots.title, source: slots.source ?? 'youtube', media_kind: slots.media_kind };
     case 'dispatcharr_play':
       return { channel: slots.channel };
+    case 'dab_play':
+      return { station: slots.station };
     case 'announce_broadcast':
       return { message: slots.message };
     case 'media_pause':

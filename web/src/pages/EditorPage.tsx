@@ -43,9 +43,10 @@ import SensorsIcon from '@mui/icons-material/Sensors';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import LockIcon from '@mui/icons-material/Lock';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
-import { coreApi, ApiError, type SceneRecord, type DeviceRow, type HaEntityCatalogueItem } from '../api/client';
+import { coreApi, ApiError, type SceneRecord, type DeviceRow, type HaEntityCatalogueItem, type AiProviderInfo } from '../api/client';
 import { useWebSocket } from '../widgets/providers/WebSocketProvider';
 import { PageHeader, ErrorBanner } from '../components/ui';
+import { IconPicker } from '../components/IconPicker';
 import { WIDGET_CATALOG, CATEGORY_ORDER, CATEGORY_LABELS, type WidgetMetadata, type FieldMetadata } from '../widgets/widget-catalog';
 import { WIDGET_LAZY_MAP } from '../widgets/WidgetRenderer';
 import { looksTruncated, parseAiContent } from '../widgets/aiParse';
@@ -1597,6 +1598,14 @@ function RightInspector({
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState<string | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [aiProviders, setAiProviders] = useState<AiProviderInfo[]>([]);
+  const [aiProviderId, setAiProviderId] = useState('');
+
+  useEffect(() => {
+    coreApi.aiProviders()
+      .then((r) => setAiProviders(r.providers.filter((p) => p.type === 'llm')))
+      .catch(() => { /* not critical — falls back to the default conversation provider */ });
+  }, []);
 
   // The HTML widget's iframe bridge reports uncaught errors from AI-generated JS.
   // Capturing them here turns a silently-dead widget into something the AI can fix.
@@ -1734,7 +1743,7 @@ function RightInspector({
           try {
             const r = await coreApi.chatSend(
               [{ role: 'system', content: system }, { role: 'user', content }],
-              undefined,
+              aiProviderId || undefined,
               { disableThinking: true, maxTokens: 16000, noTools: true },
             );
             return r.reply ?? '';
@@ -1962,6 +1971,91 @@ function RightInspector({
 
           <Divider />
 
+          {/* Universal Background section — available to every widget type.
+              Several widgets (e.g. Button) intentionally have no per-field
+              backgroundColor and read only config.style.backgroundColor. */}
+          <Accordion defaultExpanded disableGutters sx={{ bgcolor: 'transparent', backgroundImage: 'none', boxShadow: 'none', '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ fontSize: 16 }} />} sx={{ minHeight: 32, px: 0, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>Background</Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 0, pb: 1, pt: 0 }}>
+              <Stack spacing={1.25}>
+                <FieldInput
+                  field={{ name: 'backgroundColor', type: 'color', label: 'Background Color', default: 'transparent', category: 'style' }}
+                  value={selected.config.style?.backgroundColor ?? 'transparent'}
+                  onChange={(v) => onUpdate({ config: { style: { ...(selected.config.style || {}), backgroundColor: v } } })}
+                />
+                <Box>
+                  <Typography variant="caption" color="text.secondary">Opacity</Typography>
+                  <MuiSlider
+                    size="small"
+                    value={typeof selected.config.style?.backgroundOpacity === 'number' ? selected.config.style.backgroundOpacity : 1}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={(_e, v) => onUpdate({ config: { style: { ...(selected.config.style || {}), backgroundOpacity: v as number } } })}
+                  />
+                </Box>
+              </Stack>
+            </AccordionDetails>
+          </Accordion>
+
+          <Divider />
+
+          {/* Universal Border section — available to every widget type */}
+          <Accordion defaultExpanded disableGutters sx={{ bgcolor: 'transparent', backgroundImage: 'none', boxShadow: 'none', '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ fontSize: 16 }} />} sx={{ minHeight: 32, px: 0, py: 0, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>Border</Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 0, pb: 1, pt: 0 }}>
+              <Stack spacing={1.25}>
+                <FieldInput
+                  field={{ name: 'borderVisible', type: 'checkbox', label: 'Show Border', default: true, category: 'style' }}
+                  value={selected.config.style?.borderVisible ?? true}
+                  onChange={(v) => onUpdate({ config: { style: { ...(selected.config.style || {}), borderVisible: v } } })}
+                />
+                <FieldInput
+                  field={{ name: 'borderColor', type: 'color', label: 'Border Color', default: '#666666', category: 'style' }}
+                  value={selected.config.style?.borderColor ?? '#666666'}
+                  onChange={(v) => onUpdate({ config: { style: { ...(selected.config.style || {}), borderColor: v } } })}
+                />
+                <TextField
+                  label="Thickness (px)"
+                  type="number"
+                  size="small"
+                  fullWidth
+                  value={typeof selected.config.style?.borderWidth === 'number' ? selected.config.style.borderWidth : 0}
+                  onChange={e => onUpdate({ config: { style: { ...(selected.config.style || {}), borderWidth: Number(e.target.value) } } })}
+                  slotProps={{ htmlInput: { min: 0, max: 40, step: 1 } }}
+                />
+                <TextField
+                  label="Corner Radius (px)"
+                  type="number"
+                  size="small"
+                  fullWidth
+                  value={typeof selected.config.style?.borderRadius === 'number' ? selected.config.style.borderRadius : 0}
+                  onChange={e => onUpdate({ config: { style: { ...(selected.config.style || {}), borderRadius: Number(e.target.value) } } })}
+                  slotProps={{ htmlInput: { min: 0, max: 100, step: 1 } }}
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel>Border Style</InputLabel>
+                  <Select
+                    label="Border Style"
+                    value={selected.config.style?.borderStyle ?? 'solid'}
+                    onChange={e => onUpdate({ config: { style: { ...(selected.config.style || {}), borderStyle: e.target.value } } })}
+                  >
+                    <MenuItem value="solid">Solid</MenuItem>
+                    <MenuItem value="dashed">Dashed</MenuItem>
+                    <MenuItem value="dotted">Dotted</MenuItem>
+                    <MenuItem value="double">Double</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+            </AccordionDetails>
+          </Accordion>
+
+          <Divider />
+
           {/* Widget-specific fields */}
           {widgetMeta[selected.type]?.fields.filter(f => f.category === 'behavior').length > 0 && (
             <Accordion defaultExpanded disableGutters sx={{ bgcolor: 'transparent', backgroundImage: 'none', boxShadow: 'none', '&:before': { display: 'none' } }}>
@@ -2008,6 +2102,21 @@ function RightInspector({
                 <Typography variant="subtitle2">AI Builder</Typography>
               </AccordionSummary>
               <AccordionDetails>
+                {aiProviders.length > 1 && (
+                  <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
+                    <InputLabel>AI Provider</InputLabel>
+                    <Select
+                      label="AI Provider"
+                      value={aiProviderId}
+                      onChange={(e) => setAiProviderId(e.target.value)}
+                    >
+                      <MenuItem value=""><em>Default (Conversation provider)</em></MenuItem>
+                      {aiProviders.map((p) => (
+                        <MenuItem key={p.id} value={p.id}>{p.id} ({p.kind})</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
                 <TextField
                   fullWidth
                   multiline
@@ -2271,13 +2380,10 @@ function FieldInput({ field, value, onChange }: { field: FieldMetadata; value: a
       );
     case 'icon':
       return (
-        <TextField
+        <IconPicker
           label={field.label}
-          size="small"
-          fullWidth
-          value={val}
-          onChange={e => onChange(e.target.value)}
-          placeholder={field.description || 'mdi:icon-name'}
+          value={String(val)}
+          onChange={onChange}
         />
       );
     case 'code-editor':

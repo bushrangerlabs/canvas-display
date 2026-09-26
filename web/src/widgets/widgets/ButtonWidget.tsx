@@ -12,6 +12,7 @@ import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
 import { applyUniversalStyles } from '../utils/styleBuilder';
 import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
+import { useWidget } from '../hooks/useWidget';
 import { useWidgetRuntimeStore } from '../stores/widgetRuntimeStore';
 
 // Static metadata for inspector
@@ -118,6 +119,37 @@ export const ButtonWidgetMetadata: WidgetMetadata = {
     { name: 'iconSize', type: 'number', label: 'Icon Size', default: 24, min: 12, max: 96, category: 'style' },
     { name: 'iconSpacing', type: 'number', label: 'Icon Spacing', default: 8, min: 0, max: 32, category: 'style', description: 'Space between icon and text' },
     { name: 'iconColor', type: 'color', label: 'Icon Color', default: '', category: 'style', description: 'Icon color (defaults to text color if not set)' },
+
+    // State-aware styling (distinct on/off appearance for toggle-style buttons)
+    { name: 'stateAware', type: 'checkbox', label: 'Distinct On/Off Styling', default: false, category: 'style', description: 'Style the button differently depending on whether the target entity is on or off' },
+    // On state
+    { name: 'onStateBackgroundColor', type: 'color', label: 'On — Background Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateTextColor', type: 'color', label: 'On — Text Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateBorderColor', type: 'color', label: 'On — Border Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateBorderWidth', type: 'number', label: 'On — Border Width', min: 0, max: 20, category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateBorderStyle', type: 'select', label: 'On — Border Style', default: '', category: 'style', options: [
+      { value: '', label: 'Inherit' },
+      { value: 'solid', label: 'Solid' },
+      { value: 'dashed', label: 'Dashed' },
+      { value: 'dotted', label: 'Dotted' },
+      { value: 'double', label: 'Double' },
+    ], visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateIcon', type: 'icon', label: 'On — Icon', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'onStateIconColor', type: 'color', label: 'On — Icon Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    // Off state
+    { name: 'offStateBackgroundColor', type: 'color', label: 'Off — Background Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateTextColor', type: 'color', label: 'Off — Text Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateBorderColor', type: 'color', label: 'Off — Border Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateBorderWidth', type: 'number', label: 'Off — Border Width', min: 0, max: 20, category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateBorderStyle', type: 'select', label: 'Off — Border Style', default: '', category: 'style', options: [
+      { value: '', label: 'Inherit' },
+      { value: 'solid', label: 'Solid' },
+      { value: 'dashed', label: 'Dashed' },
+      { value: 'dotted', label: 'Dotted' },
+      { value: 'double', label: 'Double' },
+    ], visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateIcon', type: 'icon', label: 'Off — Icon', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
+    { name: 'offStateIconColor', type: 'color', label: 'Off — Icon Color', default: '', category: 'style', visibleWhen: { field: 'stateAware', value: true } },
     
     // Visual Feedback
     
@@ -139,6 +171,7 @@ const ButtonWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const { hass } = useWebSocket();
   const [isActive, setIsActive] = useState(false);
   const { setWidgetState } = useWidgetRuntimeStore();
+  const { getEntityState } = useWidget(config);
 
   // Phase 44: Config destructuring with defaults
   const {
@@ -185,6 +218,21 @@ const ButtonWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
     cornerRadiusBottomLeft,
     cornerRadiusBottomRight,
     visibilityCondition,
+    stateAware = false,
+    onStateBackgroundColor = '',
+    onStateTextColor = '',
+    onStateBorderColor = '',
+    onStateBorderWidth,
+    onStateBorderStyle = '',
+    onStateIcon = '',
+    onStateIconColor = '',
+    offStateBackgroundColor = '',
+    offStateTextColor = '',
+    offStateBorderColor = '',
+    offStateBorderWidth,
+    offStateBorderStyle = '',
+    offStateIcon = '',
+    offStateIconColor = '',
   } = config.config as any;
 
   // Universal style from the inspector's Style tab
@@ -198,6 +246,20 @@ const ButtonWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const backgroundColor = useEntityBinding(universalStyle?.backgroundColor ?? '#2196f3', '#2196f3');
   const textColor = useEntityBinding(textColorConfig, '#ffffff');
   const iconColor = useEntityBinding(iconColorConfig, iconColorConfig || textColor);
+
+  // State-aware styling: reflect the bound entity's on/off state (toggle/on/off buttons only)
+  const entityStateValue = getEntityState('entity_id');
+  const entityOn = entityStateValue ? String(entityStateValue).toLowerCase() === 'on' : false;
+  const isBinaryAction = actionType === 'toggle' || actionType === 'turn_on' || actionType === 'turn_off' || actionType === 'auto';
+  const useStateStyling = stateAware && !!entity_id && isBinaryAction;
+
+  // Per-state icon overrides (fall back to the main icon/color when unset)
+  const effectiveIcon = useStateStyling
+    ? (entityOn ? (onStateIcon || icon) : (offStateIcon || icon))
+    : icon;
+  const effectiveIconColor = useStateStyling
+    ? (entityOn ? (onStateIconColor || iconColor) : (offStateIconColor || iconColor))
+    : iconColor;
 
   const handleClick = async () => {
     if (isEditMode) return;
@@ -542,6 +604,26 @@ const ButtonWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
     finalStyle.backgroundColor = clickBackgroundColor;
   }
 
+  // State-aware overrides also go AFTER applyUniversalStyles so they win over the Style tab.
+  if (useStateStyling) {
+    const stateBackground = entityOn ? onStateBackgroundColor : offStateBackgroundColor;
+    const stateText = entityOn ? onStateTextColor : offStateTextColor;
+    const stateBorderColor = entityOn ? onStateBorderColor : offStateBorderColor;
+    const stateBorderWidth = entityOn ? onStateBorderWidth : offStateBorderWidth;
+    const stateBorderStyle = entityOn ? onStateBorderStyle : offStateBorderStyle;
+
+    if (stateBackground) finalStyle.backgroundColor = stateBackground;
+    if (stateText) finalStyle.color = stateText;
+    if (stateBorderColor) finalStyle.borderColor = stateBorderColor;
+    if (stateBorderWidth !== undefined) finalStyle.borderWidth = `${stateBorderWidth}px`;
+    if (stateBorderStyle) {
+      finalStyle.borderStyle = stateBorderStyle;
+    } else if (stateBorderColor || stateBorderWidth !== undefined) {
+      // A border color/width without a style wouldn't render (CSS defaults to border-style: none)
+      finalStyle.borderStyle = finalStyle.borderStyle || 'solid';
+    }
+  }
+
   // Don't render if visibility condition is false
   if (!isVisible) return null;
 
@@ -549,9 +631,9 @@ const ButtonWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
     <button style={finalStyle} onClick={handleClick} disabled={isEditMode}>
       {showIcon && (
         <UniversalIcon
-          icon={icon}
+          icon={effectiveIcon}
           size={iconSize}
-          color={iconColor}
+          color={effectiveIconColor}
         />
       )}
       {iconPosition !== 'only' && label}

@@ -345,7 +345,8 @@ test('CodexLlm.chat posts to /v1/responses with Bearer auth and Responses API fo
   const body = JSON.parse(capturedInit?.body as string);
   assert.equal(body.model, 'codex-mini-latest');
   assert.equal(body.input[0].type, 'message');
-  assert.equal(body.input[0].content, 'User: hi');
+  assert.equal(body.input[0].role, 'user');
+  assert.equal(body.input[0].content, 'hi');
   assert.equal(typeof body.max_output_tokens, 'number');
 });
 
@@ -364,7 +365,7 @@ test('CodexLlm.chat extracts system message as instructions', async () => {
   ]);
   const body = JSON.parse(capturedInit?.body as string);
   assert.equal(body.instructions, 'You are helpful');
-  assert.equal(body.input[0].content, 'User: hi');
+  assert.deepEqual(body.input[0], { type: 'message', role: 'user', content: 'hi' });
 });
 
 test('CodexLlm.chat formats multi-turn conversation', async () => {
@@ -382,10 +383,9 @@ test('CodexLlm.chat formats multi-turn conversation', async () => {
     { role: 'user', content: 'bye' },
   ]);
   const body = JSON.parse(capturedInit?.body as string);
-  const input = body.input[0].content;
-  assert.ok(input.includes('User: hello'));
-  assert.ok(input.includes('Assistant: hi there'));
-  assert.ok(input.includes('User: bye'));
+  assert.deepEqual(body.input.map((item: { role: string; content: string }) => [item.role, item.content]), [
+    ['user', 'hello'], ['assistant', 'hi there'], ['user', 'bye'],
+  ]);
 });
 
 test('CodexLlm.chatWithTools sends tools in Responses API format', async () => {

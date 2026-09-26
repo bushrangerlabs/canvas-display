@@ -1,6 +1,6 @@
 [package]
 name = "canvas-display-browser-linux"
-version = "0.1.0"
+version = "0.3.1"
 description = "Canvas Display kiosk client for Linux"
 authors = ["Canvas Display"]
 edition = "2021"

@@ -1,0 +1,24 @@
+[
+  { "id": "ha-light-on",      "category": "ha_control",   "prompt": "turn on the kitchen light",            "expectTool": "ha_call_service", "expectArgs": { "domain": "light", "service": "turn_on" } },
+  { "id": "ha-light-off",     "category": "ha_control",   "prompt": "turn off the bedroom light",           "expectTool": "ha_call_service", "expectArgs": { "domain": "light", "service": "turn_off" } },
+  { "id": "ha-temp",          "category": "ha_control",   "prompt": "what is the office temperature",       "expectTool": "ha_get_state",   "expectArgs": { "entity_id": "~office" } },
+  { "id": "ha-lock-door",     "category": "ha_control",   "prompt": "lock the front door",                 "expectTool": "ha_call_service", "expectArgs": { "domain": "~lock", "service": "~lock" } },
+
+  { "id": "yt-play",          "category": "media",        "prompt": "play despacito on youtube",           "expectTool": "media_play",     "expectArgs": { "query": "~despacito", "source": "youtube" } },
+  { "id": "yt-pause",         "category": "media",        "prompt": "pause the music",                     "expectTool": "media_control",  "expectArgs": { "action": "pause" } },
+  { "id": "yt-relax",         "category": "media",        "prompt": "play something relaxing",             "expectTool": "media_play",     "expectArgs": { "query": "*" } },
+
+  { "id": "dab-triple-j",     "category": "dab_radio",    "prompt": "play triple j on digital radio",      "expectTool": "dab_play_station", "expectArgs": { "station": "~triple j" } },
+  { "id": "dab-abc",          "category": "dab_radio",    "prompt": "tune to abc classic fm",              "expectTool": "dab_play_station", "expectArgs": { "station": "~abc" } },
+
+  { "id": "web-news",         "category": "web_search",   "prompt": "what is the latest news about the election", "expectTool": "web_search", "expectArgs": { "query": "~election" } },
+  { "id": "web-weather",      "category": "web_search",   "prompt": "what is the weather in melbourne today",     "expectTool": "web_search", "expectArgs": { "query": "~melbourne" } },
+  { "id": "web-pm",           "category": "web_search",   "prompt": "who is the prime minister of australia",     "expectTool": "web_search", "expectArgs": { "query": "*" } },
+  { "id": "wiki-lookup",      "category": "web_search",   "prompt": "look up einstein on wikipedia",               "expectTool": "wikipedia_lookup", "expectArgs": { "topic": "~einstein" } },
+
+  { "id": "gen-joke",         "category": "general",      "prompt": "tell me a joke",                       "expectTool": null },
+  { "id": "gen-hello",        "category": "general",      "prompt": "hello, how are you?",                  "expectTool": null },
+
+  { "id": "timer",            "category": "scene_timer",  "prompt": "set a timer for 10 minutes",           "expectTool": "set_timer",      "expectArgs": { "duration_minutes": 10 } },
+  { "id": "scene-movie",      "category": "scene_timer",  "prompt": "activate the movie scene",             "expectTool": "scene_activate", "expectArgs": { "scene": "~movie" } }
+]

@@ -20,6 +20,36 @@ use crate::session::EdgeSession;
 
 use super::boundary::{TransportCommand, TransportEvent};
 
+fn handle_device_action(session: &EdgeSession, text: &str) -> Option<String> {
+    let message: serde_json::Value = serde_json::from_str(text).ok()?;
+    if message.get("type")?.as_str()? != "device.action" { return None; }
+    let request_id = message.get("request_id").and_then(|value| value.as_str()).unwrap_or_default();
+    let action = message.get("action").and_then(|value| value.as_str()).unwrap_or_default();
+    let response = match action {
+        "app.show" | "app.hide" | "app.restart" if session.local_action_server().is_some() => {
+            let (base_url, token) = session.local_action_server().expect("checked above");
+            let verb = action.trim_start_matches("app.");
+            let mut request = reqwest::blocking::Client::new()
+                .post(format!("{}/api/app/{verb}", base_url.trim_end_matches('/')))
+                .json(&serde_json::json!({}));
+            if let Some(token) = token { request = request.bearer_auth(token); }
+            match request.send() {
+                Ok(result) if result.status().is_success() => serde_json::json!({"ok": true, "action": action}),
+                Ok(result) => serde_json::json!({"ok": false, "error": format!("local action returned HTTP {}", result.status())}),
+                Err(error) => serde_json::json!({"ok": false, "error": error.to_string()}),
+            }
+        }
+        "app.show" | "app.hide" | "app.restart" =>
+            serde_json::json!({"ok": false, "error": "local action server is not configured"}),
+        _ => serde_json::json!({"ok": false, "error": "unsupported_action", "action": action}),
+    };
+    Some(serde_json::json!({
+        "type": "device.action_result",
+        "request_id": request_id,
+        "payload": response,
+    }).to_string())
+}
+
 /// Why a connection ended. This distinction is the crux of ADR 0009's resume-cursor correctness
 /// requirement: only [`DisconnectReason::CleanClose`] is a point at which the caller may safely
 /// treat `EdgeSession`'s current resume-cursor fields as reflecting what Core actually observed.
@@ -165,6 +195,12 @@ where
             frame = ws.next() => {
                 match frame {
                     Some(Ok(Message::Text(text))) => {
+                        if let Some(response) = handle_device_action(session, &text) {
+                            if let Err(error) = ws.send(Message::Text(response)).await {
+                                break 'conn DisconnectReason::IoError(error.to_string());
+                            }
+                            continue;
+                        }
                         match serde_json::from_str::<DeviceV1ControlMessage>(&text) {
                             Ok(message) => {
                                 let _ = events

@@ -1,0 +1,42 @@
+language: lt
+lists:
+  color_temperature_names:
+    values:
+      - in: (žvakės šviesa|žvakė|žvakės)
+        out: 1900
+      - in: (šilta balta|šiltai balta)
+        out: 2700
+      - in: (šalta balta|šaltai balta)
+        out: 4000
+      - in: dienos šviesa
+        out: 6500
+  color:
+    values:
+      - in: balt(a|ą|om)
+        out: white
+      - in: juod(a|ą|om)
+        out: black
+      - in: raudon(a|ą|om)
+        out: red
+      - in: oranžin(ė|ę|e|ėm)
+        out: orange
+      - in: gelton(a|ą|om)
+        out: yellow
+      - in: žali(a|ą|om)
+        out: green
+      - in: mėlyn(a|ą|om)
+        out: blue
+      - in: violetin(ė|ę|e|ėm)
+        out: purple
+      - in: rud(a|ą|om)
+        out: brown
+      - in: rožin(ė|ę|e|ėm)
+        out: pink
+      - in: pilk(a|ą|om)
+        out: gray
+  brightness_level:
+    values:
+      - in: (maksimum(o|ą)|piln(os|ą)|šviesiaus(ios|ą)|ryškiausi(ą|os))
+        out: 100
+      - in: (minimum(o|ą)|silpniausi(os|ą|ą|os)|tamsiaus(ios|ą))
+        out: 1

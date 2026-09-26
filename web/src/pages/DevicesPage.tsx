@@ -14,12 +14,16 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/PersonAdd';
 import RevokeIcon from '@mui/icons-material/Block';
+import DeleteIcon from '@mui/icons-material/Delete';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import MicIcon from '@mui/icons-material/Mic';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import SettingsVoiceIcon from '@mui/icons-material/SettingsVoice';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { coreApi, ApiError, type DeviceRow, type InvitationRecord, type AuthorityStatusSummary, type AuthorityMode } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, BoolChip, fmtRelative } from '../components/ui';
 
@@ -105,6 +109,17 @@ export default function DevicesPage() {
     if (!confirm(`Revoke device "${device.name}"? It will need to re-pair to reconnect.`)) return;
     try {
       await coreApi.revokeDevice(device.id);
+      load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function remove(device: DeviceRow) {
+    if (!confirm(`Permanently remove device "${device.name}"? Its registry data, credentials, and assignments will be deleted.`)) return;
+    try {
+      await coreApi.deleteDevice(device.id);
+      if (selected?.id === device.id) setSelected(null);
       load();
     } catch (err) {
       setError((err as Error).message);
@@ -212,6 +227,11 @@ export default function DevicesPage() {
                             <Tooltip title="Revoke">
                               <IconButton size="small" onClick={() => revoke(d)} disabled={!!d.revoked_at}>
                                 <RevokeIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Remove permanently">
+                              <IconButton size="small" color="error" onClick={() => remove(d)}>
+                                <DeleteIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                           </TableCell>
@@ -361,6 +381,7 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
   const [testResult, setTestResult] = useState<Record<string, any> | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [uploadingCue, setUploadingCue] = useState<string | null>(null);
+  const [appAction, setAppAction] = useState<string | null>(null);
   const [acceptance, setAcceptance] = useState<Record<string, AcceptanceResult>>({});
   const [acceptanceLoadedDevice, setAcceptanceLoadedDevice] = useState<string | null>(null);
   const [voiceMetrics, setVoiceMetrics] = useState<{
@@ -439,6 +460,20 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
       ?? audioDevices.wake_words[0];
     setVoiceConfig(config => ({ ...config, wake_word: fallback.id }));
   }, [audioDevices.wake_words, voiceConfig.wake_word]);
+
+  async function runAppAction(action: 'show' | 'hide' | 'restart') {
+    if (!device) return;
+    setAppAction(action); setError(null); setTestResult(null);
+    try {
+      await coreApi.deviceAppAction(device.id, action);
+      setTestResult({ note: `App ${action} requested for "${device.name}".` });
+      onRefresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAppAction(null);
+    }
+  }
 
   async function saveAudio() {
     if (!device) return;
@@ -706,6 +741,25 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
                   />
                   <Button size="small" variant="contained" onClick={saveDisplay} disabled={savingDisplay}>
                     {savingDisplay ? <CircularProgress size={14} /> : 'Save'}
+                  </Button>
+                </Stack>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2">Application control</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Remotely show, hide or restart this device&apos;s edge app.
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="contained" color="success" startIcon={<VisibilityIcon />}
+                    onClick={() => runAppAction('show')} disabled={!!appAction}>
+                    {appAction === 'show' ? <CircularProgress size={16} /> : 'Show app'}
+                  </Button>
+                  <Button size="small" variant="outlined" startIcon={<VisibilityOffIcon />}
+                    onClick={() => runAppAction('hide')} disabled={!!appAction}>
+                    {appAction === 'hide' ? <CircularProgress size={14} /> : 'Hide app'}
+                  </Button>
+                  <Button size="small" variant="outlined" startIcon={<RestartAltIcon />}
+                    onClick={() => runAppAction('restart')} disabled={!!appAction}>
+                    {appAction === 'restart' ? <CircularProgress size={14} /> : 'Restart app'}
                   </Button>
                 </Stack>
               </Stack>

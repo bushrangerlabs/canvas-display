@@ -26,6 +26,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
       'duckduckgo_search>=7.0.0' \
       'wikipedia-api>=0.7.1'
 
+RUN pip3 install --no-cache-dir --break-system-packages 'hassil==3.12.0' 'PyYAML==6.0.3'
+
 WORKDIR /app
 
 COPY core/package*.json ./
@@ -44,6 +46,10 @@ COPY core/bowling_mcp.py ./bowling_mcp.py
 
 # Web search + Wikipedia MCP — DuckDuckGo search and Wikipedia lookups.
 COPY core/web_search_stdio.py ./web_search_stdio.py
+
+# Pinned English OHF-Voice grammar subset. See vendor/ohf-intents/NOTICE.
+COPY core/vendor/ohf-intents ./vendor/ohf-intents
+COPY core/ha_intents_stdio.py ./ha_intents_stdio.py
 
 # Build is done locally — the dist/ directory is copied from the host.
 # This avoids TypeScript compilation issues in the Docker build environment.

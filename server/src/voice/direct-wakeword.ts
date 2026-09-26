@@ -18,7 +18,7 @@ import {
 } from '../routes/voice-state.js';
 
 /** Read Core bridge URL + token from server_settings DB, falling back to env vars. */
-function getCoreBridgeConfig(): { baseUrl: string; token: string } {
+export function getCoreBridgeConfig(): { baseUrl: string; token: string } {
   try {
     const db = getDb();
     const dbUrl = (db.prepare('SELECT value FROM server_settings WHERE key = ?').get('canvas_core_url') as { value: string } | undefined)?.value ?? '';
@@ -177,19 +177,31 @@ function playCueSound(soundPath: string): Promise<void> {
   if (!soundPath) return Promise.resolve();
   stopWakeAckPlayback();
   return new Promise(resolve => {
+    let settled = false;
+    let watchdog: NodeJS.Timeout | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (watchdog) clearTimeout(watchdog);
+      wakeAckProc = null;
+      resolve();
+    };
     try {
     wakeAckProc = spawn('mpv', buildMpvAudioArgs(100, soundPath), {
       stdio: 'ignore',
       detached: false,
     });
-    wakeAckProc.on('close', () => {
-      wakeAckProc = null;
-      resolve();
-    });
-    wakeAckProc.on('error', () => resolve());
+    const cueProc = wakeAckProc;
+    wakeAckProc.once('close', finish);
+    wakeAckProc.once('error', finish);
+    watchdog = setTimeout(() => {
+      console.warn('[wakeword:direct] Voice cue playback timed out');
+      try { cueProc.kill('SIGKILL'); } catch { /* ignore */ }
+      finish();
+    }, 5_000);
   } catch (err) {
       console.warn('[wakeword:direct] Failed to play voice cue:', (err as Error).message);
-      resolve();
+      finish();
     }
   });
 }
@@ -262,9 +274,11 @@ function playTtsAudioBuffer(audio: Buffer): Promise<void> {
   return new Promise(resolve => {
     let settled = false;
     let playbackProc: ReturnType<typeof spawn> | null = null;
+    let watchdog: NodeJS.Timeout | null = null;
     const finish = () => {
       if (settled) return;
       settled = true;
+      if (watchdog) clearTimeout(watchdog);
       if (ttsProc === playbackProc) {
         ttsProc = null;
       }
@@ -291,6 +305,15 @@ function playTtsAudioBuffer(audio: Buffer): Promise<void> {
         console.warn('[wakeword:direct] Failed to play TTS audio:', err.message);
         finish();
       });
+      // mpv normally exits on drain. This watchdog guarantees a wedged audio
+      // backend cannot hold the voice state machine in processing forever.
+      const bytesPerSecond = 22_050 * 2;
+      const estimatedMs = Math.max(1_000, Math.round(audio.length / bytesPerSecond * 1_000));
+      watchdog = setTimeout(() => {
+        console.warn('[wakeword:direct] TTS playback timed out; returning to wake-word listening');
+        try { playbackProc?.kill('SIGKILL'); } catch { /* ignore */ }
+        finish();
+      }, Math.min(120_000, estimatedMs + 8_000));
     } catch (err) {
       console.warn('[wakeword:direct] Failed to play TTS audio:', (err as Error).message);
       finish();
@@ -776,9 +799,13 @@ function attachMicAndDetector(): void {
       }
       return;
     }
-    // Do not feed speaker output back into wake-word detection. Detection
-    // resumes as soon as response playback and its short acoustic tail end.
-    if (processing) return;
+    // Keep the model current during response playback, while suppressing its
+    // own detections. Restarting after the turn discards speaker audio queued
+    // in the subprocess and gives the next real wake word a clean model state.
+    if (processing) {
+      if (ttsPlaying) detector?.feed(chunk);
+      return;
+    }
     if (Date.now() < ignoreDetectionsUntil) return;
     detector?.feed(chunk);
   });

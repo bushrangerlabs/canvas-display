@@ -1,0 +1,42 @@
+language: da
+lists:
+  brightness_level:
+    values:
+      - in: (højest[e]|maksimal[e]|maksimum|max)
+        out: 100
+      - in: (lavest[e]|mindst[e]|minimal[e]|minimum)
+        out: 1
+  color_temperature_names:
+    values:
+      - in: (levende lys|stearinlys)
+        out: 1900
+      - in: varm[t] hvid[t]
+        out: 2700
+      - in: kold[t] hvid[t]
+        out: 4000
+      - in: dagslys
+        out: 6500
+  color:
+    values:
+      - in: hvid[t]
+        out: white
+      - in: sort
+        out: black
+      - in: rød[t]
+        out: red
+      - in: orange
+        out: orange
+      - in: gul[t]
+        out: yellow
+      - in: grøn[t]
+        out: green
+      - in: blå[t]
+        out: blue
+      - in: lilla
+        out: purple
+      - in: brun[t]
+        out: brown
+      - in: lyserød[t]
+        out: pink
+      - in: turkis
+        out: turquoise

@@ -11,6 +11,8 @@ import { useVisibility } from '../../hooks/useVisibility';
 import { useWidget } from '../hooks/useWidget';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 export const EnergyMonitorWidgetMetadata: WidgetMetadata = {
   name: 'Energy Monitor',
@@ -126,16 +128,19 @@ const EnergyMonitorWidget: React.FC<WidgetProps> = ({ config }) => {
   const batteryCharging = batteryW > 0;
   const nodeSize = Math.min(70, Math.floor((width - 80) / 3.5));
 
+  const universalStyle = useResolvedUniversalStyle(cfg.style);
+  const containerStyle = applyUniversalStyles(universalStyle, {
+    width, height, backgroundColor, borderRadius,
+    display: 'flex', flexDirection: 'column',
+    alignItems: 'center', justifyContent: 'center',
+    boxSizing: 'border-box', padding: 12,
+    gap: 8, overflow: 'hidden',
+  });
+
   if (!isVisible) return null;
 
   return (
-    <div style={{
-      width, height, backgroundColor, borderRadius,
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      boxSizing: 'border-box', padding: 12,
-      gap: 8, overflow: 'hidden',
-    }}>
+    <div style={containerStyle}>
       {/* Title */}
       <div style={{ color: textColor, fontSize: 11, opacity: 0.5, letterSpacing: 1, textTransform: 'uppercase' }}>
         Energy Flow

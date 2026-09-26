@@ -9,6 +9,7 @@
  * `baseUrl` (defaults to the public OpenAI endpoint), `temperature`, `timeoutMs`.
  */
 import type { ChatMessage, ChatWithToolsResult, HealthStatus } from '../types.js';
+import { parseContentAsToolCalls } from '../llm.js';
 import type { FetchImpl, LlmProvider, ToolDefinition } from '../llm.js';
 
 export interface OpenAiLlmOptions {
@@ -84,7 +85,7 @@ export class OpenAiLlm implements LlmProvider {
     }
   }
 
-  async chatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult> {
+  async chatWithTools(messages: ChatMessage[], tools: ToolDefinition[], opts?: import('../llm.js').ChatWithToolsOptions): Promise<ChatWithToolsResult> {
     const url = `${this.baseUrl}/chat/completions`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -94,6 +95,13 @@ export class OpenAiLlm implements LlmProvider {
         messages,
         temperature: this.temperature,
       };
+      if (opts?.maxTokens != null) body.max_tokens = opts.maxTokens;
+      if (opts?.responseSchema) {
+        body.response_format = {
+          type: 'json_schema',
+          json_schema: { name: opts.responseSchema.name, strict: true, schema: opts.responseSchema.schema },
+        };
+      }
       if (tools.length > 0) body.tools = tools;
       const res = await this.fetchImpl(url, {
         method: 'POST',
@@ -124,16 +132,18 @@ export class OpenAiLlm implements LlmProvider {
       if (!message) {
         throw new Error('OpenAI response missing choices[0].message');
       }
+      const toolCalls = (message.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.function.name, arguments: tc.function.arguments },
+      }));
+      if (toolCalls.length === 0 && tools.length > 0 && message.content) {
+        const contentToolCalls = parseContentAsToolCalls(message.content);
+        if (contentToolCalls) return { content: '', toolCalls: contentToolCalls };
+      }
       return {
         content: message.content ?? '',
-        toolCalls: (message.tool_calls ?? []).map((tc) => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
+        toolCalls,
       };
     } finally {
       clearTimeout(timer);

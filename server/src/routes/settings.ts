@@ -28,6 +28,21 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { createHash } from 'crypto';
+
+/**
+ * Produce an `mpv --audio-device=<...>` value from a device identifier stored in
+ * Core's device audio_config. Those ids are bare PulseAudio/PipeWire sink names
+ * (e.g. `alsa_output....hdmi-stereo`); mpv's `--audio-device` rejects a bare name
+ * ("Audio output ... not found!") and needs an `<ao>/<device>` form, so we prefix
+ * `pipewire/` unless a prefix is already present. `default`/empty → null (leave mpv
+ * on its autoselected default sink).
+ */
+function mpvAudioDevice(device?: string | null): string | null {
+  const value = device?.trim();
+  if (!value || value === 'default') return null;
+  if (value.includes('/')) return value;
+  return `pipewire/${value}`;
+}
 import { config } from '../config';
 
 const execFileAsync = promisify(execFile);
@@ -288,9 +303,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       await writeFile(path, wav);
       try {
         const args = ['--no-video', '--really-quiet', `--volume=${Math.max(0, Math.min(100, Math.round(body.volume ?? 90)))}`];
-        if (body.speaker_device && body.speaker_device !== 'default') {
-          args.push(`--audio-device=${body.speaker_device}`);
-        }
+        const audioDevice = mpvAudioDevice(body.speaker_device);
+        if (audioDevice) args.push(`--audio-device=${audioDevice}`);
         args.push(path);
         const code = await new Promise<number | null>((resolve, reject) => {
           const child = spawn('mpv', args, { stdio: 'ignore' });
@@ -317,7 +331,8 @@ export async function settingsRoutes(app: FastifyInstance) {
     const volume = Math.max(0, Math.min(100, Math.round(body.volume ?? 90)));
     const url = 'http://127.0.0.1:3100/audio/wake-ack/confirm_tone.wav';
     const args = ['--no-video', '--really-quiet', `--volume=${volume}`];
-    if (device !== 'default') args.push(`--audio-device=${device}`);
+    const audioDevice = mpvAudioDevice(device);
+    if (audioDevice) args.push(`--audio-device=${audioDevice}`);
     args.push(url);
     const result = await new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
       const child = spawn('mpv', args, { stdio: ['ignore', 'ignore', 'pipe'] });

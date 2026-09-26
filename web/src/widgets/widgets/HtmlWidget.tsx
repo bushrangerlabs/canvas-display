@@ -86,12 +86,10 @@ const HtmlWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
     // later in the cascade — and !important beats non-important).
     const forceTransparent = isTransparentCssColor(backgroundColor)
       ? '<style>' +
-        'html, body, body *, #root, [id], [class] { ' +
+        'html, body, #root, body > :first-child { ' +
         'background: transparent !important; ' +
         'background-color: transparent !important; ' +
         'background-image: none !important; ' +
-        'border-color: transparent !important; ' +
-        'box-shadow: none !important; ' +
         '}' +
         '</style>'
       : '';

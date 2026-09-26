@@ -1,0 +1,40 @@
+language: sr
+lists:
+  color_temperature_names:
+    values:
+      - in: (светлост свеће|свећ(а|у))
+        out: 1900
+      - in: топл(а|у) бел(а|у)
+        out: 2700
+      - in: хладн(а|у) бел(а|у)
+        out: 4000
+      - in: дневн(а|у) светлост
+        out: 6500
+  color:
+    values:
+      - in: бел(а|о|у)
+        out: white
+      - in: црн(а|о|у)
+        out: black
+      - in: црвен(а|о|у)
+        out: red
+      - in: наранџаст(а|о|у)
+        out: orange
+      - in: жут(а|о|у)
+        out: yellow
+      - in: зелен(а|о|у)
+        out: green
+      - in: плав(а|о|у)
+        out: blue
+      - in: љубичаст(а|о|у)|лила
+        out: purple
+      - in: браон|смеђ(а|е|у)
+        out: brown
+      - in: ружичаст(а|о|у)|розе
+        out: pink
+  brightness_level:
+    values:
+      - in: (максимум|најјаче|највише|максималну|максимално)
+        out: 100
+      - in: (минимум|најслабије|најниже|минималну|минимално)
+        out: 1

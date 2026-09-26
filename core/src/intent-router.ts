@@ -456,10 +456,10 @@ export function routeIntent(transcript: string): IntentResult {
     const station = dabMatch[1].replace(/\b(?:on|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
     if (station) {
       return {
-        intent: 'media_play',
+        intent: 'dab_play',
         confidence: 0.95,
         entities: [],
-        tool_calls: [{ tool: 'media.play', arguments: { query: station, source: 'music_assistant' } }],
+        tool_calls: [{ tool: 'dab.play', arguments: { station } }],
         clarification_needed: false,
         response: `Tuning to ${station} on digital radio.`,
         matched_pattern: 'dab_play_station',

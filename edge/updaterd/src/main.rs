@@ -229,9 +229,7 @@ fn run_configured_rollout(
         );
         return Ok(());
     }
-    let installed_security_counter = active
-        .and_then(|slot| slot.security_counter)
-        .unwrap_or(0);
+    let installed_security_counter = active.and_then(|slot| slot.security_counter).unwrap_or(0);
     let protocol_version = configured_u64(PROTOCOL_VERSION_ENV, 1) as u32;
     let schema_version = configured_u64(SCHEMA_VERSION_ENV, 1);
 

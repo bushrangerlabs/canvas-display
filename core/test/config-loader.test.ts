@@ -19,7 +19,6 @@ import {
 import { OpenAiCompatibleLlm } from '../src/providers/llm.js';
 import { WhisperTranscription } from '../src/providers/asr.js';
 import { PiperSpeech } from '../src/providers/tts.js';
-import { OpenAiLlm } from '../src/providers/cloud/openai.js';
 import { OpenRouterLlm } from '../src/providers/cloud/openrouter.js';
 import { AnthropicLlm } from '../src/providers/cloud/anthropic.js';
 import { GeminiLlm } from '../src/providers/cloud/gemini.js';
@@ -149,9 +148,9 @@ test('loadProvidersFromEnv: advanced mode takes precedence over simple mode', ()
   assert.equal(result.providers[0].id, 'cloud');
 });
 
-test('buildProviderInstance: builds OpenAiLlm for kind=openai', () => {
+test('buildProviderInstance: builds Responses API adapter for kind=openai', () => {
   const instance = buildProviderInstance('llm', 'openai', { apiKey: 'sk-x', model: 'gpt-4o' }, { fetchImpl: noopFetch });
-  assert.ok(instance instanceof OpenAiLlm);
+  assert.ok(instance instanceof CodexLlm);
 });
 
 test('buildProviderInstance: builds OpenRouterLlm for kind=openrouter', () => {

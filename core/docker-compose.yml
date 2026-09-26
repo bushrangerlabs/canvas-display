@@ -5,7 +5,8 @@
 # service in this Compose stack — Core connects to the external one via `host.docker.internal`.
 #
 # Usage:
-#   cd core && cp .env.example .env && docker compose up --build
+#   Set CANVAS_CORE_TLS_DIR to an absolute external directory in core/.env first.
+#   See docs/CORE_TLS.md; then run docker compose up --build from core/.
 
 name: canvas-core
 
@@ -62,10 +63,25 @@ services:
       - '${CANVAS_CORE_PORT:-3100}:443'
     volumes:
       - './nginx.conf:/etc/nginx/nginx.conf:ro'
-      - './tls/server.crt:/etc/nginx/tls/server.crt:ro'
-      - './tls/server.key:/etc/nginx/tls/server.key:ro'
-      - './tls/rsa-server.crt:/etc/nginx/tls/rsa-server.crt:ro'
-      - './tls/rsa-server.key:/etc/nginx/tls/rsa-server.key:ro'
+      # Mount only runtime material, never the generation directory or ca.key.
+      - type: bind
+        source: '${CANVAS_CORE_TLS_DIR:?Set CANVAS_CORE_TLS_DIR to an absolute external TLS directory}/server.crt'
+        target: /etc/nginx/tls/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: '${CANVAS_CORE_TLS_DIR:?Set CANVAS_CORE_TLS_DIR to an absolute external TLS directory}/server.key'
+        target: /etc/nginx/tls/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: '${CANVAS_CORE_TLS_DIR:?Set CANVAS_CORE_TLS_DIR to an absolute external TLS directory}/ca.crt'
+        target: /etc/nginx/tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
       - './releases:/srv/releases:ro'
 
 volumes:

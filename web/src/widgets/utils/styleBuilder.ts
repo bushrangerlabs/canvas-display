@@ -118,6 +118,7 @@ export function applyUniversalStyles(
     backgroundSize,
     backgroundPosition,
     backgroundRepeat,
+    borderVisible,
     borderColor,
     borderWidth,
     borderRadius,
@@ -135,9 +136,14 @@ export function applyUniversalStyles(
   if (zIndex !== undefined) universalCSS.zIndex = zIndex;
   if (rotation !== undefined) universalCSS.transform = `rotate(${rotation}deg)`;
 
-  // Border - Apply first so background can reference it
-  if (borderColor) universalCSS.borderColor = borderColor;
-  if (borderWidth) universalCSS.borderWidth = buildBorderWidth(borderWidth);
+  // Border - Apply first so background can reference it. borderVisible === false hides the
+  // border entirely regardless of configured color/width (a quick on/off toggle for the Inspector).
+  if (borderVisible !== false) {
+    if (borderColor) universalCSS.borderColor = borderColor;
+    if (borderWidth) universalCSS.borderWidth = buildBorderWidth(borderWidth);
+  } else {
+    universalCSS.borderWidth = 0;
+  }
   if (borderRadius) universalCSS.borderRadius = buildBorderRadius(borderRadius);
   if (borderStyle) universalCSS.borderStyle = borderStyle;
 
@@ -204,7 +210,7 @@ export function applyUniversalStyles(
 
   // Ensure background stays inside border area (not under it)
   // padding-box = background stops at inner edge of border
-  const hasBorder = borderWidth || borderStyle || widgetStyles.border;
+  const hasBorder = borderVisible !== false && (borderWidth || borderStyle || widgetStyles.border);
   const hasAnyBackground = overlayColor || finalBackgroundColor || finalBackgroundImage;
   if (hasAnyBackground && hasBorder) {
     universalCSS.backgroundClip = 'padding-box';

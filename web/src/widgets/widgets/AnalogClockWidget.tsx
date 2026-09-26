@@ -9,6 +9,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 // ─── Tick mark helpers ──────────────────────────────────────────────────────
 
@@ -549,8 +551,11 @@ const AnalogClockWidget: React.FC<WidgetProps> = ({ config }) => {
   const shadowTransform = (scale: number) =>
     `translate(${shadowOffsetX * scale}, ${shadowOffsetY * scale})`;
 
+  const universalStyle = useResolvedUniversalStyle(config.config.style);
+  const finalStyle = applyUniversalStyles(universalStyle, { width: '100%', height: '100%', overflow: 'hidden', position: 'relative', boxSizing: 'border-box' });
+
   return (
-    <div style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'relative', boxSizing: 'border-box' }}>
+    <div style={finalStyle}>
       <svg
         viewBox="0 0 200 200"
         width="100%"

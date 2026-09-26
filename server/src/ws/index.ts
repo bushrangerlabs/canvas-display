@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
 import { getDb } from '../db/index';
 import { publishDeviceState } from '../mqtt/index';
+import { randomUUID } from 'node:crypto';
 
 export type ClientType = 'browser' | 'editor' | 'api';
 
@@ -65,7 +66,23 @@ interface ConnectedClient {
 }
 
 const clients = new Map<WebSocket, ConnectedClient>();
+const pendingRenderRequests = new Map<string, {
+  resolve: (result: RenderResult) => void;
+  timer: NodeJS.Timeout;
+}>();
+const pendingLocalActions = new Map<string, {
+  resolve: (result: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
 let wss: WebSocketServer;
+
+export interface RenderResult {
+  ok: boolean;
+  page_id: string;
+  phase: 'rendered' | 'failed';
+  error?: string;
+}
 
 export function initWss(server: any): WebSocketServer {
   wss = new WebSocketServer({ server, path: '/ws' });
@@ -170,6 +187,32 @@ function handleMessage(ws: WebSocket, msg: any): void {
       break;
     }
 
+    case 'render_result': {
+      const requestId = typeof msg.request_id === 'string' ? msg.request_id : '';
+      const waiting = pendingRenderRequests.get(requestId);
+      if (!waiting) break;
+      clearTimeout(waiting.timer);
+      pendingRenderRequests.delete(requestId);
+      waiting.resolve({
+        ok: msg.ok === true,
+        page_id: String(msg.page_id ?? ''),
+        phase: msg.ok === true ? 'rendered' : 'failed',
+        ...(typeof msg.error === 'string' ? { error: msg.error } : {}),
+      });
+      break;
+    }
+
+    case 'local_action_result': {
+      const requestId = typeof msg.request_id === 'string' ? msg.request_id : '';
+      const waiting = pendingLocalActions.get(requestId);
+      if (!waiting) break;
+      clearTimeout(waiting.timer);
+      pendingLocalActions.delete(requestId);
+      if (msg.ok === true) waiting.resolve((msg.result as Record<string, unknown>) ?? {});
+      else waiting.reject(new Error(typeof msg.error === 'string' ? msg.error : 'kiosk action failed'));
+      break;
+    }
+
     default:
       console.warn(`[ws] Unknown message type: ${msg.type}`);
   }
@@ -182,6 +225,46 @@ export function send(ws: WebSocket, msg: object): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
+}
+
+export function requestPageRender(
+  pageId: string,
+  pageData: Record<string, unknown>,
+  timeoutMs = 75_000,
+): Promise<RenderResult> {
+  const browserClients = [...clients.values()].filter(
+    client => client.clientType === 'browser' && client.ws.readyState === WebSocket.OPEN,
+  );
+  if (browserClients.length === 0) {
+    return Promise.reject(new Error('no kiosk renderer is connected'));
+  }
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRenderRequests.delete(requestId);
+      reject(new Error(`renderer did not finish page ${pageId} within ${timeoutMs}ms`));
+    }, timeoutMs);
+    pendingRenderRequests.set(requestId, { resolve, timer });
+    for (const client of browserClients) {
+      send(client.ws, { type: 'load_page', request_id: requestId, page_id: pageId, page_data: pageData });
+    }
+  });
+}
+
+export function requestLocalAction(action: 'show' | 'hide', timeoutMs = 10_000): Promise<Record<string, unknown>> {
+  const browser = [...clients.values()].find(
+    client => client.clientType === 'browser' && client.ws.readyState === WebSocket.OPEN,
+  );
+  if (!browser) return Promise.reject(new Error('no kiosk renderer is connected'));
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingLocalActions.delete(requestId);
+      reject(new Error(`kiosk did not complete app.${action} within ${timeoutMs}ms`));
+    }, timeoutMs);
+    pendingLocalActions.set(requestId, { resolve, reject, timer });
+    send(browser.ws, { type: 'local_action', request_id: requestId, action });
+  });
 }
 
 /** Broadcast to all clients of a given type, or to a specific device */

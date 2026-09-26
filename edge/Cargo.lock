@@ -164,7 +164,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "canvas-dev-gateway-harness"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "canvas-edge-agent",
  "ed25519-dalek",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-edge-agent"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "canvas-dev-gateway-harness",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-edge-agentd"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "canvas-edge-agent",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-edge-release-signer"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "canvas-edge-updater",
  "ed25519-dalek",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-edge-updater"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "canvas-edge-agent",
  "chrono",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-edge-updaterd"
-version = "0.0.0"
+version = "0.3.0"
 dependencies = [
  "canvas-edge-updater",
  "chrono",

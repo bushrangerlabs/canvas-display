@@ -1,0 +1,34 @@
+language: lb
+lists:
+  color_temperature_names:
+    values:
+      - in: (Käerzeliicht | Käerz)
+        out: 1900
+      - in: waarm wäiss
+        out: 2700
+      - in: kal wäiss
+        out: 4000
+      - in: Dagesliicht
+        out: 6500
+  color:
+    values:
+      - in: wäiss
+        out: white
+      - in: schwaarz
+        out: black
+      - in: rout
+        out: red
+      - in: orange
+        out: orange
+      - in: giel
+        out: yellow
+      - in: gréng
+        out: green
+      - in: blo
+        out: blue
+      - in: violett
+        out: purple
+      - in: mof
+        out: purple
+      - in: brong
+        out: brown

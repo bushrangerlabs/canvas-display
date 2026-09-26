@@ -92,6 +92,36 @@ export interface ProviderHealthResult {
   detail?: string;
 }
 
+export interface LlmCapabilities {
+  tools: boolean;
+  streaming: boolean;
+  structuredOutput: boolean;
+  vision: boolean;
+  local: boolean;
+}
+
+export interface LlmCandidate {
+  id: string;
+  kind: ProviderKind;
+  model?: string;
+  healthy: boolean | null;
+  capabilities: LlmCapabilities;
+  instance: LlmProvider;
+}
+
+const LLM_CAPABILITIES: Partial<Record<ProviderKind, LlmCapabilities>> = {
+  openai: { tools: true, streaming: false, structuredOutput: true, vision: true, local: false },
+  openrouter: { tools: true, streaming: false, structuredOutput: false, vision: true, local: false },
+  groq: { tools: true, streaming: false, structuredOutput: false, vision: false, local: false },
+  azure: { tools: true, streaming: false, structuredOutput: true, vision: false, local: false },
+  codex: { tools: true, streaming: false, structuredOutput: true, vision: true, local: false },
+  anthropic: { tools: false, streaming: false, structuredOutput: false, vision: false, local: false },
+  gemini: { tools: false, streaming: false, structuredOutput: false, vision: false, local: false },
+  'llama-cpp': { tools: true, streaming: true, structuredOutput: false, vision: false, local: true },
+  ollama: { tools: true, streaming: true, structuredOutput: false, vision: false, local: true },
+  vllm: { tools: true, streaming: true, structuredOutput: false, vision: false, local: true },
+};
+
 export interface AiProviderRegistryOptions {
   /** Initial set of providers (already constructed). */
   providers?: Array<{
@@ -213,6 +243,49 @@ export class AiProviderRegistry {
     return p?.type === 'llm' ? (p.instance as LlmProvider) : undefined;
   }
 
+  /** Ordered candidates for runtime failover: assigned provider first, then
+   * healthy/unprobed compatible providers, with known-unhealthy providers last. */
+  getLlmCandidates(
+    task: 'intent_routing' | 'conversation' | 'vision' | 'embedding',
+    opts: { requireTools?: boolean; localOnly?: boolean } = {},
+  ): LlmCandidate[] {
+    const assignedId = this.assignments[task];
+    const candidates = Array.from(this.providers.values())
+      .filter((provider) => provider.type === 'llm')
+      .map((provider) => ({
+        id: provider.id,
+        kind: provider.kind,
+        model: typeof provider.config.model === 'string' ? provider.config.model : undefined,
+        healthy: provider.healthy,
+        capabilities: LLM_CAPABILITIES[provider.kind] ?? {
+          tools: false, streaming: false, structuredOutput: false, vision: false, local: false,
+        },
+        instance: provider.instance as LlmProvider,
+      }))
+      .filter((candidate) => !opts.requireTools || candidate.capabilities.tools)
+      .filter((candidate) => !opts.localOnly || candidate.capabilities.local)
+      .filter((candidate) => task !== 'vision' || candidate.capabilities.vision);
+    return candidates.sort((a, b) => {
+      const assignedDelta = Number(b.id === assignedId) - Number(a.id === assignedId);
+      if (assignedDelta !== 0) return assignedDelta;
+      return Number(a.healthy === false) - Number(b.healthy === false);
+    });
+  }
+
+  markProviderUnhealthy(id: string, detail: string): void {
+    const provider = this.providers.get(id);
+    if (!provider) return;
+    provider.healthy = false;
+    provider.healthDetail = detail;
+  }
+
+  markProviderHealthy(id: string): void {
+    const provider = this.providers.get(id);
+    if (!provider) return;
+    provider.healthy = true;
+    provider.healthDetail = undefined;
+  }
+
   /** Returns the ASR provider for the 'asr' task. */
   getAsrProvider(): TranscriptionProvider | undefined {
     const p = this.getProvider('asr');
@@ -236,6 +309,13 @@ export class AiProviderRegistry {
       throw new Error(
         `Cannot assign task '${task}' (expects ${wantType}) to provider '${providerId}' (type ${p.type})`,
       );
+    }
+    const capabilities = LLM_CAPABILITIES[p.kind];
+    if (task === 'conversation' && p.type === 'llm' && !capabilities?.tools) {
+      throw new Error(`Cannot assign provider '${providerId}' to conversation: ${p.kind} adapter does not support tool calls`);
+    }
+    if (task === 'vision' && p.type === 'llm' && !capabilities?.vision) {
+      throw new Error(`Cannot assign provider '${providerId}' to vision: ${p.kind} adapter does not support image input`);
     }
     this.assignments[task] = providerId;
   }

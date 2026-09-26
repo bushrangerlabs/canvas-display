@@ -9,6 +9,8 @@ import type { WidgetConfig, WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
 import { WIDGET_REGISTRY } from '../registry/widgetRegistry';
 import { useContainerSelection } from '../contexts/ContainerSelectionContext';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,13 +136,14 @@ const ScrollableContainerWidget: React.FC<WidgetProps> = ({ config, isEditMode }
   const overflowY: React.CSSProperties['overflowY'] =
     (scrollDirection === 'vertical' || scrollDirection === 'both') ? 'auto' : 'hidden';
 
-  const outerStyle: React.CSSProperties = {
+  const universalStyle = useResolvedUniversalStyle(config.config.style);
+  const outerStyle: React.CSSProperties = applyUniversalStyles(universalStyle, {
     width: '100%',
     height: '100%',
     overflowX,
     overflowY,
     boxSizing: 'border-box',
-  };
+  });
 
   const gridStyle: React.CSSProperties = {
     display: 'grid',

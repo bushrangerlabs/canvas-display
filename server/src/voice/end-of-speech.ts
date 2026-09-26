@@ -31,7 +31,7 @@ export class EndOfSpeechDetector {
     this.sampleRate = options.sampleRate ?? 16_000;
     this.minimumCaptureMs = options.minimumCaptureMs ?? 700;
     this.trailingSilenceMs = options.trailingSilenceMs ?? 650;
-    this.noSpeechTimeoutMs = options.noSpeechTimeoutMs ?? 3_500;
+    this.noSpeechTimeoutMs = options.noSpeechTimeoutMs ?? 1_200;
     this.maximumCaptureMs = options.maximumCaptureMs ?? 8_000;
     this.minimumSpeechMs = options.minimumSpeechMs ?? 240;
     this.calibrationMs = options.calibrationMs ?? 320;

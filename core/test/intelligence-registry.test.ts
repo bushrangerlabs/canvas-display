@@ -12,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createIntelligence } from '../src/intelligence.js';
+import { IntentRouter } from '../src/intent-router.js';
 import { AiProviderRegistry } from '../src/providers/registry.js';
 import { OpenAiCompatibleLlm, DegradedLlm } from '../src/providers/llm.js';
 import { WhisperTranscription } from '../src/providers/asr.js';
@@ -48,7 +49,7 @@ test('createIntelligence: registry is exposed and used for conversation', async 
     ],
     assignments: { conversation: 'cloud-llm', intent_routing: 'local-llm' },
   });
-  const intel = createIntelligence(baseConfig, { registry, loadRegistryFromEnv: false });
+  const intel = createIntelligence(baseConfig, { registry, loadRegistryFromEnv: false, voiceLlmPolicy: 'cloud-allowed' });
   assert.ok(intel.registry);
   assert.equal(intel.registry.size(), 2);
   assert.equal(intel.registry.isAdvancedMode(), true);
@@ -82,6 +83,21 @@ test('createIntelligence: intent router uses the intent_routing assignment', asy
   assert.equal(conversationProvider?.id, 'cloud-llm');
   const intentProvider = intel.registry?.getProvider('intent_routing');
   assert.equal(intentProvider?.id, 'local-llm');
+});
+
+test('IntentRouter resolves an updated routing provider for each request', async () => {
+  const local = recordingLlm('{"domain":"unknown","intent":"unknown","confidence":0}', 'local');
+  const cloud = recordingLlm('{"domain":"unknown","intent":"unknown","confidence":0}', 'cloud');
+  let provider = local.llm;
+  const router = new IntentRouter({ llmResolver: () => provider });
+
+  await router.classify('Tell me something unusual');
+  assert.match(local.calledUrl(), /local/);
+  assert.equal(cloud.calledUrl(), '');
+
+  provider = cloud.llm;
+  await router.classify('Tell me something unusual');
+  assert.match(cloud.calledUrl(), /cloud/);
 });
 
 test('createIntelligence: registry with ASR + TTS providers wires them into the pipeline', async () => {
@@ -133,6 +149,27 @@ test('createIntelligence: explicit llm override takes precedence over registry',
   assert.equal(result.reply, 'override');
   assert.equal(overrideLlm.calledUrl(), 'http://override/v1/chat/completions');
   assert.equal(registryLlm.calledUrl(), '');
+});
+
+test('createIntelligence: conversation fails over to the next compatible provider', async () => {
+  const failing = recordingLlm('unused', 'failing');
+  failing.llm.chat = async () => { throw new Error('primary unavailable'); };
+  const backup = recordingLlm('backup reply', 'backup');
+  const registry = new AiProviderRegistry({
+    providers: [
+      { id: 'primary', type: 'llm', kind: 'llama-cpp', config: { model: 'local-primary' }, instance: failing.llm },
+      { id: 'backup', type: 'llm', kind: 'openrouter', config: { model: 'cloud-backup' }, instance: backup.llm },
+    ],
+    assignments: { conversation: 'primary' },
+  });
+  const intel = createIntelligence(baseConfig, {
+    registry,
+    loadRegistryFromEnv: false,
+    voiceLlmPolicy: 'cloud-allowed',
+  });
+  const result = await intel.runVoicePipeline({ transcript: 'hello', skipTts: true });
+  assert.equal(result.reply, 'backup reply');
+  assert.equal(registry.listProviders().find(provider => provider.id === 'primary')?.healthy, false);
 });
 
 test('createIntelligence: legacy path (no registry, no env) still works with degraded LLM', () => {

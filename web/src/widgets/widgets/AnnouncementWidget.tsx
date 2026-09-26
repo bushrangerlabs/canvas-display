@@ -2,6 +2,8 @@ import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { WidgetProps } from '../types/index';
 import type { WidgetMetadata } from '../types/metadata';
+import { applyUniversalStyles } from '../utils/styleBuilder';
+import { useResolvedUniversalStyle } from '../../hooks/useResolvedUniversalStyle';
 
 export const AnnouncementWidgetMetadata: WidgetMetadata = {
   name: 'Announcement',
@@ -89,14 +91,16 @@ export default function AnnouncementWidget({ config, isEditMode }: WidgetProps) 
     ? { title: 'Announcement', message: 'Alerts pushed by Core will appear here.', type: 'info' }
     : alert;
 
+  const universalStyle = useResolvedUniversalStyle(c.style);
+
   if (!displayAlert) {
     if (!showWhenEmpty && !isEditMode) return <div style={{ width, height }} />;
     return (
-      <div style={{
+      <div style={applyUniversalStyles(universalStyle, {
         width, height, display: 'flex', alignItems: 'center', justifyContent: 'center',
         border: '1px dashed rgba(255,255,255,0.2)', borderRadius: `${Number(c.borderRadius ?? 12)}px`,
         color: 'rgba(255,255,255,0.3)', fontSize: 13, fontFamily: 'system-ui',
-      }}>
+      })}>
         No active alert
       </div>
     );
@@ -112,7 +116,7 @@ export default function AnnouncementWidget({ config, isEditMode }: WidgetProps) 
   const bg = bgMap[displayAlert.type] ?? bgMap.info;
   const icon = displayAlert.icon ?? TYPE_ICONS[displayAlert.type] ?? 'ℹ️';
 
-  const style: CSSProperties = {
+  const style: CSSProperties = applyUniversalStyles(universalStyle, {
     width,
     height,
     background: bg,
@@ -125,7 +129,7 @@ export default function AnnouncementWidget({ config, isEditMode }: WidgetProps) 
     boxSizing: 'border-box',
     overflow: 'hidden',
     boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-  };
+  });
 
   return (
     <div style={style}>

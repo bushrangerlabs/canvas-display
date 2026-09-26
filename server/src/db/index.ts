@@ -259,4 +259,18 @@ const migrations: Array<{
       insert.run('device_id', nanoid12);
     },
   },
+  {
+    version: 7,
+    name: 'custom icons',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE custom_icons (
+          name       TEXT PRIMARY KEY,
+          svg        TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];

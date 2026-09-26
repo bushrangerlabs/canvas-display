@@ -34,13 +34,13 @@ test('allows a long utterance while speech remains active', () => {
 
 test('quiet input returns no-speech instead of waiting for maximum', () => {
   const detector = new EndOfSpeechDetector();
-  assert.equal(pushFor(detector, 30, 4_000), 'no-speech');
-  assert.ok(detector.durationMs >= 3_500 && detector.durationMs < 4_000);
+  assert.equal(pushFor(detector, 30, 1_600), 'no-speech');
+  assert.ok(detector.durationMs >= 1_200 && detector.durationMs < 1_600);
 });
 
 test('steady background noise adapts without becoming speech', () => {
   const detector = new EndOfSpeechDetector();
-  assert.equal(pushFor(detector, 1_500, 4_000), 'no-speech');
+  assert.equal(pushFor(detector, 1_500, 1_600), 'no-speech');
 });
 
 test('detects speech above a loud calibrated microphone noise floor', () => {

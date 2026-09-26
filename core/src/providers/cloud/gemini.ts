@@ -33,6 +33,11 @@ export interface GeminiLlmOptions {
 }
 
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const TRANSIENT_RETRY_STATUSES = new Set([429, 503]);
+
+function retryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
+}
 
 export class GeminiLlm implements LlmProvider {
   private readonly baseUrl: string;
@@ -74,32 +79,39 @@ export class GeminiLlm implements LlmProvider {
       body.systemInstruction = { parts: [{ text: systemText }] };
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const res = await this.fetchImpl(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Gemini ${res.status}: ${text.slice(0, 200)}`);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const res = await this.fetchImpl(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          if (TRANSIENT_RETRY_STATUSES.has(res.status) && attempt < 3) {
+            await retryDelay(attempt);
+            continue;
+          }
+          throw new Error(`Gemini ${res.status}: ${text.slice(0, 200)}`);
+        }
+        const json = (await res.json()) as {
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+          }>;
+        };
+        const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (typeof text !== 'string') {
+          throw new Error('Gemini response missing candidates[0].content.parts[0].text');
+        }
+        return text;
+      } finally {
+        clearTimeout(timer);
       }
-      const json = (await res.json()) as {
-        candidates?: Array<{
-          content?: { parts?: Array<{ text?: string }> };
-        }>;
-      };
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (typeof text !== 'string') {
-        throw new Error('Gemini response missing candidates[0].content.parts[0].text');
-      }
-      return text;
-    } finally {
-      clearTimeout(timer);
     }
+    throw new Error('Gemini retry attempts exhausted');
   }
 
   async chatWithTools(_messages: ChatMessage[], _tools: ToolDefinition[]): Promise<ChatWithToolsResult> {

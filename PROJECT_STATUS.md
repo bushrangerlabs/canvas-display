@@ -331,3 +331,52 @@ Decision: **neither SIP nor WebRTC** for this feature. The flow is record-then-p
 - **Automation node**: `action_broadcast_announce` (flow) — speaks a message on every display + media player via `broadcastAnnounce` (Core TTS → clip → fan-out).
 - **Deployed + verified**: Core health 200; the served bundle (`index-Cks1tiIN.js`) contains `Record broadcast` + `action_broadcast_announce`.
 - Remaining: an on-device acceptance pass (record from a real edge, confirm playback on the other edge + an HA/MA speaker).
+
+## Broadcast fan-out fix + DAB+ routing fix (2026-09-27, this session)
+
+### Broadcast fan-out reached 0 edges — root-caused and fixed
+
+Symptom: `POST /api/edge/broadcast` returned `{"edges":0,"ha":23}` even though the Pi agent was connected.
+
+Diagnosis (with temporary per-device logging in `broadcastFanOut`):
+- `gateway.connectedDeviceIds()` was **not** empty — it returned the Pi device. The earlier hypothesis was wrong.
+- The real failure was the device-side play call: the Pi kiosk relays `device_http /api/media/play` to its local Display server, which rejected the broadcast URL with **"Provided URL appears to be a webpage, not a direct audio stream"**.
+
+Root causes and fixes:
+1. **`server/src/routes/media.ts`** — `isLikelyAudioStreamUrl()` did not recognise the container formats Core's broadcast store serves. Added `wav|m4a|mp4|webm` to the extension regex so a recorded clip URL is never mistaken for a webpage.
+2. **`browser/linux/src/screens/KioskScreen.tsx`** — the kiosk's `/api/media/play` handler opened a floating WebView for *every* response and threw when the response had no top-level `url`. mpv-backed audio (`direct_audio` / `radio_browser` / `music_assistant`) returns `backend: 'mpv'` with no `url`, so the handler threw and the fan-out counted a failure. Now only the `youtube_iframe_api` backend opens a WebView; mpv-backed audio is accepted as-is.
+3. **Android** (`CoreEdgeClient.kt` + `MainActivity.kt`) — `media.play` previously always opened a WebView. It now passes the `source` through and plays `direct_audio` through a native `MediaPlayer` (no window), which is what a broadcast clip needs.
+
+### CRITICAL operational finding: nftables port redirect 3100 → 8099 on the Pi
+
+The Pi runs **two** Display servers: the kiosk-spawned one on `127.0.0.1:3100` and the system service `canvas-display-server.service` on `0.0.0.0:8099`. `canvas-port-redirect.service` installs an nftables `nat OUTPUT` rule:
+
+```
+ip daddr != 192.168.1.108 tcp dport 3100 redirect to :8099
+```
+
+So the kiosk's `fetch('http://127.0.0.1:3100/...')` is **redirected to the system service on 8099**. Updating only `/usr/bin/canvas-display-server` is not enough — `canvas-display-server.service` must be restarted too, or the old code keeps serving. This cost real debugging time; check it first for any "the sidecar change didn't take effect" symptom.
+
+### Verification (live)
+
+- Broadcast: `edges=2` (Pi + Android). Pi `mpv` played the clip; Android `MediaPlayer` fetched and played the 6 s clip natively (`setDataSource` → `onAudioDeviceUpdate` → played ~6 s).
+- DAB+: `play triple m on dab` → `dab.play` → SDR tuned `dab:triplem`; Pi `mpv` playing `http://192.168.1.108:8001/tuner1.mp3` (title "Triple M").
+- Dispatcharr: `play the news channel on dispatcharr` → Pi `mpv` playing the Dispatcharr proxy stream ("UK: SKY SPORT NEWS").
+- Voice broadcast arming: `broadcast` → "What do you want to broadcast?"; `announce dinner is ready` → "Announcing: dinner is ready".
+- Cloud-AI switch: `cloud_ai_enabled` / `cloud_ai_provider` are read from the `settings` table (env only as defaults); no rows set → disabled (correct default). The deployed bundle contains the Cloud AI settings UI.
+
+### DAB+ intent routing fix
+
+`core/src/intent-router.ts` matched DAB+ phrases but emitted `media.play` with `source: 'music_assistant'` instead of the `dab.play` SDR tool, so "play X on dab" never hit the SDR REST API. Fixed to emit `dab.play`; added `dab_play → dab.play` to `mapIntentToTool` and `{ station }` to `mapIntentSlotsToToolParams` in `core/src/intelligence.ts`, and added `dab_play`/`dispatcharr_play` to the no-TTS-over-playback list.
+
+### HA media_player per-device — MQTT discovery is impossible
+
+**Verified against the HA source**: `homeassistant/components/mqtt/` has **no `media_player.py`** — HA's MQTT integration does not support `media_player` at all (neither YAML nor discovery). The `homeassistant/media_player/canvas_<device>/config` discovery messages published by `MqttNavigationService` are retained on the broker but HA silently ignores them, which is why no `media_player.canvas_*` entities ever appeared (only the custom-component `media_player.canvas_ui_device` exists).
+
+Consequence: per-device HA media players must come from the **`canvas_display` custom component** (this repo), not MQTT. That requires deploying the component to the HA config dir, which this session could not reach (no SSH/Samba credentials for the HA host). The MQTT discovery publishing in `MqttNavigationService` is now dead weight and should be replaced by a Core API the component can poll.
+
+### Deployments this session
+
+- Pi: new `canvas-display-browser-linux` + `canvas-display-server` installed to `/usr/bin/` (backups `*.bak-20260927-broadcast`); `canvas-display-browser.service` **and** `canvas-display-server.service` restarted.
+- Core: rebuilt `core/dist`, rsync'd, `docker compose up -d --build canvas-core`.
+- Android: `app-debug.apk` installed on the tablet.

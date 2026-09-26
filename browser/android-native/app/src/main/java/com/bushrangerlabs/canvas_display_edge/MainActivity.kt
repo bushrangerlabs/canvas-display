@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -57,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var renderer: MultiPanelRenderer
     private lateinit var pageStore: EdgePageStore
     private var lastPage: EdgePage? = null
+    private var directAudioPlayer: MediaPlayer? = null
     private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var revertRunnable: Runnable? = null
 
@@ -246,7 +249,15 @@ class MainActivity : AppCompatActivity() {
                     { scene, complete -> renderScene(scene, complete) },
                     { text -> runOnUiThread { statusText(text) }; if (text == "online") refreshVoiceConfigAndMaybeStart() },
                     { refreshVoiceConfigAndMaybeStart() },
-                    { url -> runOnUiThread { renderer.showFloating(url, fullscreen = true) }; true },
+                    { url, source ->
+                        if (source == "direct_audio") {
+                            runOnUiThread { playDirectAudio(url) }
+                            true
+                        } else {
+                            runOnUiThread { renderer.showFloating(url, fullscreen = true) }
+                            true
+                        }
+                    },
                     { action -> controlMedia(action) },
                     { url, ms -> runOnUiThread { openSearchPage(url, ms) } },
                     { control -> runOnUiThread {
@@ -387,6 +398,42 @@ class MainActivity : AppCompatActivity() {
             completed.countDown()
         }
         return completed.await(2, TimeUnit.SECONDS) && applied
+    }
+
+    /** Play a direct audio URL (e.g. a Core broadcast clip) through the device speaker.
+     *  Unlike YouTube/WebView media, this uses a native [MediaPlayer] so a recorded
+     *  announcement plays without opening a window. */
+    private fun playDirectAudio(url: String) {
+        try {
+            directAudioPlayer?.release()
+        } catch (_: Throwable) {
+            // Ignore a player that is already torn down.
+        }
+        directAudioPlayer = null
+        try {
+            val player = MediaPlayer()
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            player.setDataSource(url)
+            player.setOnPreparedListener { it.start() }
+            player.setOnCompletionListener {
+                it.release()
+                if (directAudioPlayer === it) directAudioPlayer = null
+            }
+            player.setOnErrorListener { mp, _, _ ->
+                mp.release()
+                if (directAudioPlayer === mp) directAudioPlayer = null
+                true
+            }
+            player.prepareAsync()
+            directAudioPlayer = player
+        } catch (error: Throwable) {
+            android.util.Log.w("CanvasEdge", "direct audio playback failed: ${error.message}")
+        }
     }
 
     /** Remotely requested by Core (action=hide) — send the task to the background,

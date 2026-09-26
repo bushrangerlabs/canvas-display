@@ -63,6 +63,7 @@ export interface UniversalStyle {
   backgroundRepeat?: 'no-repeat' | 'repeat' | 'repeat-x' | 'repeat-y';
 
   // Border
+  borderVisible?: boolean; // Explicit on/off switch, independent of borderWidth/borderColor
   borderColor?: string;
   borderWidth?: BorderWidth;
   borderRadius?: BorderRadius;

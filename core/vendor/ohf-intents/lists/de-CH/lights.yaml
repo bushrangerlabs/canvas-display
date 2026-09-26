@@ -1,0 +1,38 @@
+language: de-CH
+lists:
+  color_temperature_names:
+    values:
+      - in: (Ch(ä|e)rze[liecht]|Kerze[nlicht])
+        out: 1900
+      - in: warm[ ](w(y|i|ei)ss)
+        out: 2700
+      - in: (ch|k)a(l|u)t[ ](w(y|i|ei)ss)
+        out: 4000
+      - in: (Tagesli[e]cht)
+        out: 6500
+  color:
+    values:
+      - in: wyss
+        out: white
+      - in: schwarz
+        out: black
+      - in: rot
+        out: red
+      - in: (orange|orangsch)
+        out: orange
+      - in: (gelb|gäub|gälb)
+        out: yellow
+      - in: grüen
+        out: green
+      - in: blau
+        out: blue
+      - in: violett
+        out: purple
+      - in: (brun|bruun)
+        out: brown
+  brightness_level:
+    values:
+      - in: (max[imal[e|i]|imum]|höchste|volle|gröss[t]i|hell[scht]i)
+        out: 100
+      - in: (min[imal[e|i]|imum]|nidrigschti|chl(y|i)nschti|geringschti)
+        out: 1

@@ -23,7 +23,6 @@ import type { SpeechProvider } from './tts.js';
 import { OpenAiCompatibleLlm, type FetchImpl } from './llm.js';
 import { WhisperTranscription } from './asr.js';
 import { PiperSpeech } from './tts.js';
-import { OpenAiLlm } from './cloud/openai.js';
 import { OpenRouterLlm } from './cloud/openrouter.js';
 import { AnthropicLlm } from './cloud/anthropic.js';
 import { GeminiLlm } from './cloud/gemini.js';
@@ -120,11 +119,12 @@ function buildLlmProvider(
 ) {
   switch (kind) {
     case 'openai':
-      return new OpenAiLlm({
+      return new CodexLlm({
         apiKey: String(config.apiKey ?? ''),
         model: String(config.model ?? 'gpt-4o-mini'),
         baseUrl: config.baseUrl ? String(config.baseUrl) : undefined,
         temperature: typeof config.temperature === 'number' ? config.temperature : undefined,
+        maxTokens: typeof config.maxTokens === 'number' ? config.maxTokens : undefined,
         timeoutMs: typeof config.timeoutMs === 'number' ? config.timeoutMs : undefined,
         fetchImpl,
         name: typeof config.name === 'string' ? config.name : undefined,
@@ -357,6 +357,7 @@ export function loadProvidersFromEnv(
   const piperUrl = env.CANVAS_CORE_PIPER_URL;
   const piperHost = env.CANVAS_CORE_PIPER_HOST;
   const piperPort = env.CANVAS_CORE_PIPER_PORT;
+  const piperVoice = env.CANVAS_CORE_PIPER_VOICE;
   if (piperUrl || piperHost) {
     const host = piperHost ?? hostFromUrl(piperUrl) ?? 'host.docker.internal';
     const port = piperPort ? Number(piperPort) : portFromUrl(piperUrl, 10200);
@@ -364,8 +365,8 @@ export function loadProvidersFromEnv(
       id: 'local-tts',
       type: 'tts',
       kind: 'piper',
-      config: { host, port },
-      instance: new PiperSpeech({ host, port, name: 'local-tts' }),
+      config: { host, port, ...(piperVoice ? { voice: piperVoice } : {}) },
+      instance: new PiperSpeech({ host, port, ...(piperVoice ? { voice: piperVoice } : {}), name: 'local-tts' }),
     });
   }
 

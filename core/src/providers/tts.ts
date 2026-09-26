@@ -27,6 +27,10 @@ export interface SpeechProvider {
   /** Synthesize text to audio bytes (raw PCM/WAV container from piper). */
   synthesize(text: string): Promise<Buffer>;
   healthCheck(): Promise<HealthStatus>;
+  /** Switch the active voice for subsequent synthesis (piper per-request voice). */
+  setVoice?(voice?: string): void;
+  /** List available voice names (Wyoming `describe`); undefined if unsupported. */
+  listVoices?(): Promise<string[]>;
 }
 
 /** A Wyoming event: a JSON header plus optional inline JSON data and binary payload. */
@@ -63,7 +67,7 @@ const DEFAULT_PORT = 10200;
 export class PiperSpeech implements SpeechProvider {
   private readonly host: string;
   private readonly port: number;
-  private readonly voice?: string;
+  private voice?: string;
   private readonly speaker?: number;
   private readonly lengthScale?: number;
   private readonly noiseScale?: number;
@@ -83,6 +87,62 @@ export class PiperSpeech implements SpeechProvider {
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.socketFactory = opts.socketFactory ?? ((p, h) => connect(p, h));
     this.name = opts.name ?? 'tts';
+  }
+
+  /** Switch the active voice for subsequent synthesis (per-request piper voice). */
+  setVoice(voice?: string): void {
+    this.voice = voice;
+  }
+
+  /** Query the piper server's `describe` event and return the installed voice names. */
+  async listVoices(): Promise<string[]> {
+    const socket = this.socketFactory(this.port, this.host);
+    socket.setTimeout(this.timeoutMs);
+    return new Promise<string[]>((resolve, reject) => {
+      let buf = Buffer.alloc(0);
+      let settled = false;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(err);
+      };
+      socket.on('timeout', () => fail(new Error('TTS socket timeout')));
+      socket.on('error', fail);
+      socket.on('data', (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        const nl = buf.indexOf(0x0a);
+        if (nl === -1) return;
+        let header: { data_length?: unknown };
+        try {
+          header = JSON.parse(buf.subarray(0, nl).toString('utf8'));
+        } catch (e) {
+          return fail(e instanceof Error ? e : new Error('TTS: malformed Wyoming header'));
+        }
+        const dl = Number(header.data_length ?? 0);
+        const pl = Number((header as { payload_length?: unknown }).payload_length ?? 0);
+        const consumed = nl + 1 + dl + pl;
+        if (buf.length < consumed) return;
+        const dataJson = buf.subarray(nl + 1, nl + 1 + dl).toString('utf8');
+        settled = true;
+        socket.end();
+        try {
+          const info = JSON.parse(dataJson || '{}') as { tts?: Array<{ voices?: Array<{ name?: unknown }> }> };
+          const voices: string[] = [];
+          for (const tts of info.tts ?? []) {
+            for (const v of tts.voices ?? []) {
+              if (typeof v.name === 'string' && v.name) voices.push(v.name);
+            }
+          }
+          resolve(voices);
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      });
+      socket.on('connect', () => {
+        socket.write(Buffer.from(JSON.stringify({ type: 'describe', data: {}, payload_length: 0 }) + '\n', 'utf8'));
+      });
+    });
   }
 
   async synthesize(text: string): Promise<Buffer> {

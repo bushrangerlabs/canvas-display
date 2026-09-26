@@ -1,0 +1,38 @@
+language: zh-HK
+lists:
+  color_temperature_names:
+    values:
+      - in: (燭光|蠟燭光)
+        out: 1900
+      - in: (暖白|暖白光|暖光)
+        out: 2700
+      - in: (冷白|冷白光|冷光)
+        out: 4000
+      - in: (日光|正白光)
+        out: 6500
+  color:
+    values:
+      - in: (紅色|红色)
+        out: red
+      - in: 橙色
+        out: orange
+      - in: (黃色|黄色)
+        out: yellow
+      - in: 綠色
+        out: green
+      - in: 藍色
+        out: blue
+      - in: 紫色
+        out: purple
+      - in: 白色
+        out: white
+      - in: 黑色
+        out: black
+      - in: 棕色
+        out: brown
+  brightness_level:
+    values:
+      - in: (最大|最光|最高|最亮)
+        out: 100
+      - in: (最小|最暗|最低|最黑)
+        out: 1

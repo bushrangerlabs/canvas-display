@@ -116,13 +116,37 @@ export async function classifyRequest(
 
   if (policy.useAi && llm) {
     try {
-      const reply = await llm.chat([
+      // Use chatWithTools (with an empty tool list) rather than plain chat() so we
+      // can disable chain-of-thought and cap tokens — reasoning models (e.g. Qwen3)
+      // otherwise spend the whole reply on reasoning_content and leave `content`
+      // empty or truncated, which breaks the JSON.parse below.
+      const response = await llm.chatWithTools([
         {
           role: 'system',
           content: `Classify the user's request. Return JSON only with: domain, intent, confidence, needs_clarification, media_type, source, query, reasoning. Allowed domains: general_knowledge, home_automation, music_audio, video, display_navigation, device_control, unknown. Distinguish questions about media from requests to play it. Use video only for visual playback, music_audio for songs/albums/playlists/radio. Confidence is 0 to 1. Keep query as the requested subject without command words.`,
         },
         { role: 'user', content: transcript },
-      ]);
+      ], [], {
+        disableThinking: true,
+        maxTokens: 400,
+        responseSchema: {
+          name: 'request_classification',
+          schema: {
+            type: 'object',
+            properties: {
+              domain: { type: 'string', enum: ['general_knowledge', 'home_automation', 'music_audio', 'video', 'display_navigation', 'device_control', 'unknown'] },
+              intent: { type: 'string' },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              needs_clarification: { type: 'boolean' },
+              media_type: { type: ['string', 'null'], enum: ['video', 'music', 'audio', 'playlist', null] },
+              source: { type: ['string', 'null'] }, query: { type: ['string', 'null'] }, reasoning: { type: ['string', 'null'] },
+            },
+            required: ['domain', 'intent', 'confidence', 'needs_clarification', 'media_type', 'source', 'query', 'reasoning'],
+            additionalProperties: false,
+          },
+        },
+      });
+      const reply = response.content;
       const parsed = JSON.parse(stripJsonFence(reply)) as Partial<RequestClassification>;
       const allowed = new Set<RequestDomain>([
         'general_knowledge', 'home_automation', 'music_audio', 'video',

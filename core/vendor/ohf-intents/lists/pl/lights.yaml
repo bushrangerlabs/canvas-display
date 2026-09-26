@@ -1,0 +1,38 @@
+language: pl
+lists:
+  color_temperature_names:
+    values:
+      - in: (światło świecy|świec(a|ę|y))
+        out: 1900
+      - in: (ciepła|ciepłą|ciepły) biel
+        out: 2700
+      - in: (zimna|zimną|zimny|chłodna|chłodną) biel
+        out: 4000
+      - in: (światło dzienne|dzienna biel|dzienną biel)
+        out: 6500
+  color:
+    values:
+      - in: biel|biał(y|o|e)
+        out: white
+      - in: czerń|czarn(y|o|e)
+        out: black
+      - in: czerwień|czerwon(y|o|e)
+        out: red
+      - in: pomarańcz|pomarańczow(y|o|e)
+        out: orange
+      - in: żółt(y|o|e)
+        out: yellow
+      - in: zieleń|zielon(y|o|e)
+        out: green
+      - in: niebiesk(i|o|ie)
+        out: blue
+      - in: fiolet|fioletow(y|o|e)
+        out: purple
+      - in: brąz|brązow(y|o|e)
+        out: brown
+  brightness_level:
+    values:
+      - in: (maksymalny | maksymalną | maksymalnie | najjaśniej | maksa)
+        out: 100
+      - in: (minimalnie | minimalną | najciemniej | minimum)
+        out: 1
