@@ -2,7 +2,8 @@
 use libc;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager};
+use tauri::webview::PageLoadEvent;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
 // ─── Sidecar state ──────────────────────────────────────────────────────────
@@ -16,6 +17,14 @@ struct DisplayGeometry {
     y: i32,
     width: u32,
     height: u32,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PanelLoadEvent {
+    label: String,
+    ok: bool,
+    error: Option<String>,
 }
 
 // ─── Crash Log ────────────────────────────────────────────────────────────────
@@ -46,6 +55,43 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
     // Hard fallback in case app.exit doesn't terminate the process
     std::process::exit(0);
+}
+
+/// Hide or show the kiosk window. Hide reveals the Pi OS desktop underneath;
+/// show brings the kiosk back to fullscreen foreground. Called from the
+/// controller webview for Core's remote "hide"/"show" app actions. The process
+/// (and its Core WebSocket) stay alive throughout so resume is instant.
+///
+/// Uses the *injected* WebviewWindow (the window the controller webview runs in)
+/// rather than looking windows up by label with `get_webview_window`, because on
+/// this kiosk build the window's `is_webview_window()` is false and the
+/// `webview_windows()`/`get_webview_window("main")` lookups both return empty.
+#[tauri::command]
+async fn set_kiosk_visible(
+    app: AppHandle,
+    window: tauri::Window,
+    visible: bool,
+) -> Result<(), String> {
+    klog(&format!(
+        "[set_kiosk_visible] requested {} (window label = '{}')",
+        if visible { "show" } else { "hide" },
+        window.label()
+    ));
+    app.run_on_main_thread(move || {
+        if visible {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = window.set_fullscreen(true);
+            klog("[set_kiosk_visible] shown + fullscreen");
+        } else {
+            // A fullscreen window on some compositors ignores hide(); exit
+            // fullscreen first so hide() can actually unmap it.
+            let _ = window.set_fullscreen(false);
+            let hide_res = window.hide();
+            klog(&format!("[set_kiosk_visible] hidden -> {:?}", hide_res));
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Returns the main kiosk window's monitor bounds in Tauri logical pixels. Panel
@@ -171,11 +217,19 @@ async fn close_webview(app: AppHandle, label: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn set_webview_visibility(app: AppHandle, label: String, visible: bool) -> Result<(), String> {
+async fn set_webview_visibility(
+    app: AppHandle,
+    label: String,
+    visible: bool,
+) -> Result<(), String> {
     let app_handle = app.clone();
     app.run_on_main_thread(move || {
         if let Some(webview) = app_handle.get_webview(&label) {
-            let result = if visible { webview.show() } else { webview.hide() };
+            let result = if visible {
+                webview.show()
+            } else {
+                webview.hide()
+            };
             if let Err(e) = result {
                 eprintln!("[set_webview_visibility] failed '{}': {}", label, e);
             }
@@ -222,20 +276,50 @@ async fn control_youtube_webview(
         "next" => "next",
         _ => return Err(format!("unsupported YouTube control: {action}")),
     };
-    let script =
-        format!("window.__canvasYouTubeControl && window.__canvasYouTubeControl.{method}();");
+    // Prefer the YouTube IFrame API bridge; fall back to plain HTML5 media control
+    // (matches the Android edge, which controls non-YouTube <video>/<audio> too).
+    let html5 = match action.as_str() {
+        "pause" => "document.querySelectorAll('video,audio').forEach(function(m){m.pause()})",
+        "resume" => "document.querySelectorAll('video,audio').forEach(function(m){m.play().catch(function(){})})",
+        "stop" => "document.querySelectorAll('video,audio').forEach(function(m){m.pause();m.currentTime=0})",
+        _ => "",
+    };
+    let script = format!(
+        "(function(){{try{{if(window.__canvasYouTubeControl&&window.__canvasYouTubeControl.{method}){{window.__canvasYouTubeControl.{method}();return true;}}{html5};return true}}catch(e){{return false}}}})()"
+    );
     let app_handle = app.clone();
     app.run_on_main_thread(move || {
-        if let Some(webview) = app_handle.get_webview(&label) {
-            if let Err(e) = webview.eval(&script) {
-                eprintln!("[control_youtube_webview] failed '{}': {}", label, e);
+        let eval_on = |label: &str| -> bool {
+            if let Some(webview) = app_handle.get_webview(label) {
+                return webview.eval(&script).is_ok();
             }
-        } else if let Some(win) = app_handle.get_webview_window(&label) {
-            if let Err(e) = win.eval(&script) {
-                eprintln!("[control_youtube_webview] failed '{}': {}", label, e);
+            if let Some(win) = app_handle.get_webview_window(label) {
+                return win.eval(&script).is_ok();
             }
-        } else {
-            eprintln!("[control_youtube_webview] no webview '{}'", label);
+            false
+        };
+        if eval_on(&label) {
+            return;
+        }
+        // The requested label is gone (e.g. no floating overlay): fall back to the
+        // last panel webview so YouTube playing inside a panel is still controllable.
+        let mut panels: Vec<String> = app_handle
+            .webviews()
+            .keys()
+            .filter(|candidate| candidate.starts_with("panel-"))
+            .cloned()
+            .collect();
+        panels.sort();
+        match panels.last() {
+            Some(last) => {
+                if !eval_on(last) {
+                    eprintln!(
+                        "[control_youtube_webview] no webview '{}' or panel to control",
+                        label
+                    );
+                }
+            }
+            None => eprintln!("[control_youtube_webview] no webview '{}'", label),
         }
     })
     .map_err(|e| e.to_string())
@@ -457,7 +541,10 @@ fn place_webview_in_fixed(
             }
         },
         None => {
-            klog(&format!("[fixed-container] '{}' has no parent widget", label));
+            klog(&format!(
+                "[fixed-container] '{}' has no parent widget",
+                label
+            ));
             return;
         }
     };
@@ -545,10 +632,7 @@ fn create_one_panel(
     window: tauri::WebviewWindow,
     spec: &PanelSpec,
 ) -> Result<(), String> {
-    let parsed_url = spec
-        .url
-        .parse::<tauri::Url>()
-        .map_err(|e| e.to_string())?;
+    let parsed_url = spec.url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
     let app_handle = app.clone();
     let label = spec.label.clone();
     let visible = spec.visible;
@@ -564,11 +648,26 @@ fn create_one_panel(
             "[create_one_panel] on main thread, building '{}'",
             label
         ));
-        let mut builder = tauri::WebviewBuilder::new(
+    let mut builder = tauri::WebviewBuilder::new(
             &label,
             tauri::WebviewUrl::External(parsed_url),
         )
         .incognito(false);
+
+        let load_app = app_handle.clone();
+        let load_label = label.clone();
+        builder = builder.on_page_load(move |_webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let _ = load_app.emit(
+                    "panel-load-result",
+                    PanelLoadEvent {
+                        label: load_label.clone(),
+                        ok: true,
+                        error: None,
+                    },
+                );
+            }
+        });
 
         if let Some(session) = ingress_session {
             let safe_session: String = session
@@ -639,40 +738,28 @@ fn create_one_panel(
                         ));
                     }
 
-                    // GLib/GIO on the Pi rejects the private Core CA even after the same CA
-                    // validates through OpenSSL, wget and the system trust store. Permit the
-                    // certificate only for the fixed Canvas Core hosts; every other TLS error
-                    // remains fail-closed. The CA is still provisioned system-wide and Core
-                    // remains HTTPS-only.
+                    // Trust must be provisioned in the system store, never learned from a
+                    // failed connection. Do not log URLs or certificate contents here.
+                    let tls_app = app_handle.clone();
                     let tls_label = label2.clone();
                     wk.connect_load_failed_with_tls_errors(
-                        move |view, failing_uri, certificate, _errors| {
-                            let canvas_core = failing_uri
-                                .starts_with("https://192.168.1.108:3100/")
-                                || failing_uri.starts_with("https://canvas-core.local:3100/");
-                            if !canvas_core {
-                                return false;
-                            }
-                            if let Some(context) = view.web_context() {
-                                let host = if failing_uri.starts_with("https://canvas-core.local") {
-                                    "canvas-core.local"
-                                } else {
-                                    "192.168.1.108"
-                                };
-                                context.allow_tls_certificate_for_host(certificate, host);
-                                klog(&format!(
-                                    "[{}] allowed provisioned Canvas Core TLS certificate",
-                                    tls_label
-                                ));
-                                view.load_uri(failing_uri);
-                                return true;
-                            }
+                        move |_view, _failing_uri, _certificate, errors| {
+                            klog(&format!(
+                                "[TLS] panel load rejected: certificate validation failed ({:?}); check system CA trust, certificate hostname/validity, and system clock",
+                                errors
+                            ));
+                            let _ = tls_app.emit(
+                                "panel-load-result",
+                                PanelLoadEvent {
+                                    label: tls_label.clone(),
+                                    ok: false,
+                                    error: Some("certificate validation failed".to_string()),
+                                },
+                            );
+                            // Keep WebKit's default failure handling; never retry or allow it.
                             false
                         },
                     );
-                    // The first navigation may have failed before the native callback was
-                    // attached by Tauri, so retry once with the handler in place.
-                    wk.reload();
 
                     if let Some(settings) = wk.settings() {
                         settings.set_hardware_acceleration_policy(
@@ -850,6 +937,7 @@ pub fn run() {
             control_youtube_webview,
             create_panel_webview,
             create_panel_webviews,
+            set_kiosk_visible,
         ])
         .setup(|app| {
             // ── Spawn embedded server sidecar ──────────────────────────────
@@ -892,9 +980,12 @@ pub fn run() {
                     klog("setup: canvas-display-server sidecar started");
                     app.manage(ServerChild(Mutex::new(Some(child))));
 
+                    // Needed so we can react to the sidecar's exit below.
+                    let app_handle = app.handle().clone();
+
                     // Forward sidecar stdout/stderr to the kiosk log file
                     tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_shell::process::CommandEvent;
+                        use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
                         while let Some(event) = rx.recv().await {
                             match event {
                                 CommandEvent::Stdout(line) => {
@@ -906,7 +997,34 @@ pub fn run() {
                                     klog(&format!("[server:err] {}", msg.trim_end()));
                                 }
                                 CommandEvent::Terminated(status) => {
-                                    klog(&format!("[server] process terminated: {:?}", status));
+                                    // The sidecar implements `/api/app/restart` and
+                                    // `/api/app/stop` by exiting itself. The parent kiosk
+                                    // must translate that into a whole-app exit, otherwise
+                                    // the edge app is left running without its server.
+                                    // systemd runs us with `Restart=on-failure`, so it only
+                                    // relaunches us when the kiosk exits non-zero.
+                                    match status {
+                                        // stop — sidecar exited cleanly: exit the kiosk 0.
+                                        TerminatedPayload { code: Some(0), .. } => {
+                                            klog("[server] sidecar exited cleanly (app stop) — stopping kiosk");
+                                            app_handle.exit(0);
+                                            // Hard fallback in case app.exit doesn't terminate.
+                                            std::process::exit(0);
+                                        }
+                                        // restart (or a crash) — exit non-zero so systemd restarts us.
+                                        TerminatedPayload { code: Some(code), .. } => {
+                                            klog(&format!(
+                                                "[server] sidecar exited with code {} (app restart) — restarting kiosk",
+                                                code
+                                            ));
+                                            std::process::exit(1);
+                                        }
+                                        // Terminated by signal — e.g. our own shutdown kill in
+                                        // the RunEvent::Exit handler. Don't re-exit here.
+                                        _ => {
+                                            klog(&format!("[server] sidecar terminated by signal: {:?}", status));
+                                        }
+                                    }
                                     break;
                                 }
                                 _ => {}

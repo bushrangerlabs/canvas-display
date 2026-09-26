@@ -135,6 +135,7 @@ async function main(): Promise<void> {
   const intelligence: Intelligence = createIntelligence(config, {
     privacyRepo,
     privacyFilter,
+    knowledgeSearchUrl: config.searxngPublicUrl,
   });
 
   // D-012 Home Assistant integration (Core is the primary HA integration point).

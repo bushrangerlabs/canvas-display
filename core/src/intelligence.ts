@@ -16,8 +16,9 @@
  * failures are surfaced as errors (they have no safe deterministic substitute for
  * arbitrary audio), but they never crash Core or disconnect devices (§20.4).
  */
+import { randomUUID } from 'node:crypto';
 import type { CoreConfig } from './config.js';
-import { OpenAiCompatibleLlm, DegradedLlm, type LlmProvider } from './providers/llm.js';
+import { OpenAiCompatibleLlm, DegradedLlm, parseContentAsToolCalls, type LlmProvider } from './providers/llm.js';
 import { WhisperTranscription, type TranscriptionProvider } from './providers/asr.js';
 import { PiperSpeech, type SpeechProvider } from './providers/tts.js';
 import { HttpJsonRpcMcpClient, type McpClient } from './providers/mcp.js';
@@ -31,11 +32,36 @@ import { ToolRegistry, type ToolContext, type ToolResult } from './tool-registry
 import {
   AiProviderRegistry,
   type AiProviderRegistryOptions,
+  type LlmCandidate,
 } from './providers/registry.js';
 import { loadProvidersFromEnv } from './providers/config-loader.js';
-import { confirmationDigest, mcpCallRequiresConfirmation, mcpToolRequiresConfirmation, selectToolsForRequest } from './mcp-policy.js';
+import { confirmationDigest, mcpCallRequiresConfirmation, mcpToolRequiresConfirmation, normalizeToolArguments, requiresExternalLookup, resolveToolName, selectToolsForRequest } from './mcp-policy.js';
+import { executeDirectHaPlan, handleDirectHaCommand, type DirectHaPlan } from './direct-ha-control.js';
+import { recordAiProviderAttempt, recordAiRoundTrip, recordAiToolExecution } from './ai-log.js';
 
 const CORE_TIME_ZONE = process.env.CANVAS_CORE_TIMEZONE?.trim() || 'Australia/Melbourne';
+
+/**
+ * Resolve a general-knowledge query to a page URL: a Wikipedia article first
+ * (via opensearch, so we open the actual article, not the search-results page),
+ * then a search engine as the fallback. The fallback prefers the configured
+ * LAN-reachable SearXNG (`knowledgeSearchUrl`) so edge devices do not need
+ * public internet access; DuckDuckGo is the last resort.
+ */
+async function resolveKnowledgeUrl(query: string, searchBaseUrl?: string): Promise<string> {
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=1&namespace=0&format=json`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const data = (await res.json()) as unknown as [string, string[], string[], string[]];
+      const articleUrl = Array.isArray(data?.[3]) ? data[3][0] : undefined;
+      if (articleUrl && /^https:\/\/en\.wikipedia\.org\/wiki\//.test(articleUrl)) return articleUrl;
+    }
+  } catch { /* fall through to the search engine */ }
+  const base = (searchBaseUrl ?? '').trim().replace(/\/$/, '');
+  if (base) return `${base}/search?q=${encodeURIComponent(query)}`;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
+}
 
 function currentTimeSystemPrompt(userPrompt?: string): string {
   const now = new Date();
@@ -195,6 +221,12 @@ export interface IntelligenceOptions {
    * true. Set to false to skip env parsing entirely (tests).
    */
   loadRegistryFromEnv?: boolean;
+  /** Whether voice transcripts may be sent to configured cloud LLMs. Defaults
+   * to local-only; admin chat remains free to use any explicitly selected provider. */
+  voiceLlmPolicy?: 'local-only' | 'cloud-allowed';
+  /** LAN-reachable search engine base URL (e.g. SearXNG) used as the fallback
+   * when a general-knowledge query has no Wikipedia article. */
+  knowledgeSearchUrl?: string;
 }
 
 /** Extended privacy repository interface used by the intelligence pipeline. */
@@ -280,12 +312,13 @@ export function createIntelligence(
   // Audio-focus manager (Phase 5, architecture plan §14.5).
   const audioFocus: FocusManager = opts.audioFocus ?? new AudioFocusManager();
 
-  // Phase 6: Intent router and tool registry.
-  // Intent routing uses its own LLM assignment if the registry has one.
-  const intentRouterLlm = usingDegraded
-    ? undefined
-    : (registry?.getLlmProvider('intent_routing') ?? llm);
-  const intentRouter = new IntentRouter({ llm: intentRouterLlm });
+  // Phase 6: Intent router and tool registry. Database providers are synced
+  // after this object is constructed, so resolve the assigned provider for
+  // each request rather than retaining the bootstrap local-model instance.
+  const intentRouter = new IntentRouter({
+    llm: usingDegraded ? undefined : llm,
+    llmResolver: () => registry?.getLlmProvider('intent_routing'),
+  });
   const toolRegistry = new ToolRegistry();
   let toolContext: Partial<ToolContext> = {};
 
@@ -328,11 +361,51 @@ export function createIntelligence(
               return { ok: false, message: 'MCP client not available' };
             }
             try {
-              const result = await ctx.mcp.callTool(aggregated.namespacedName, params);
+              const resolvedParams = { ...params };
+              const toolLeaf = aggregated.namespacedName.split('.').at(-1) ?? aggregated.namespacedName;
+              if (toolLeaf === 'ha_call_service' && resolvedParams.service_data && typeof resolvedParams.service_data === 'object') {
+                const serviceData = resolvedParams.service_data as Record<string, unknown>;
+                delete resolvedParams.service_data;
+                Object.assign(resolvedParams, serviceData);
+              }
+              const resolveEntityId = async (value: unknown): Promise<unknown> => {
+                if (typeof value !== 'string' || !ctx.resolveHaEntities) return value;
+                if (value.includes('.') && ctx.haClient?.getEntity(value)) return value;
+                const searchValue = value.includes('.') ? value.replace(/^[^.]+\./, '').replace(/_/g, ' ') : value;
+                const candidates = await ctx.resolveHaEntities(searchValue, { exact: true });
+                if (candidates.length === 1) return candidates[0].entityId;
+                const fuzzyCandidates = await ctx.resolveHaEntities(searchValue);
+                return fuzzyCandidates.length === 1 ? fuzzyCandidates[0].entityId : value;
+              };
+              if ('entity_id' in resolvedParams) {
+                resolvedParams.entity_id = await resolveEntityId(resolvedParams.entity_id);
+              }
+              const serviceData = resolvedParams.service_data;
+              if (serviceData && typeof serviceData === 'object' && !Array.isArray(serviceData)) {
+                resolvedParams.service_data = {
+                  ...(serviceData as Record<string, unknown>),
+                  ...(('entity_id' in serviceData)
+                    ? { entity_id: await resolveEntityId((serviceData as Record<string, unknown>).entity_id) }
+                    : {}),
+                };
+              }
+              const result = await ctx.mcp.callTool(aggregated.namespacedName, resolvedParams);
+              let resultContent = result.content;
+              if (toolLeaf === 'ha_call_service' && result.isError === false && typeof resolvedParams.entity_id === 'string' && ctx.haClient) {
+                try {
+                  const verified = await ctx.haClient.getState(resolvedParams.entity_id);
+                  resultContent = [...result.content, {
+                    type: 'text',
+                    text: JSON.stringify({ verified_entity_id: verified.entityId, verified_state: verified.state }),
+                  }];
+                } catch {
+                  // The MCP command result remains authoritative when the immediate read-back times out.
+                }
+              }
               return {
                 ok: !result.isError,
                 message: `MCP tool "${aggregated.namespacedName}" executed`,
-                data: result.content,
+                data: resultContent,
               };
             } catch (err) {
               return {
@@ -361,14 +434,109 @@ export function createIntelligence(
     digest: string;
     expiresAt: number;
   }>();
+  const pendingDirectConfirmations = new Map<string, { plan: DirectHaPlan; reply: string; expiresAt: number }>();
 
-  const conversationLlm = (): LlmProvider => registry?.getLlmProvider('conversation') ?? llm;
+  const voiceLlmPolicy = opts.voiceLlmPolicy
+    ?? (process.env.CANVAS_CORE_VOICE_LLM_POLICY === 'cloud-allowed' ? 'cloud-allowed' : 'local-only');
+  const providerCircuitOpenUntil = new Map<string, number>();
+  const PROVIDER_CIRCUIT_MS = 30_000;
+
+  function conversationCandidates(requireTools = false): LlmCandidate[] {
+    if (opts.llm || !registry) {
+      return [{
+        id: opts.llm ? 'override-llm' : 'legacy-llm', kind: 'llama-cpp', model: undefined, healthy: null,
+        capabilities: { tools: true, streaming: Boolean(llm.streamChat), structuredOutput: false, vision: Boolean(llm.analyzeImage), local: true },
+        instance: llm,
+      }];
+    }
+    const candidates = registry.getLlmCandidates('conversation', {
+      requireTools,
+      localOnly: voiceLlmPolicy === 'local-only',
+    });
+    if (candidates.length > 0) return candidates;
+    return [{
+      id: 'degraded-llm', kind: 'llama-cpp', model: undefined, healthy: true,
+      capabilities: { tools: true, streaming: false, structuredOutput: false, vision: false, local: true },
+      instance: llm,
+    }];
+  }
+
+  async function withConversationFailover<T>(
+    operation: string,
+    requireTools: boolean,
+    run: (provider: LlmProvider) => Promise<T>,
+    trace?: { turnId?: string; deviceId?: string; iteration?: number },
+  ): Promise<T> {
+    const candidates = conversationCandidates(requireTools);
+    const available = candidates.filter(candidate => (providerCircuitOpenUntil.get(candidate.id) ?? 0) <= Date.now());
+    const attempts = available.length > 0 ? available : candidates.slice(0, 1);
+    let lastError: unknown;
+    for (const candidate of attempts) {
+      const startedAt = performance.now();
+      try {
+        const value = await run(candidate.instance);
+        const latencyMs = Math.round(performance.now() - startedAt);
+        providerCircuitOpenUntil.delete(candidate.id);
+        registry?.markProviderHealthy(candidate.id);
+        console.log(`[intel][llm] operation=${operation} provider=${candidate.id} model=${candidate.model ?? 'default'} latency_ms=${latencyMs} fallback=${candidate !== attempts[0]}`);
+        recordAiProviderAttempt({
+          kind: 'provider_attempt',
+          operation,
+          turnId: trace?.turnId,
+          deviceId: trace?.deviceId,
+          iteration: trace?.iteration,
+          providerId: candidate.id,
+          providerKind: candidate.kind,
+          model: candidate.model,
+          latencyMs,
+          ok: true,
+        });
+        return value;
+      } catch (error) {
+        lastError = error;
+        const detail = error instanceof Error ? error.message : String(error);
+        providerCircuitOpenUntil.set(candidate.id, Date.now() + PROVIDER_CIRCUIT_MS);
+        registry?.markProviderUnhealthy(candidate.id, detail);
+        recordAiProviderAttempt({
+          kind: 'provider_attempt',
+          operation,
+          turnId: trace?.turnId,
+          deviceId: trace?.deviceId,
+          iteration: trace?.iteration,
+          providerId: candidate.id,
+          providerKind: candidate.kind,
+          model: candidate.model,
+          latencyMs: Math.round(performance.now() - startedAt),
+          ok: false,
+          error: detail,
+        });
+        console.warn(`[intel][llm] operation=${operation} provider=${candidate.id} failed=${detail}`);
+      }
+    }
+    if (!(llm instanceof DegradedLlm)) {
+      console.warn(`[intel][llm] operation=${operation} exhausted providers; using degraded response`);
+      recordAiProviderAttempt({
+        kind: 'provider_attempt',
+        operation,
+        turnId: trace?.turnId,
+        deviceId: trace?.deviceId,
+        iteration: trace?.iteration,
+        providerId: 'degraded',
+        providerKind: 'degraded',
+        ok: true,
+        degradedFallback: true,
+      });
+      return run(new DegradedLlm({ name: 'runtime-fallback' }));
+    }
+    throw lastError instanceof Error ? lastError : new Error(`No eligible LLM provider for ${operation}`);
+  }
 
   async function runToolAwareConversation(
     transcript: string,
     input: VoicePipelineInput,
   ): Promise<{ reply: string; toolResult?: ToolResult; requiresConfirmation?: boolean; confirmationDigest?: string; knowledge_card?: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } }> {
     const deviceKey = input.originDeviceId ?? 'unknown';
+    const turnId = randomUUID();
     const pending = pendingVoiceConfirmations.get(deviceKey);
     if (pending && pending.expiresAt <= Date.now()) pendingVoiceConfirmations.delete(deviceKey);
 
@@ -387,7 +555,7 @@ export function createIntelligence(
     }
 
     const candidates = selectToolsForRequest(toolRegistry.listTools('voice'), transcript);
-    let mcpCandidates = candidates.filter(tool => tool.name.startsWith('mcp.'));
+    let mcpCandidates = candidates.filter(tool => tool.name.startsWith('mcp.') || tool.name.startsWith('navigate.'));
     // Build conversation history messages from recent turns
     const historyMessages: ChatMessage[] = (input.conversationHistory ?? []).flatMap(turn => ([
       { role: 'user' as const, content: turn.transcript },
@@ -396,7 +564,7 @@ export function createIntelligence(
 
     // When keyword scoring found no MCP tools, inject web search/wikipedia tools so the LLM
     // can look up factual answers for general knowledge questions.
-    if (mcpCandidates.length === 0) {
+    if (mcpCandidates.length === 0 && requiresExternalLookup(transcript)) {
       const webSearchTools = toolRegistry.listTools('voice').filter(tool =>
         tool.name.startsWith('mcp.') &&
         /search|web|wiki|knowledge|lookup|fetch/i.test(tool.name + ' ' + (tool.description ?? '')),
@@ -414,23 +582,43 @@ export function createIntelligence(
         ...historyMessages,
         { role: 'user', content: transcript },
       ];
-      const provider = conversationLlm();
       let reply = '';
-      if (input.onReplyChunk && provider.streamChat) {
+      const streamingCandidate = conversationCandidates(false)
+        .find(candidate => candidate.instance.streamChat && (providerCircuitOpenUntil.get(candidate.id) ?? 0) <= Date.now());
+      if (input.onReplyChunk && streamingCandidate?.instance.streamChat) {
         let sentence = '';
-        for await (const delta of provider.streamChat(messages)) {
-          reply += delta; sentence += delta;
-          for (;;) {
-            const complete = sentence.match(/^([\s\S]*?[.!?](?:["']|\s|$))/);
-            if (!complete) break;
-            sentence = sentence.slice(complete[1].length);
-            if (complete[1].trim()) await input.onReplyChunk(complete[1].trim());
+        const startedAt = performance.now();
+        try {
+          for await (const delta of streamingCandidate.instance.streamChat(messages)) {
+            reply += delta; sentence += delta;
+            for (;;) {
+              const complete = sentence.match(/^([\s\S]*?[.!?](?:["']|\s|$))/);
+              if (!complete) break;
+              sentence = sentence.slice(complete[1].length);
+              if (complete[1].trim()) await input.onReplyChunk(complete[1].trim());
+            }
           }
+          registry?.markProviderHealthy(streamingCandidate.id);
+          console.log(`[intel][llm] operation=conversation_stream provider=${streamingCandidate.id} model=${streamingCandidate.model ?? 'default'} latency_ms=${Math.round(performance.now() - startedAt)} fallback=false`);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          providerCircuitOpenUntil.set(streamingCandidate.id, Date.now() + PROVIDER_CIRCUIT_MS);
+          registry?.markProviderUnhealthy(streamingCandidate.id, detail);
+          if (!reply) reply = await withConversationFailover('conversation', false, provider => provider.chat(messages));
+          else console.warn(`[intel][llm] streaming failed after partial reply provider=${streamingCandidate.id}: ${detail}`);
         }
         if (sentence.trim()) await input.onReplyChunk(sentence.trim());
       } else {
-        reply = await provider.chat(messages);
+        reply = await withConversationFailover('conversation', false, provider => provider.chat(messages));
       }
+      recordAiRoundTrip({
+        kind: 'round_trip',
+        turnId,
+        operation: 'conversation',
+        deviceId: deviceKey,
+        messages: JSON.parse(JSON.stringify(messages)) as ChatMessage[],
+        responseContent: reply,
+      });
       // Synthesize knowledge card from Q&A when the reply is substantive (not a short command ack)
       const syntheticCard = reply.trim().length > 10
         ? { title: transcript.length > 80 ? transcript.slice(0, 77) + '…' : transcript, body: reply.trim(), source_label: 'AI' }
@@ -458,7 +646,32 @@ export function createIntelligence(
     let executionFailed=false;
     let knowledgeCard: { title: string; body: string; source_url?: string; source_label?: string; show_url?: string } | undefined;
     for (let iteration = 0; iteration < 3; iteration++) {
-      const response = await conversationLlm().chatWithTools(messages, definitions);
+      const rttStartedAt = performance.now();
+      const response = await withConversationFailover(
+        'conversation_tools',
+        true,
+        provider => provider.chatWithTools(messages, definitions),
+        { turnId, deviceId: deviceKey, iteration },
+      );
+      recordAiRoundTrip({
+        kind: 'round_trip',
+        turnId,
+        operation: 'conversation_tools',
+        deviceId: deviceKey,
+        iteration,
+        latencyMs: Math.round(performance.now() - rttStartedAt),
+        messages: JSON.parse(JSON.stringify(messages)) as ChatMessage[],
+        tools: definitions.map(d => ({ type: 'function' as const, function: { ...d.function } })),
+        responseContent: response.content,
+        toolCalls: response.toolCalls,
+      });
+      if (response.toolCalls.length === 0 && response.content) {
+        const recoveredToolCalls = parseContentAsToolCalls(response.content);
+        if (recoveredToolCalls) {
+          response.toolCalls = recoveredToolCalls;
+          response.content = '';
+        }
+      }
       if (response.content) finalContent = response.content;
       if (response.toolCalls.length === 0) {
         // When LLM chose not to call any tools and gave a substantive reply,
@@ -474,15 +687,43 @@ export function createIntelligence(
       }
       messages.push({ role: 'assistant', content: response.content, tool_calls: response.toolCalls });
       for (const call of response.toolCalls) {
-        const tool = toolRegistry.getTool(call.function.name);
-        const params = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
+        const canonicalToolName = resolveToolName(call.function.name, toolRegistry.listTools('voice')) ?? call.function.name;
+        const params = normalizeToolArguments(canonicalToolName, JSON.parse(call.function.arguments || '{}') as Record<string, unknown>);
+        const tool = toolRegistry.getTool(canonicalToolName);
         if (!tool) {
           messages.push({ role: 'tool', content: JSON.stringify({ ok: false, message: 'tool_not_found' }), tool_call_id: call.id });
+          recordAiToolExecution({
+            kind: 'tool_execution',
+            turnId,
+            operation: 'conversation_tools',
+            deviceId: deviceKey,
+            iteration,
+            callId: call.id,
+            requestedName: call.function.name,
+            name: canonicalToolName,
+            args: params,
+            ok: false,
+            message: 'tool_not_found',
+          });
           continue;
         }
         if (mcpCallRequiresConfirmation(tool.name, params)) {
           const digest = confirmationDigest(tool.name, params);
           pendingVoiceConfirmations.set(deviceKey, { tool: tool.name, params, digest, expiresAt: Date.now() + 60_000 });
+          recordAiToolExecution({
+            kind: 'tool_execution',
+            turnId,
+            operation: 'conversation_tools',
+            deviceId: deviceKey,
+            iteration,
+            callId: call.id,
+            requestedName: call.function.name,
+            name: tool.name,
+            args: params,
+            ok: false,
+            message: 'awaiting user confirmation',
+            requiresConfirmation: true,
+          });
           return {
             reply: `This will run ${tool.name} and may change your system. Say confirm to continue.`,
             requiresConfirmation: true,
@@ -499,6 +740,20 @@ export function createIntelligence(
           mcp: providers.mcp,
         });
         if(result.ok)executedCalls.push({tool:tool.name,args:params});else executionFailed=true;
+        recordAiToolExecution({
+          kind: 'tool_execution',
+          turnId,
+          operation: 'conversation_tools',
+          deviceId: deviceKey,
+          iteration,
+          callId: call.id,
+          requestedName: call.function.name,
+          name: tool.name,
+          args: params,
+          ok: result.ok,
+          message: result.message,
+          result: result.data,
+        });
         // Extract knowledge card from web-search or wikipedia tool calls
         if (result.ok && !knowledgeCard && Array.isArray(result.data)) {
           const toolBaseName = tool.name.split('.').pop() ?? '';
@@ -549,6 +804,9 @@ export function createIntelligence(
         messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: call.id });
       }
     }
+    if (executionFailed && !finalContent.toLowerCase().includes('failed') && !finalContent.toLowerCase().includes('could not')) {
+      finalContent = 'The requested Home Assistant action did not complete successfully. I will not claim the light changed.';
+    }
     return { reply: finalContent || 'The MCP request did not complete.', ...(knowledgeCard ? { knowledge_card: knowledgeCard } : {}) };
   }
 
@@ -592,7 +850,7 @@ export function createIntelligence(
     const messages: ChatMessage[] = [];
     messages.push({ role: 'system', content: currentTimeSystemPrompt(input.systemPrompt) });
     messages.push({ role: 'user', content: transcript });
-    const reply = await llm.chat(messages);
+    const reply = await withConversationFailover('voice_conversation', false, provider => provider.chat(messages));
 
     // 5) TTS
     let audioBase64: string | undefined;
@@ -729,6 +987,64 @@ export function createIntelligence(
       };
     }
 
+    const directConfirmationKey = input.originDeviceId ?? 'unknown';
+    const pendingDirect = pendingDirectConfirmations.get(directConfirmationKey);
+    if (/^(?:yes[,. ]*|confirm|do it|go ahead|please do)$/i.test(transcript.trim()) && pendingDirect && pendingDirect.expiresAt > Date.now()) {
+      pendingDirectConfirmations.delete(directConfirmationKey);
+      const affected = await executeDirectHaPlan(pendingDirect.plan, toolContext.haClient ?? null);
+      const reply = `${pendingDirect.reply.replace(/^I need confirmation before changing /, '').replace(/\.$/, '')} confirmed.`;
+      console.log(`[intel][voice-route] route=direct-confirmed entity=${affected.map(entity => entity.entityId).join(',')}`);
+      await input.onReplyChunk?.(reply);
+      audioFocus.releaseFocus('voice');
+      return {
+        transcript, reply, degraded: usingDegraded,
+        intent: { intent: 'ha_direct', confidence: 1, entities: affected.map(entity => ({ id: entity.entityId, domain: entity.entityId.split('.')[0] ?? '' })), tool_calls: [], clarification_needed: false, response: reply },
+        toolResult: { ok: true, message: reply, affected: affected.map(entity => entity.entityId) },
+        timings: { asrMs: Math.round(asrMs), routingMs: 0, planningMs: 0, ttsMs: 0, totalMs: Math.round(performance.now() - pipelineStartedAt) },
+      };
+    }
+    if (/^(?:cancel|no|never mind)$/i.test(transcript.trim())) pendingDirectConfirmations.delete(directConfirmationKey);
+    const parsedHaIntent = await toolContext.parseHaIntent?.(transcript);
+    console.log(`[intel][ha-grammar] matched=${Boolean(parsedHaIntent)} intent=${parsedHaIntent?.intent ?? 'none'} slots=${Object.keys(parsedHaIntent?.slots ?? {}).join(',') || 'none'}`);
+    const grammarText = parsedHaIntent?.slots.name
+      ? parsedHaIntent.intent === 'HassTurnOn' ? `turn on ${parsedHaIntent.slots.name}`
+        : parsedHaIntent.intent === 'HassTurnOff' ? `turn off ${parsedHaIntent.slots.name}`
+          : parsedHaIntent.intent === 'HassGetState' ? `what is ${parsedHaIntent.slots.name} status`
+            : null
+      : null;
+    const directDomains = parsedHaIntent?.intent === 'HassGetState'
+      ? undefined
+      : ['light', 'switch', 'fan', 'input_boolean', 'cover'];
+    const directCandidates = grammarText
+      ? await toolContext.resolveHaEntities?.(String(parsedHaIntent?.slots.name), { exact: true, domains: directDomains }) ?? []
+      : [];
+    console.log(`[intel][ha-grammar] target_source=${grammarText ? 'grammar-name' : 'none'} candidates=${directCandidates.length}`);
+    const direct = grammarText
+      ? await handleDirectHaCommand(grammarText, directCandidates, toolContext.haClient ?? null)
+      : null;
+    if (direct?.handled) {
+      console.log(`[intel][voice-route] route=${grammarText ? 'ha-grammar-' : ''}${direct.route} entity=${direct.selected ?? direct.affected?.join(',') ?? 'none'}`);
+      if (direct.requiresConfirmation && direct.plan) {
+        pendingDirectConfirmations.set(directConfirmationKey, { plan: direct.plan, reply: direct.reply, expiresAt: Date.now() + 60_000 });
+      }
+      if (direct.route === 'direct') await input.onReplyChunk?.(direct.reply);
+      audioFocus.releaseFocus('voice');
+      return {
+        transcript,
+        reply: direct.reply,
+        degraded: usingDegraded,
+        intent: {
+          intent: 'ha_direct', confidence: 1,
+          entities: (direct.affected ?? []).map(id => ({ id, domain: id.split('.')[0] ?? '' })),
+          tool_calls: [], clarification_needed: Boolean(direct.requiresConfirmation), response: direct.reply,
+        },
+        toolResult: { ok: !direct.requiresConfirmation, message: direct.reply, affected: direct.affected },
+        requiresConfirmation: direct.requiresConfirmation,
+        timings: { asrMs: Math.round(asrMs), routingMs: 0, planningMs: 0, ttsMs: 0, totalMs: Math.round(performance.now() - pipelineStartedAt) },
+      };
+    }
+    console.log('[intel][voice-route] route=ai-fallback reason=no_direct_match');
+
     const planningStartedAt = performance.now();
     const flowMatch = await toolContext.invokeVoiceFlow?.(transcript, input.originDeviceId);
 
@@ -766,6 +1082,18 @@ export function createIntelligence(
       requiresConfirmation = conversational.requiresConfirmation ?? false;
       confirmationDigest = conversational.confirmationDigest;
       if (conversational.knowledge_card) knowledgeCard = conversational.knowledge_card;
+      // Open a web/Wikipedia search page on the originating device for general-knowledge
+      // questions, regardless of whether the model called a search tool.
+      const qt = transcript.trim();
+      const isKnowledgeQuestion = /\?\s*$/.test(qt)
+        || /^(?:who|what|why|when|where|which|explain|do\s+you\s+know|tell\s+me\s+about)\b/i.test(qt)
+        || /^how\s+(?:many|much|tall|old|far|long|big|does|do|can|is|are|was|were|would|could|should)\b/i.test(qt);
+      const kcard = conversational.knowledge_card;
+      let searchUrl: string | undefined;
+      if (kcard?.source_label === 'Wikipedia' && kcard.source_url) searchUrl = kcard.source_url;
+      else if (kcard?.source_label === 'Web Search' && kcard.show_url) searchUrl = kcard.show_url;
+      else if (isKnowledgeQuestion) searchUrl = await resolveKnowledgeUrl(qt, opts.knowledgeSearchUrl);
+      if (searchUrl) void toolContext.openUrl?.(searchUrl, input.originDeviceId).catch(() => {});
     } else {
       // Map intent to tool and execute
       const toolName = mapIntentToTool(intent.intent);
@@ -801,7 +1129,7 @@ export function createIntelligence(
           messages.push({ role: 'assistant', content: turn.reply });
         });
         messages.push({ role: 'user', content: transcript });
-        reply = await conversationLlm().chat(messages);
+        reply = await withConversationFailover('conversation', false, provider => provider.chat(messages));
       }
     }
 
