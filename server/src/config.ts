@@ -43,5 +43,11 @@ export const config = {
   youtubeSafeSearch: process.env.YOUTUBE_SAFE_SEARCH ?? 'strict',
   youtubePlayerOrigin: process.env.YOUTUBE_PLAYER_ORIGIN ?? 'http://127.0.0.1:3100/',
   youtubeAllowRemoteSearch: (process.env.YOUTUBE_ALLOW_REMOTE_SEARCH ?? 'false').toLowerCase() === 'true',
+  // SDR radio (DAB+/FM) — used by the DAB+ widget and voice playback.
+  sdrRadioUrl: process.env.SDR_RADIO_URL ?? 'http://192.168.1.108:8088',
+  sdrRadioTuner: process.env.SDR_RADIO_TUNER ?? 'tuner1',
+  sdrRadioStreamUrl: process.env.SDR_RADIO_STREAM_URL ?? 'http://192.168.1.108:8001/tuner1.mp3',
+  // Dispatcharr (IPTV) — used by the Dispatcharr widget and voice playback.
+  dispatcharrUrl: process.env.DISPATCHARR_URL ?? 'http://theserver.localdomain:9191',
   get isHaAddon(): boolean { return !!this.haSupervisorToken; },
 };

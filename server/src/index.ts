@@ -18,19 +18,22 @@ import { mediaRoutes }   from './routes/media';
 import { sceneRoutes }   from './routes/scenes';
 import { knowledgeCardRoutes } from './routes/knowledge-card';
 import { alertRoutes } from './routes/alert';
+import { radioRoutes } from './routes/radio';
 import { voiceStateRoutes } from './routes/voice-state';
 import { voiceRoutes } from './routes/voice';
+import { iconRoutes } from './routes/icons';
+import { appRoutes } from './routes/app';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
-import { startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
+import { getCoreBridgeConfig, startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
 import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
 import { startTtsBroadcastPoller, stopTtsBroadcastPoller } from './voice/tts-broadcast-poller';
 import { startAlertBroadcastPoller, stopAlertBroadcastPoller } from './voice/alert-broadcast-poller';
 import { startIntercomPoller, stopIntercomPoller } from './voice/intercom-poller';
 
 function useDirectCoreVoice(): boolean {
-  return process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1'
-    && Boolean(process.env.CANVAS_CORE_URL && process.env.CANVAS_EDGE_VOICE_TOKEN);
+  const { baseUrl, token } = getCoreBridgeConfig();
+  return process.env.CANVAS_DISABLE_DIRECT_WAKEWORD !== '1' && Boolean(baseUrl && token);
 }
 
 async function main() {
@@ -56,8 +59,11 @@ async function main() {
   await app.register(sceneRoutes,    { prefix: '/api' });
   await app.register(knowledgeCardRoutes, { prefix: '/api' });
   await app.register(alertRoutes, { prefix: '/api' });
+  await app.register(radioRoutes, { prefix: '/api' });
   await app.register(voiceStateRoutes, { prefix: '/api' });
   await app.register(voiceRoutes,      { prefix: '/api' });
+  await app.register(iconRoutes,       { prefix: '/api' });
+  await app.register(appRoutes,        { prefix: '/api' });
   await app.register(logRoutes,      { prefix: '/api' });
 
   // ── Serve web SPA (editor + display) ─────────────────────────────────────

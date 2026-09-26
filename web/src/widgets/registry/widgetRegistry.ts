@@ -40,6 +40,8 @@ import { AnnouncementWidgetMetadata } from '../widgets/AnnouncementWidget';
 import { NowPlayingWidgetMetadata } from '../widgets/NowPlayingWidget';
 import { CountdownTimerWidgetMetadata } from '../widgets/CountdownTimerWidget';
 import { EnergyMonitorWidgetMetadata } from '../widgets/EnergyMonitorWidget';
+import { DabRadioWidgetMetadata } from '../widgets/DabRadioWidget';
+import { DispatcharrWidgetMetadata } from '../widgets/DispatcharrWidget';
 
 export interface WidgetRegistryEntry {
   type: string;
@@ -84,6 +86,8 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   nowplaying: NowPlayingWidgetMetadata,
   countdowntimer: CountdownTimerWidgetMetadata,
   energymonitor: EnergyMonitorWidgetMetadata,
+  dabradio: DabRadioWidgetMetadata,
+  dispatcharr: DispatcharrWidgetMetadata,
 };
 
 /**
