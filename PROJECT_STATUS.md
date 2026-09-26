@@ -394,6 +394,8 @@ Verified live: play a YouTube query, then `pause`/`resume`/`next`/`previous`/`vo
 
 ### Deployments this session
 
+- **`local-llm` provider fixed**: the remote `.env` pointed `CANVAS_CORE_LLM_BASE_URL` at a dead `:8092`; repointed to the running local router (`router-qwen3-1.7b` on `:8081`). Core now reports every provider UP (`local-llm`, `local-asr`, `local-tts`, `mcp 8/8`, `ha 2107 entities`). Backup: `.env.bak-20260927`.
+
 - Pi: new `canvas-display-browser-linux` + `canvas-display-server` installed to `/usr/bin/` (backups `*.bak-20260927-broadcast`); `canvas-display-browser.service` **and** `canvas-display-server.service` restarted.
 - Core: rebuilt `core/dist`, rsync'd, `docker compose up -d --build canvas-core`.
 - Android: `app-debug.apk` installed on the tablet.
