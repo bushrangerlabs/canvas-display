@@ -1,4 +1,0 @@
-// Standalone build only — when included via tauri.settings.gradle,
-// :tauri-android is resolved from the main project.
-include ':tauri-android'
-project(':tauri-android').projectDir = new File('./.tauri/tauri-api')
