@@ -29,3 +29,6 @@ server/server
 local.properties
 .gradle/
 .kotlin/
+
+# Local evidence/scratch artifacts (ROM images, screenshots, TLS material)
+artifacts/
