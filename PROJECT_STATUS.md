@@ -297,12 +297,12 @@ User directive: **both** edge apps (Linux kiosk + native Android) must support t
 - `[ ]` **4. DAB+ radio via the Music Assistant RTL/SDR plugin (user-created).** Only a `dab_play_station` tool name exists in `tools/eval/corpus.json`; no implementation found.
 - `[~]` **5. Works with Music Assistant.** `plugins/listnr-musicassistant-provider/` exists; `custom_components/canvas_display/media_player.py` resolves a `music_assistant` source; the Hermes plugin media tools list `music_assistant`. Needs end-to-end confirmation from the edge voice path.
 - `[~]` **6. Works with the MCP servers set up in Core.** Core has an `mcp_servers` table, `mcpUrl`/`mcpUrls` config, and `core/src/providers/mcp.ts` / `multi-mcp.ts`. Needs confirmation that the edge voice path actually reaches them.
-- `[?]` **7. Custom skills in Core (create if not already).** `skills`/`skill_revisions` tables exist, but `core/src/flow-ai-drafts.ts` states "Canvas Skill v1 … was removed in v0.2.37 in favor of the visual Flow engine". **Decision needed:** revive the Skills system, or treat Flows as the custom-skill mechanism?
-- `[?]` **8. Dispatcharr voice commands via MCP or direct.** Nothing found. **Decision needed:** MCP server vs direct API integration.
+- `[~]` **7. Custom skills in Core.** DECISION (2026-09-27): treat the visual **Flow** engine as the custom-skill mechanism; ensure voice can trigger Flows (there is already a `trigger_intent` flow trigger). No separate Skills system will be built.
+- `[ ]` **8. Dispatcharr voice commands.** DECISION (2026-09-27): Dispatcharr is already installed as a Docker container on the server at `http://theserver.localdomain:9191/`. Integrate against its API (direct Core client, and/or expose via MCP).
 
 ### Other functions
 
-- `[~]` **1. Both edge apps present themselves to Home Assistant as media players.** `custom_components/canvas_display/media_player.py` exposes a Canvas Display `media_player`. Needs confirmation that it is per-device and covers both edge platforms.
+- `[~]` **1. Both edge apps present themselves to Home Assistant as media players.** Findings (2026-09-27): the HA custom component's `media_player.py` existed but was **never set up** (`PLATFORMS` excluded `MEDIA_PLAYER`) and had no data source (the coordinator never populated a `media` key). FIXED: added `Platform.MEDIA_PLAYER` to `PLATFORMS` and the coordinator now polls `/api/media/state` into `media`. This gives a working `media_player` for the **Linux** kiosk (one per config entry / server). The server also has MQTT HA discovery (`server/src/mqtt/index.ts` `publishHaMediaPlayerDiscovery`) but MQTT is disabled by default and it is per-server. Core has MQTT (`core/src/mqtt-navigation.ts`) but no per-device media state (audio state is global in-memory). **Remaining:** true per-device coverage for **both** platforms (Android has no sidecar) needs Core-side per-device discovery (Core knows all devices) or per-device MQTT from each edge.
 - `[~]` **2. Amazon-Echo-style audio broadcast (maybe a SIP server in Docker).** Server has `voice/intercom-poller.ts` (device-to-device audio), `voice/tts-broadcast-poller.ts`, and `voice/alert-broadcast-poller.ts`. "Broadcast to all devices" semantics and the SIP option need design.
 - `[ ]` **3. Dispatcharr (IPTV) support.** Nothing found.
 - `[ ]` **4. Extra widget controls in Core's editor for DAB+ radio and Dispatcharr scenes.** No DAB/Dispatcharr widgets exist; `radiobutton` is a generic UI control, not a radio-station control.
@@ -310,5 +310,6 @@ User directive: **both** edge apps (Linux kiosk + native Android) must support t
 ### Notes
 
 - Full parity is the target; inherently OS-specific functions will be implemented per-platform with equivalent outcomes (and explicit `unsupported` results where a platform genuinely cannot do something).
-- This is a first-pass source audit. Each item needs a deeper pass (and, for `[?]` items, a decision) before implementation.
-- Implementation order to be agreed with the user; the audit suggests starting with the items that are already `[~]` (cheapest to complete) and the two `[?]` decisions.
+- Android's YouTube voice control is considered the more mature reference implementation; align Linux to it.
+- This is a first-pass source audit. Each item needs a deeper pass before implementation.
+- Agreed order (2026-09-27): (1) finish the `[~]` items — HA media-player per-device, Music Assistant + MCP end-to-end from the edge voice path, Wikipedia/search fallback + return timer, full YouTube control; (2) add the missing pieces — vision model, DAB+ (`dab_play_station`), Dispatcharr, editor widgets; (3) audio-broadcast design (intercom → all-devices + optional SIP).

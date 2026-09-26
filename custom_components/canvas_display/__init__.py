@@ -13,7 +13,7 @@ from .coordinator import CanvasDisplayCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SELECT, Platform.SENSOR]
+PLATFORMS = [Platform.SELECT, Platform.SENSOR, Platform.MEDIA_PLAYER]
 
 SERVICE_SET_PAGE = "set_page"
 SERVICE_NAVIGATE_PANEL = "navigate_panel"

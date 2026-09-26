@@ -55,6 +55,7 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "settings": prior.get("settings", {}),
                     "pages": prior.get("pages", {}),
                     "page_names": prior.get("page_names", {}),
+                    "media": prior.get("media", {}),
                 }
 
             async with session.get(
@@ -73,6 +74,21 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"Pages API returned {resp.status}")
                 pages: list[dict] = await resp.json()
 
+            # Media state feeds the HA media_player entity. Non-fatal: if the
+            # endpoint is unavailable, keep the last known media state.
+            media: dict[str, Any] = {}
+            try:
+                async with session.get(
+                    f"{self.api_url}/api/media/state",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        payload = await resp.json()
+                        media = dict(payload.get("audio") or {})
+                        media["source"] = payload.get("source")
+            except (aiohttp.ClientError, TimeoutError):
+                media = (self.data or {}).get("media", {})
+
         except (aiohttp.ClientError, TimeoutError) as err:
             raise UpdateFailed(f"Cannot connect to Canvas Display at {self.api_url}: {err}") from err
 
@@ -81,6 +97,7 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "settings": settings,
             "pages": {p["id"]: p for p in pages},
             "page_names": {p["name"]: p["id"] for p in pages},
+            "media": media,
         }
 
     async def async_push_page(self, page_id: str) -> None:
