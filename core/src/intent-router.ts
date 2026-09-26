@@ -581,22 +581,29 @@ export function routeIntent(transcript: string): IntentResult {
     };
   }
 
-  const playMatch = lower.match(/play\s+(?:some\s+)?(.+?)\s+(?:music|in\s+the\s+(.+))/);
-  if (playMatch && (lower.includes('play') || lower.includes('music'))) {
-    const query = playMatch[1];
-    const room = extractRoom(transcript) ?? 'default';
-    const deviceName = room !== 'default' ? `${room}_speaker` : 'default_speaker';
-    return {
-      intent: 'media_play',
-      confidence: 0.9,
-      entities: [{ id: `media_player.${deviceName}`, domain: 'media_player' }],
-      tool_calls: [
-        { tool: 'media.play', arguments: { query, source: 'music_assistant' } },
-      ],
-      clarification_needed: false,
-      response: `Playing ${query} from Music Assistant.`,
-      matched_pattern: 'media_play_music_assistant',
-    };
+  const playMatch = lower.match(/play\s+(?:some\s+)?(.+?)\s+(?:music\b|in\s+the\s+(.+))/);
+  if (playMatch) {
+    // Strip filler words so "play some music from music assistant" does not become
+    // the query "music from".
+    const query = playMatch[1]
+      .replace(/\b(?:some|the|from|by|of|a|an|please|me)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (query.length >= 2) {
+      const room = extractRoom(transcript) ?? 'default';
+      const deviceName = room !== 'default' ? `${room}_speaker` : 'default_speaker';
+      return {
+        intent: 'media_play',
+        confidence: 0.9,
+        entities: [{ id: `media_player.${deviceName}`, domain: 'media_player' }],
+        tool_calls: [
+          { tool: 'media.play', arguments: { query, source: 'music_assistant' } },
+        ],
+        clarification_needed: false,
+        response: `Playing ${query} from Music Assistant.`,
+        matched_pattern: 'media_play_music_assistant',
+      };
+    }
   }
 
   // Pause media
@@ -814,10 +821,17 @@ export class IntentRouter {
     if ((classification.domain === 'video' || classification.domain === 'music_audio')
         && deterministic.intent === 'unknown' && classification.query) {
       const mediaKind = classification.domain === 'video' ? 'video' : (classification.media_type ?? 'music');
+      // The classifier's `source` is free-form and the model sometimes returns
+      // non-source values (e.g. "user"). Only accept a known media source; fall
+      // back to YouTube for video and Music Assistant for music/audio.
+      const rawSource = String(classification.source ?? '').toLowerCase().trim();
+      const mediaSource = ['youtube', 'music_assistant', 'radio_browser', 'direct_audio'].includes(rawSource)
+        ? rawSource
+        : (classification.domain === 'video' ? 'youtube' : 'music_assistant');
       return {
         ...deterministic,
         intent: 'media_play', confidence: classification.confidence, source: 'llm',
-        slots: { query: classification.query, source: classification.source ?? 'youtube', media_kind: mediaKind },
+        slots: { query: classification.query, source: mediaSource, media_kind: mediaKind },
         clarification_needed: false,
         response: `Playing ${classification.query}.`,
       };

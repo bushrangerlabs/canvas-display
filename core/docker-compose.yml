@@ -50,6 +50,10 @@ services:
       CANVAS_CORE_ENROLLMENT_SEED: '${CANVAS_CORE_ENROLLMENT_SEED:-}'
       CANVAS_CORE_SECURITY_EPOCH: '${CANVAS_CORE_SECURITY_EPOCH:-1}'
       CANVAS_CORE_ALLOW_OPEN_PAIRING: '${CANVAS_CORE_ALLOW_OPEN_PAIRING:-true}'
+      # Public URL used to build broadcast clip URLs. Set this to the plain-HTTP
+      # trusted-LAN address (e.g. http://host:3101) when HA Cast/other players must
+      # fetch the clip — they reject the self-signed TLS proxy on 3100.
+      CANVAS_CORE_PUBLIC_URL: '${CANVAS_CORE_PUBLIC_URL:-https://192.168.1.108:3100}'
       ASSET_STORAGE_PATH: '/app/data/assets'
     volumes:
       - 'canvas-core-assets:/app/data/assets'

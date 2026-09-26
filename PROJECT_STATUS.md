@@ -392,6 +392,30 @@ Both edges previously exposed only `pause`/`resume`/`stop`/`next`. Added the res
 
 Verified live: play a YouTube query, then `pause`/`resume`/`next`/`previous`/`volume`/`mute` all return `ok`; the sidecar reports an active `playback_id` with 10 candidates.
 
+### Music Assistant — findings and what is actually blocking it
+
+Investigated the MA path end-to-end. Findings:
+
+- MA server (`big-bear-music-assistant-server`, v2.8.7, host network, `:8095` UI/API, `:8097` streams) is running and HA's `music_assistant` integration is loaded.
+- **MA has no music providers with content.** `settings.json` shows music providers `builtin` (empty) and `sdrradio` (the user's SDR plugin). A `music_assistant.search` for "bohemian rhapsody" returns empty; a search for "triple m" returns `library://radio/22` (the SDR station). So MA can only serve DAB+ radio, not general music, until a music provider (Spotify/etc.) is added.
+- **MA cannot target the Canvas edges.** MA's player providers are `airplay`, `chromecast`, `dlna`, `sendspin`, `snapcast`, `squeezelite`, `sync_group`, `universal_player` — there is **no "Home Assistant Media Players" provider**, so MA cannot play to the Canvas HA media_player entities. To make the edges MA players they would need a native MA player protocol (DLNA renderer / Snapcast / Squeezelite / Sendspin) — a real architecture decision.
+- **The Linux MA voice path is circular.** The sidecar's `music_assistant` branch calls HA `media_player.play_media` on `media_player.canvas_ui_device`, which *is* the `canvas_display` custom component entity (confirmed via the HA entity registry: `platform: canvas_display`). That entity's `async_play_media` calls back into the sidecar's `/api/media/play` with `source: music_assistant` — a loop. It needs to target a real MA player instead.
+- The installed `canvas_display` entry "Canvas UI Device" points at `http://192.168.1.216:8099` (the Pi sidecar) and its coordinator is failing to connect (HA system log), so that entity is effectively dead. The new **Core mode** replaces this.
+
+**Not fixed** (needs a decision): making the edges MA players, and the circular sidecar MA branch.
+
+### Broadcast to HA Cast devices — fixed
+
+HA's system log showed Cast devices rejecting the broadcast clip: `Failed to cast media https://192.168.1.108:3100/api/broadcast/...wav` — they cannot validate the self-signed TLS proxy on 3100. `CANVAS_CORE_PUBLIC_URL` was never passed through the compose file, so the HTTPS default always applied. Added the passthrough and set the remote to the plain-HTTP trusted-LAN address (`http://192.168.1.108:3101`). Verified: the clip URL is now HTTP, fetches 200, and the Cast error is gone.
+
+### Intent-router media-source fix
+
+The LLM request classifier's free-form `source` was used verbatim, so "play bohemian rhapsody" became `Media source "user" is not supported`. Now only known sources are accepted (`youtube`/`music_assistant`/`radio_browser`/`direct_audio`), defaulting to YouTube for video and Music Assistant for music. Also tightened the deterministic "play X music" pattern so "play some music from music assistant" no longer yields the query "music from".
+
+### Remote compose repair (important)
+
+While adding the `CANVAS_CORE_PUBLIC_URL` passthrough I overwrote the remote `core/docker-compose.yml` with the repo's version, which requires `CANVAS_CORE_TLS_DIR` (not set on the host). The authoritative remote compose is `/home/spetchal/canvas-core/docker-compose.yml` (build context `.`, TLS dir hardcoded to `/home/spetchal/canvas-core-tls-private-20260926/generation-1`). Both `/home/spetchal/canvas-core/docker-compose.yml` and `/home/spetchal/canvas-core/core/docker-compose.yml` were rewritten with the hardcoded TLS paths + the `PUBLIC_URL` passthrough and now validate. **Note:** the `core/` compose reads `core/.env`; the parent compose reads the (empty) parent `.env` — the `core/` one is the one that carries the real env.
+
 ### Deployments this session
 
 - **`local-llm` provider fixed**: the remote `.env` pointed `CANVAS_CORE_LLM_BASE_URL` at a dead `:8092`; repointed to the running local router (`router-qwen3-1.7b` on `:8081`). Core now reports every provider UP (`local-llm`, `local-asr`, `local-tts`, `mcp 8/8`, `ha 2107 entities`). Backup: `.env.bak-20260927`.
