@@ -43,6 +43,7 @@ export function useServerSocket({ serverUrl, deviceId, enabled, onCommand }: Opt
           type: 'hello',
           client_type: 'browser',
           device_id: deviceId,
+          app_version: '0.3.1',
           screen_width: window.screen.width,
           screen_height: window.screen.height,
           pixel_ratio: window.devicePixelRatio,
@@ -67,7 +68,10 @@ export function useServerSocket({ serverUrl, deviceId, enabled, onCommand }: Opt
 
       ws.onerror = (e) => {
         console.error('[ServerSocket] Error:', e);
-        ws.close();
+        // A refused connection commonly fires while the socket is still CONNECTING
+        // (the embedded sidecar starts after this WebView). Calling close() in that
+        // state can throw and prevent the normal close/reconnect path from running.
+        if (ws.readyState === WebSocket.OPEN) ws.close();
       };
     }
 
