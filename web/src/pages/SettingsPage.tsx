@@ -15,7 +15,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box, Stack, Typography, Paper, Button, TextField, Switch, FormControlLabel,
   Divider, Alert, Chip, MenuItem, Select, InputLabel, FormControl, IconButton, Tabs, Tab,
-  CircularProgress, InputAdornment, Tooltip,
+  CircularProgress, InputAdornment, Tooltip, TableContainer, Table, TableHead, TableRow, TableCell, TableBody,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
@@ -27,7 +27,7 @@ import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification } from '../api/client';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification, type VoiceCommandTemplate } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
@@ -44,6 +44,15 @@ const CORE_PROVIDER_FIELDS: { key: string; label: string; placeholder: string; e
   { key: 'whisper_url', label: 'Whisper (ASR) URL', placeholder: 'http://asr:8000', env: 'CANVAS_CORE_WHISPER_URL' },
   { key: 'piper_url', label: 'Piper (TTS) URL', placeholder: 'http://tts:5000', env: 'CANVAS_CORE_PIPER_URL' },
   { key: 'mcp_url', label: 'MCP server URL', placeholder: 'http://mcp:9000', env: 'CANVAS_CORE_MCP_URL' },
+];
+
+const VOICE_CUE_PRESETS = [
+  { value: 'builtin:soft_chime', label: 'Soft chime' },
+  { value: 'builtin:glass_ping', label: 'Glass ping' },
+  { value: 'builtin:ready_up', label: 'Ready up' },
+  { value: 'builtin:wood_tap', label: 'Wood tap' },
+  { value: 'builtin:digital_pop', label: 'Digital pop' },
+  { value: 'builtin:confirm_tone', label: 'Confirm tone' },
 ];
 
 export default function SettingsPage() {
@@ -195,6 +204,7 @@ export default function SettingsPage() {
               <Tab value="request-routing" label="Request routing" />
               <Tab value="privacy-storage" label="Privacy &amp; storage" />
               <Tab value="ai" label="AI providers" />
+              <Tab value="voice-commands" label="Voice commands" />
             </Tabs>
           </Paper>
           {loading ? <LoadingBox /> : (
@@ -474,7 +484,12 @@ export default function SettingsPage() {
               </>}
 
               {/* AI Providers */}
-              {activeTab === 'ai' && <AiProvidersSection />}
+              {activeTab === 'ai' && settings && <>
+                <VoiceCueSettings settings={settings} onSave={saveSettings} />
+                <CloudAiSection settings={settings} onSave={saveSettings} />
+                <AiProvidersSection />
+              </>}
+              {activeTab === 'voice-commands' && <VoiceCommandTemplatesSection />}
             </>
           )}
         </Stack>
@@ -484,6 +499,39 @@ export default function SettingsPage() {
 }
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
+
+function VoiceCueSettings({ settings, onSave }: { settings: LegacySettings; onSave: (patch: Partial<LegacySettings>) => Promise<void> }) {
+  const rows = [
+    { enabled: 'voice_wake_ack_enabled', sound: 'voice_wake_ack_sound', label: 'Wake word detected', help: 'Plays immediately after the wake word is accepted.' },
+    { enabled: 'voice_good_intent_enabled', sound: 'voice_good_intent_sound', label: 'Intent received', help: 'Plays when Core has understood and accepted the request.' },
+    { enabled: 'voice_no_intent_enabled', sound: 'voice_no_intent_sound', label: 'No intent', help: 'Plays when the request is empty or could not be understood.' },
+  ] as const;
+  const [draft, setDraft] = useState(() => Object.fromEntries(rows.flatMap(row => [
+    [row.enabled, settings[row.enabled]], [row.sound, settings[row.sound]],
+  ])) as Record<string, string>);
+  useEffect(() => {
+    setDraft(Object.fromEntries(rows.flatMap(row => [[row.enabled, settings[row.enabled]], [row.sound, settings[row.sound]]])) as Record<string, string>);
+  }, [settings]);
+  return <Paper sx={{ p: 2.5 }}>
+    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Edge voice feedback sounds</Typography>
+    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>These fleet defaults are sent to Linux and Android Edge devices.</Typography>
+    <Stack spacing={2}>
+      {rows.map(row => <Stack key={row.enabled} direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: { sm: 'center' } }}>
+        <Box sx={{ flex: 1 }}>
+          <FormControlLabel control={<Switch checked={draft[row.enabled] === '1'} onChange={event => setDraft(value => ({ ...value, [row.enabled]: event.target.checked ? '1' : '0' }))} />} label={row.label} />
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{row.help}</Typography>
+        </Box>
+        <FormControl size="small" sx={{ minWidth: 190 }} disabled={draft[row.enabled] !== '1'}>
+          <InputLabel>Sound</InputLabel>
+          <Select label="Sound" value={draft[row.sound] || VOICE_CUE_PRESETS[0].value} onChange={event => setDraft(value => ({ ...value, [row.sound]: event.target.value }))}>
+            {VOICE_CUE_PRESETS.map(cue => <MenuItem key={cue.value} value={cue.value}>{cue.label}</MenuItem>)}
+          </Select>
+        </FormControl>
+      </Stack>)}
+      <Box><Button variant="contained" startIcon={<SaveIcon />} onClick={() => onSave(draft)}>Save voice sounds</Button></Box>
+    </Stack>
+  </Paper>;
+}
 
 function LogLevelControl() {
   const [level, setLevelState] = useState<string | null>(null);
@@ -729,6 +777,54 @@ const PROVIDER_KIND_LABELS: Record<string, string> = {
 };
 
 const AI_PROVIDER_HEALTH_INTERVAL_MS = 30_000;
+
+function CloudAiSection({ settings, onSave }: {
+  settings: LegacySettings;
+  onSave: (patch: Partial<LegacySettings>) => Promise<void>;
+}) {
+  const [providers, setProviders] = useState<AiProviderInfo[]>([]);
+  const enabled = settings.cloud_ai_enabled === '1';
+  const providerId = settings.cloud_ai_provider ?? '';
+
+  useEffect(() => {
+    coreApi.aiProviders()
+      .then(res => setProviders(res.providers.filter(p => p.type === 'llm')))
+      .catch(() => {});
+  }, []);
+
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="h6" sx={{ mb: 0.5 }}>Cloud AI</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        When enabled, the cloud model is used for coding / HA-automation drafting and only as a
+        last resort in chat (after every local model fails). Every cloud call is logged separately
+        in <code>cloud_ai_usage</code> for later fine-tuning.
+      </Typography>
+      <FormControlLabel
+        control={
+          <Switch
+            checked={enabled}
+            onChange={(_, checked) => void onSave({ cloud_ai_enabled: checked ? '1' : '0' })}
+          />
+        }
+        label="Allow AI to use cloud models"
+      />
+      <FormControl fullWidth size="small" sx={{ mt: 1.5, maxWidth: 360 }}>
+        <InputLabel>Cloud provider</InputLabel>
+        <Select
+          label="Cloud provider"
+          value={providerId}
+          onChange={(e) => void onSave({ cloud_ai_provider: e.target.value })}
+        >
+          <MenuItem value="">Auto (first non-local LLM)</MenuItem>
+          {providers.map(p => (
+            <MenuItem key={p.id} value={p.id}>{p.id} ({p.kind})</MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    </Paper>
+  );
+}
 
 function AiProvidersSection() {
   const [providers, setProviders] = useState<AiProviderInfo[]>([]);
@@ -1084,6 +1180,112 @@ function AiProvidersSection() {
           </Stack>
         </>
       )}
+    </Paper>
+  );
+}
+
+function VoiceCommandTemplatesSection() {
+  const emptyTemplate: VoiceCommandTemplate = {
+    id: '', domain: 'light', action: 'turn_on', phrase_template: 'turn on {name}',
+    service: 'turn_on', priority: 100, enabled: true, requires_confirmation: false,
+  };
+  const [templates, setTemplates] = useState<VoiceCommandTemplate[]>([]);
+  const [index, setIndex] = useState<Array<{ domain: string; commands: number; phrases: number; ambiguous: number }>>([]);
+  const [draft, setDraft] = useState<VoiceCommandTemplate | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const result = await coreApi.voiceCommandTemplates();
+      setTemplates(result.templates);
+      setIndex(result.index);
+    } catch (err) { setError((err as Error).message); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function save() {
+    if (!draft) return;
+    setSaving(true); setError(null);
+    try {
+      if (!draft.id.trim()) throw new Error('Template ID is required.');
+      await coreApi.saveVoiceCommandTemplate(draft.id.trim(), {
+        domain: draft.domain, action: draft.action, phrase_template: draft.phrase_template,
+        service: draft.service, priority: Number(draft.priority), enabled: draft.enabled,
+        requires_confirmation: draft.requires_confirmation,
+      });
+      setDraft(null);
+      await load();
+    } catch (err) { setError((err as Error).message); }
+    finally { setSaving(false); }
+  }
+
+  async function remove(id: string) {
+    setError(null);
+    try { await coreApi.deleteVoiceCommandTemplate(id); await load(); }
+    catch (err) { setError((err as Error).message); }
+  }
+
+  async function rebuild() {
+    setSaving(true); setError(null);
+    try { await coreApi.rebuildVoiceCommandIndex(); await load(); }
+    catch (err) { setError((err as Error).message); }
+    finally { setSaving(false); }
+  }
+
+  const setField = <K extends keyof VoiceCommandTemplate>(key: K, value: VoiceCommandTemplate[K]) =>
+    setDraft(current => current ? { ...current, [key]: value } : current);
+
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Voice command templates</Typography>
+        <Button size="small" variant="outlined" startIcon={<RefreshIcon fontSize="small" />} onClick={rebuild} disabled={saving} sx={{ ml: 'auto', textTransform: 'none' }}>Rebuild index</Button>
+        <Button size="small" variant="contained" startIcon={<AddIcon fontSize="small" />} onClick={() => setDraft(emptyTemplate)} sx={{ textTransform: 'none' }}>Add template</Button>
+      </Stack>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Use {'{name}'} in every phrase. Templates generate exact commands for every cached entity in the selected domain. New domain names are supported; unrecognized services require confirmation.
+      </Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {draft && (
+        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+          <Stack spacing={1.25}>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+              <TextField label="Template ID" size="small" value={draft.id} onChange={e => setField('id', e.target.value)} sx={{ flex: 1 }} />
+              <TextField label="Domain" size="small" value={draft.domain} onChange={e => setField('domain', e.target.value)} sx={{ flex: 1 }} />
+              <TextField label="Action" size="small" value={draft.action} onChange={e => setField('action', e.target.value)} sx={{ flex: 1 }} />
+              <TextField label="HA service" size="small" value={draft.service ?? ''} onChange={e => setField('service', e.target.value || null)} sx={{ flex: 1 }} />
+            </Stack>
+            <TextField label="Phrase template" size="small" value={draft.phrase_template} onChange={e => setField('phrase_template', e.target.value)} helperText="Example: turn on {name}" fullWidth />
+            <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+              <TextField label="Priority" type="number" size="small" value={draft.priority} onChange={e => setField('priority', Number(e.target.value))} slotProps={{ htmlInput: { min: 0, max: 10000 } }} sx={{ width: 120 }} />
+              <FormControlLabel control={<Switch checked={draft.enabled} onChange={e => setField('enabled', e.target.checked)} />} label="Enabled" />
+              <FormControlLabel control={<Switch checked={draft.requires_confirmation} onChange={e => setField('requires_confirmation', e.target.checked)} />} label="Require confirmation" />
+              <Button size="small" variant="contained" onClick={save} disabled={saving} sx={{ textTransform: 'none' }}>Save</Button>
+              <Button size="small" variant="outlined" onClick={() => setDraft(null)} sx={{ textTransform: 'none' }}>Cancel</Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      )}
+      {loading ? <LoadingBox /> : <>
+        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mb: 2 }}>
+          {index.map(item => <Chip key={item.domain} size="small" label={`${item.domain}: ${item.phrases} phrases${item.ambiguous ? `, ${item.ambiguous} ambiguous` : ''}`} color={item.ambiguous ? 'warning' : 'default'} />)}
+        </Stack>
+        <TableContainer><Table size="small">
+          <TableHead><TableRow><TableCell>Domain</TableCell><TableCell>Phrase</TableCell><TableCell>Action / service</TableCell><TableCell>Safety</TableCell><TableCell /></TableRow></TableHead>
+          <TableBody>{templates.map(template => <TableRow key={template.id}>
+            <TableCell><Typography variant="caption">{template.domain}</Typography></TableCell>
+            <TableCell><Typography variant="body2">{template.phrase_template}</Typography><Typography variant="caption" color="text.secondary">{template.id}</Typography></TableCell>
+            <TableCell><Typography variant="caption">{template.action}{template.service ? ` / ${template.service}` : ''}</Typography></TableCell>
+            <TableCell><Chip size="small" label={template.requires_confirmation ? 'Confirm' : template.enabled ? 'Direct' : 'Disabled'} color={template.requires_confirmation ? 'warning' : template.enabled ? 'success' : 'default'} /></TableCell>
+            <TableCell><Tooltip title="Edit template"><IconButton size="small" onClick={() => setDraft(template)}><EditIcon fontSize="small" /></IconButton></Tooltip><Tooltip title="Delete template"><IconButton size="small" color="error" onClick={() => remove(template.id)}><DeleteForeverIcon fontSize="small" /></IconButton></Tooltip></TableCell>
+          </TableRow>)}</TableBody>
+        </Table></TableContainer>
+      </>}
     </Paper>
   );
 }

@@ -136,13 +136,17 @@ async function main(): Promise<void> {
   let cloudUsageSink: ((entry: CloudUsageEntry) => void) | null = null;
   const logCloudUsage = (entry: CloudUsageEntry): void => { cloudUsageSink?.(entry); };
 
+  // Cloud-AI policy is read live from Core settings (admin UI toggle); the env
+  // values are only the initial defaults.
+  let cloudPolicyCache = { enabled: config.cloudAiEnabled, providerId: config.cloudAiProviderId };
+  const cloudPolicy = () => cloudPolicyCache;
+
   // Canvas Intelligence — wire provider clients from config (degraded mode if unset).
   const intelligence: Intelligence = createIntelligence(config, {
     privacyRepo,
     privacyFilter,
     knowledgeSearchUrl: config.searxngPublicUrl,
-    cloudAiEnabled: config.cloudAiEnabled,
-    cloudAiProviderId: config.cloudAiProviderId,
+    cloudPolicy,
     cloudUsageLogger: logCloudUsage,
   });
 
@@ -161,6 +165,19 @@ async function main(): Promise<void> {
   // Connect to PostgreSQL and apply bootstrap migrations BEFORE registering auth /
   // device-registry routes (they need the pool). Fail closed if Postgres is down.
   const pool = getPool(config);
+  const refreshCloudPolicy = async () => {
+    try {
+      const rows = await pool.query(
+        "SELECT key, value FROM settings WHERE key IN ('cloud_ai_enabled','cloud_ai_provider')",
+      );
+      const values = Object.fromEntries(rows.rows.map(row => [String(row.key), String(row.value)]));
+      cloudPolicyCache = {
+        enabled: values.cloud_ai_enabled === '1',
+        providerId: values.cloud_ai_provider ?? '',
+      };
+    } catch { /* keep last known policy */ }
+  };
+  await refreshCloudPolicy();
   cloudUsageSink = (entry) => {
     void pool.query(
       `INSERT INTO cloud_ai_usage
@@ -2861,6 +2878,7 @@ async function main(): Promise<void> {
     disconnectMqtt: () => mqttNavigation.stop(),
     settingsChanged: async updatedKeys => {
       if (updatedKeys.some(key => key.startsWith('mqtt_'))) await mqttNavigation.start();
+      if (updatedKeys.some(key => key.startsWith('cloud_ai_'))) await refreshCloudPolicy();
       if (updatedKeys.some(key => key.startsWith('request_routing_'))) await reloadRequestRoutingPolicy();
       const voiceCueKeys = [
         'voice_wake_ack_enabled', 'voice_wake_ack_sound',

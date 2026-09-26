@@ -1,0 +1,21 @@
+# Canvas SIP intercom — Asterisk in Docker
+#
+# Provides a SIP registrar + dialplan for the Echo-style intercom. Each edge
+# device registers as a SIP endpoint (1001, 1002, …); dialling 8000 pages all
+# registered endpoints at once.
+#
+# Deploy on the Core host (192.168.1.108):
+#   cd deploy/sip && docker compose up -d
+#
+# SIP signalling is UDP/TCP 5060; RTP uses 10000-10100/udp. `network_mode: host`
+# keeps NAT out of the picture on a LAN.
+services:
+  sip:
+    image: andrius/asterisk:20
+    container_name: canvas-sip
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config:/etc/asterisk
+    environment:
+      - TZ=Australia/Melbourne

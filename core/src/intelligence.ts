@@ -231,6 +231,9 @@ export interface IntelligenceOptions {
   cloudAiEnabled?: boolean;
   /** Provider id to use for cloud AI (coding/HA automations + chat last resort). */
   cloudAiProviderId?: string;
+  /** Live cloud-AI policy getter (read from Core settings). Takes precedence
+   * over the static `cloudAiEnabled`/`cloudAiProviderId` above. */
+  cloudPolicy?: () => { enabled: boolean; providerId: string };
   /** Sink for cloud-AI usage records (for later fine-tuning). Called only when a
    * cloud provider is actually used. */
   cloudUsageLogger?: (entry: CloudUsageEntry) => void;
@@ -485,11 +488,14 @@ export function createIntelligence(
 
   /** The configured cloud LLM candidate, or undefined when cloud AI is disabled. */
   function cloudCandidate(requireTools = false): LlmCandidate | undefined {
-    if (opts.cloudAiEnabled !== true || !registry) return undefined;
+    const policy = opts.cloudPolicy?.() ?? {
+      enabled: opts.cloudAiEnabled === true,
+      providerId: opts.cloudAiProviderId ?? '',
+    };
+    if (!policy.enabled || !registry) return undefined;
     const all = registry.getLlmCandidates('conversation', { requireTools });
-    const preferred = opts.cloudAiProviderId;
-    if (preferred) {
-      const match = all.find(candidate => candidate.id === preferred);
+    if (policy.providerId) {
+      const match = all.find(candidate => candidate.id === policy.providerId);
       if (match) return match;
     }
     return all.find(candidate => !candidate.capabilities.local);
