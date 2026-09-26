@@ -17,6 +17,25 @@ type ControlMedia = (
   source: string,
 ) => Promise<unknown>;
 
+/** Per-device media state published to HA as a media_player entity. */
+export interface DeviceMediaState {
+  state: 'idle' | 'playing' | 'paused';
+  title: string | null;
+  url: string | null;
+  volume: number; // 0..1
+  muted: boolean;
+  artwork: string | null;
+}
+
+const DEFAULT_MEDIA_STATE: DeviceMediaState = {
+  state: 'idle',
+  title: null,
+  url: null,
+  volume: 0.8,
+  muted: false,
+  artwork: null,
+};
+
 function parseJson(payload: Buffer): Record<string, unknown> {
   const parsed = JSON.parse(payload.toString('utf8')) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -27,6 +46,7 @@ function parseJson(payload: Buffer): Record<string, unknown> {
 
 export class MqttNavigationService {
   private client: MqttClient | null = null;
+  private readonly mediaStates = new Map<string, DeviceMediaState>();
   private status: MqttNavigationStatus = {
     enabled: false,
     connected: false,
@@ -85,9 +105,12 @@ export class MqttNavigationService {
         'canvas/devices/+/commands/panel',
         'canvas/devices/+/commands/media',
         'canvas/devices/+/panels/+/commands',
+        'canvas/devices/+/media_player/cmd',
       ], error => {
         if (error) this.status.lastError = error.message;
       });
+      // Register each device with HA as a media_player (per-device discovery).
+      void this.publishMediaPlayerDiscovery();
     });
     client.on('reconnect', () => { this.status.connected = false; });
     client.on('close', () => { this.status.connected = false; });
@@ -125,12 +148,103 @@ export class MqttNavigationService {
     this.client?.publish(topic, JSON.stringify(body), { retain });
   }
 
+  /**
+   * Publish HA MQTT auto-discovery for every registered device as a media_player,
+   * so both the Linux and Android edges appear in Home Assistant. Called on connect.
+   */
+  async publishMediaPlayerDiscovery(): Promise<void> {
+    if (!this.client) return;
+    let devices: Array<{ id: string; name: string | null }> = [];
+    try {
+      const rows = await this.pool.query('SELECT id, name FROM devices');
+      devices = rows.rows.map(row => ({
+        id: String(row.id),
+        name: row.name ? String(row.name) : null,
+      }));
+    } catch {
+      return;
+    }
+    for (const device of devices) {
+      const uniqueId = `canvas_${device.id}`;
+      const name = device.name || device.id;
+      const config = {
+        name,
+        unique_id: uniqueId,
+        platform: 'mqtt',
+        state_topic: `canvas/devices/${device.id}/media_player/state`,
+        command_topic: `canvas/devices/${device.id}/media_player/cmd`,
+        value_template: '{{ value_json.state }}',
+        volume_template: '{{ value_json.volume | float(0) }}',
+        muted_template: '{{ value_json.muted | lower }}',
+        media_title_template: '{{ value_json.media_title }}',
+        media_image_url_template: '{{ value_json.media_image_url }}',
+        supported_features: 1 | 2 | 4 | 8 | 16 | 64 | 131072, // play|pause|stop|vol_set|vol_step|mute|play_media
+        device: {
+          identifiers: [uniqueId],
+          name,
+          model: 'Canvas Display',
+          manufacturer: 'Canvas',
+        },
+      };
+      this.client.publish(
+        `homeassistant/media_player/${uniqueId}/config`,
+        JSON.stringify(config),
+        { retain: true, qos: 1 },
+      );
+      this.publishMediaState(device.id);
+    }
+  }
+
+  /** Update and publish a device's media state (called by Core after media actions). */
+  updateMediaState(deviceId: string, patch: Partial<DeviceMediaState>): void {
+    const next = { ...(this.mediaStates.get(deviceId) ?? DEFAULT_MEDIA_STATE), ...patch };
+    this.mediaStates.set(deviceId, next);
+    this.publishMediaState(deviceId);
+  }
+
+  private publishMediaState(deviceId: string): void {
+    const state = this.mediaStates.get(deviceId) ?? DEFAULT_MEDIA_STATE;
+    this.publish(`canvas/devices/${deviceId}/media_player/state`, {
+      state: state.state,
+      volume: state.volume,
+      muted: state.muted,
+      media_title: state.title,
+      media_image_url: state.artwork,
+      source: state.title,
+    }, true);
+  }
+
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
     const parts = topic.split('/');
     const deviceId = parts[2];
     if (!deviceId) return;
     const stateTopic = `canvas/devices/${deviceId}/state/navigation`;
     try {
+      if (parts[3] === 'media_player' && parts[4] === 'cmd') {
+        // HA MQTT media_player sends the raw command string (PAUSE/PLAY/STOP/NEXT)
+        // or a JSON object with an `action`/`command` field.
+        const text = payload.toString('utf8').trim();
+        let raw = text;
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            raw = typeof parsed.action === 'string'
+              ? parsed.action
+              : typeof parsed.command === 'string' ? parsed.command : text;
+          }
+        } catch { /* raw string command */ }
+        const action = raw.toLowerCase();
+        if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
+          throw new Error('media_player action must be pause, resume, stop, or next');
+        }
+        if (!this.controlMedia) throw new Error('media control is unavailable');
+        await this.controlMedia(deviceId, action as 'pause' | 'resume' | 'stop' | 'next', 'youtube');
+        this.updateMediaState(deviceId, {
+          state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
+        });
+        return;
+      }
+
       const body = parseJson(payload);
       if (parts[3] === 'commands' && parts[4] === 'media') {
         const action = typeof body.action === 'string' ? body.action : '';

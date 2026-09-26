@@ -2117,6 +2117,7 @@ async function main(): Promise<void> {
           const result = await gateway.requestAction(
             deviceId, 'media.play', { source: 'youtube', query, url, playlist }, 20_000,
           );
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url });
           return {
             ok: true,
             message,
@@ -2162,6 +2163,9 @@ async function main(): Promise<void> {
         }
         const selectionChoices = Array.isArray(deviceResult.choices) ? deviceResult.choices.length : 0;
         const spokenChoiceCount = selectionChoices || playlistLayout.length || 3;
+        if (!selectionRequired) {
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query });
+        }
         return {
           ok: true,
           message: selectionRequired
@@ -2256,6 +2260,9 @@ async function main(): Promise<void> {
             stop: 'Stopped YouTube playback',
             next: 'Skipped to the next YouTube result',
           }[action];
+          mqttNavigation.updateMediaState(deviceId, {
+            state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
+          });
           return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
         }
         const result = await controlDeviceMedia(deviceId, action, source);
@@ -2265,6 +2272,9 @@ async function main(): Promise<void> {
           stop: 'Stopped YouTube playback',
           next: 'Skipped to the next YouTube result',
         }[action];
+        mqttNavigation.updateMediaState(deviceId, {
+          state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
+        });
         return {
           ok: true,
           message: `${verb}.`,
