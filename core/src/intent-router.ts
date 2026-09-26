@@ -429,6 +429,44 @@ export function routeIntent(transcript: string): IntentResult {
     };
   }
 
+  // ── DAB+ digital radio (via Music Assistant's SDR plugin) ──────────────────
+  const dabMatch = lower.match(
+    /(?:play|tune(?:\s+(?:to|in))?|put\s+on)\s+(.+?)\s+(?:on\s+)?(?:dab\+?|digital\s+radio)\b/,
+  );
+  if (dabMatch) {
+    const station = dabMatch[1].replace(/\b(?:on|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (station) {
+      return {
+        intent: 'media_play',
+        confidence: 0.95,
+        entities: [],
+        tool_calls: [{ tool: 'media.play', arguments: { query: station, source: 'music_assistant' } }],
+        clarification_needed: false,
+        response: `Tuning to ${station} on digital radio.`,
+        matched_pattern: 'dab_play_station',
+      };
+    }
+  }
+
+  // ── IPTV channels (Dispatcharr) ────────────────────────────────────────────
+  const iptvMatch = lower.match(
+    /(?:play|tune(?:\s+(?:to|in))?|put\s+on|watch)\s+(?:the\s+)?(?:channel\s+)?(.+?)\s+(?:on\s+)?(?:tv|iptv|dispatcharr)\b/,
+  );
+  if (iptvMatch) {
+    const channel = iptvMatch[1].replace(/\b(?:on|the|channel)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    if (channel) {
+      return {
+        intent: 'dispatcharr_play',
+        confidence: 0.9,
+        entities: [],
+        tool_calls: [{ tool: 'dispatcharr.play', arguments: { channel } }],
+        clarification_needed: false,
+        response: `Tuning to ${channel}.`,
+        matched_pattern: 'dispatcharr_play_channel',
+      };
+    }
+  }
+
   const smartYouTubeRequest = parseSmartYouTubeRequest(transcript);
   if (smartYouTubeRequest) {
     const matchedPattern = smartYouTubeRequest.kind === 'playlist'

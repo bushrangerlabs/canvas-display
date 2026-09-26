@@ -20,6 +20,8 @@ export interface CoreConfig {
   /** Whisper/ASR model id sent to speaches (must match an installed model). */
   whisperModel: string;
   piperUrl?: string;
+  /** Optional piper voice name (e.g. "jarvis-high") to synthesize with. */
+  piperVoice?: string;
   llmBaseUrl?: string;
   mcpUrl?: string;
   /** Multiple MCP server URLs (D-011: Core connects to multiple MCP servers). */
@@ -78,6 +80,23 @@ export interface CoreConfig {
   voiceVadSilenceMs: number;
   /** Time to wait for vad_continue after vad_silence in ms (default 2000). */
   voiceVadContinueTimeoutMs: number;
+
+  // --- YouTube media search (D-012 media control) ---
+  /** Google YouTube Data API v3 key (search + playlist) — preferred over the yt-dlp fallback. */
+  youtubeApiKey?: string;
+  youtubeRegionCode: string;
+  youtubeRelevanceLanguage: string;
+  youtubeSafeSearch: 'none' | 'moderate' | 'strict';
+  /** Optional Netscape-format cookies for an authenticated (Premium) YouTube session. */
+  youtubeCookies?: string;
+  /** Public origin (reachable by edge devices) that hosts the shared /media/youtube/player page. */
+  youtubePlayerOrigin: string;
+  /** Seconds a knowledge/search page stays on an edge display before auto-dismissing (0 = never). */
+  knowledgeDisplaySeconds: number;
+  /** LAN-reachable SearXNG base URL edge devices can load search results from. */
+  searxngPublicUrl: string;
+  /** Dispatcharr (IPTV) base URL. Its HDHomeRun lineup is used to resolve channels. */
+  dispatcharrUrl: string;
 }
 
 function str(name: string, fallback: string): string {
@@ -104,6 +123,7 @@ export function loadConfig(): CoreConfig {
     whisperUrl: process.env.CANVAS_CORE_WHISPER_URL || undefined,
     whisperModel: str('CANVAS_CORE_WHISPER_MODEL', 'Systran/faster-whisper-base.en'),
     piperUrl: process.env.CANVAS_CORE_PIPER_URL || undefined,
+    piperVoice: process.env.CANVAS_CORE_PIPER_VOICE || undefined,
     llmBaseUrl: process.env.CANVAS_CORE_LLM_BASE_URL || undefined,
     mcpUrl: process.env.CANVAS_CORE_MCP_URL || undefined,
     mcpUrls: process.env.CANVAS_CORE_MCP_URLS
@@ -132,5 +152,16 @@ export function loadConfig(): CoreConfig {
     voiceVadThreshold: int('CANVAS_CORE_VOICE_VAD_THRESHOLD', 500),
     voiceVadSilenceMs: int('CANVAS_CORE_VOICE_VAD_SILENCE_MS', 3_000),
     voiceVadContinueTimeoutMs: int('CANVAS_CORE_VOICE_VAD_CONTINUE_TIMEOUT_MS', 2_000),
+
+    // YouTube media search (D-012 media control)
+    youtubeApiKey: process.env.YOUTUBE_API_KEY || undefined,
+    youtubeRegionCode: str('YOUTUBE_REGION_CODE', 'AU'),
+    youtubeRelevanceLanguage: str('YOUTUBE_RELEVANCE_LANGUAGE', 'en'),
+    youtubeSafeSearch: (str('YOUTUBE_SAFE_SEARCH', 'strict') as CoreConfig['youtubeSafeSearch']),
+    youtubeCookies: process.env.YOUTUBE_COOKIES || undefined,
+    youtubePlayerOrigin: str('YOUTUBE_PLAYER_ORIGIN', 'https://192.168.1.108:3100'),
+    knowledgeDisplaySeconds: int('CANVAS_CORE_KNOWLEDGE_DISPLAY_SECONDS', 30),
+    searxngPublicUrl: str('SEARXNG_PUBLIC_URL', 'http://192.168.1.108:8082'),
+    dispatcharrUrl: str('DISPATCHARR_URL', 'http://theserver.localdomain:9191'),
   };
 }

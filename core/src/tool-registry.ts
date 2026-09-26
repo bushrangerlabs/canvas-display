@@ -52,10 +52,15 @@ export interface ToolContext {
   /** HA client for entity operations. */
   haClient?: HomeAssistantClient | null;
   /** Fast candidate lookup backed by Core's durable HA entity catalogue. */
-  resolveHaEntities?: (query: string) => Promise<Array<{
+  resolveHaEntities?: (query: string, options?: { exact?: boolean; domains?: string[] }) => Promise<Array<{
     entityId: string; friendlyName?: string; domain: string; state: string;
-    deviceName?: string; areaName?: string;
+    deviceName?: string; areaName?: string; aliases?: string[];
   }>>;
+  resolveVoiceCommands?: (phrase: string) => Promise<Array<{
+    entityId: string; domain: string; action: string; service?: string;
+    priority: number; requiresConfirmation: boolean; friendlyName?: string; state: string;
+  }>>;
+  parseHaIntent?: (transcript: string) => Promise<{ intent: string; slots: Record<string, unknown> } | null>;
   invokeVoiceFlow?: (transcript: string, deviceId?: string) => Promise<{ matched: boolean; flowName?: string; executionId?: string }>;
   /** Fire all flows whose trigger_intent matches the resolved AI intent (non-blocking side effects). */
   invokeIntentFlows?: (intent: string, deviceId?: string, slots?: Record<string, unknown>) => Promise<void>;
@@ -73,8 +78,16 @@ export interface ToolContext {
   activateScene?: (scene: string) => Promise<ToolResult>;
   /** Navigation callback. */
   navigateTo?: (page: string) => Promise<ToolResult>;
+  /** Return the originating device to its home screen (close any media/page). */
+  goHome?: (deviceId?: string) => Promise<ToolResult>;
+  /** Navigate the device to the page assigned to a role (home/weather/news/...). */
+  navigateRole?: (role: string, deviceId?: string) => Promise<ToolResult>;
+  /** Open an arbitrary URL on the originating device (with optional auto-dismiss). */
+  openUrl?: (url: string, deviceId?: string, opts?: { revertAfterMs?: number }) => Promise<ToolResult>;
   /** Media playback callback (dispatches to the originating Edge display). */
   playMedia?: (query: string, source: string, deviceId?: string, mediaKind?: string) => Promise<ToolResult>;
+  /** Dispatcharr (IPTV) channel playback callback. */
+  playDispatcharr?: (channel: string, deviceId?: string) => Promise<ToolResult>;
   /** Select or page a pending playlist choice on the originating display. */
   selectMedia?: (selection: { position?: number; action?: 'more' | 'cancel' }, deviceId?: string) => Promise<ToolResult>;
   /** Media control callback (dispatches to the originating Edge display). */
@@ -451,6 +464,59 @@ export class ToolRegistry {
       },
     });
 
+    // dab.play — tune a DAB+ digital radio station (via Music Assistant's SDR plugin)
+    this.register({
+      name: 'dab.play',
+      description: 'Tune a DAB+ digital radio station using the SDR dongle',
+      schema: {
+        type: 'object',
+        properties: {
+          station: { type: 'string', description: 'DAB+ station name or frequency' },
+        },
+        required: ['station'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        const station = String(params.station ?? '').trim();
+        if (!station) return { ok: false, message: 'A DAB+ station name is required.' };
+        if (!ctx.deviceId) {
+          return { ok: false, message: 'I could not identify which display requested playback.' };
+        }
+        if (!ctx.playMedia) {
+          return { ok: false, message: 'Device media playback is not configured.' };
+        }
+        // DAB+ stations are exposed through Music Assistant's SDR plugin.
+        return ctx.playMedia(station, 'music_assistant', ctx.deviceId, 'radio');
+      },
+    });
+
+    // dispatcharr.play — tune an IPTV channel from Dispatcharr
+    this.register({
+      name: 'dispatcharr.play',
+      description: 'Tune an IPTV channel from Dispatcharr by name',
+      schema: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string', description: 'IPTV channel name' },
+        },
+        required: ['channel'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        const channel = String(params.channel ?? '').trim();
+        if (!channel) return { ok: false, message: 'A channel name is required.' };
+        if (!ctx.deviceId) {
+          return { ok: false, message: 'I could not identify which display requested playback.' };
+        }
+        if (!ctx.playDispatcharr) {
+          return { ok: false, message: 'Dispatcharr playback is not configured.' };
+        }
+        return ctx.playDispatcharr(channel, ctx.deviceId);
+      },
+    });
+
     this.register({
       name: 'media.select',
       description: 'Choose, page, or cancel a pending media selection on this display',
@@ -634,6 +700,38 @@ export class ToolRegistry {
           sceneId: params.scene_id as string | undefined,
           visible: params.visible as boolean | undefined,
         });
+      },
+    });
+
+    // navigate.home — return the display to its home screen (close any open media/page)
+    this.register({
+      name: 'navigate.home',
+      description: 'Return the display to its home screen or main menu — close any open YouTube video, page, or panel.',
+      schema: { type: 'object', properties: {}, required: [] },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (_params, ctx) => {
+        if (ctx.goHome) return ctx.goHome(ctx.deviceId);
+        return { ok: false, message: 'Home navigation is not connected to the device gateway.' };
+      },
+    });
+
+    // navigate.role — open the page assigned to a role (home/weather/news/custom) on the device
+    this.register({
+      name: 'navigate.role',
+      description: 'Open the page assigned to a role on the display (home, weather, news, or a custom role the admin configured).',
+      schema: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', description: 'Page role to open, e.g. home, weather, news, or a custom role name' },
+        },
+        required: ['role'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        if (ctx.navigateRole) return ctx.navigateRole(String(params.role), ctx.deviceId);
+        return { ok: false, message: 'Role navigation is not connected to the device gateway.' };
       },
     });
 

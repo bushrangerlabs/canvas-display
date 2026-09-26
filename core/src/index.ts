@@ -2065,6 +2065,34 @@ async function main(): Promise<void> {
           };
         }
       }
+      if (source === 'direct_audio') {
+        // Play a direct stream URL (e.g. a Dispatcharr IPTV channel) on the device.
+        try {
+          const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+          if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+            await gateway.requestAction(
+              deviceId, 'media.play', { source: 'direct_audio', url: query, title: query }, 20_000,
+            );
+          } else {
+            await requestDeviceAction(deviceId, 'device_http', {
+              path: '/api/media/play',
+              http_method: 'POST',
+              body: { source: 'direct_audio', url: query, title: query },
+            }, 20_000);
+          }
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url: query });
+          return {
+            ok: true,
+            message: `Playing "${query}".`,
+            data: { device_id: deviceId, source, playback_started: true },
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            message: `I could not play that stream: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      }
       if (source !== 'youtube') {
         return { ok: false, message: `Media source "${source}" is not supported on the device yet.` };
       }
@@ -2179,6 +2207,50 @@ async function main(): Promise<void> {
           message: `I could not play "${query}" on YouTube: ${
             error instanceof Error ? error.message : String(error)
           }`,
+        };
+      }
+    },
+    playDispatcharr: async (channel, deviceId) => {
+      if (!deviceId || deviceId === 'unknown') {
+        return { ok: false, message: 'I could not identify which display requested playback.' };
+      }
+      const name = channel.trim();
+      if (!name) return { ok: false, message: 'A channel name is required.' };
+      try {
+        const base = config.dispatcharrUrl.replace(/\/$/, '');
+        const res = await fetch(`${base}/api/hdhr/lineup.json`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) {
+          return { ok: false, message: `Dispatcharr lineup returned HTTP ${res.status}.` };
+        }
+        const lineup = (await res.json()) as Array<{ GuideName?: string; URL?: string }>;
+        const needle = name.toLowerCase();
+        const match = lineup.find(entry => (entry.GuideName ?? '').toLowerCase() === needle)
+          ?? lineup.find(entry => (entry.GuideName ?? '').toLowerCase().includes(needle));
+        if (!match?.URL) {
+          return { ok: false, message: `I could not find the channel "${name}" in Dispatcharr.` };
+        }
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          await gateway.requestAction(
+            deviceId, 'media.play', { source: 'direct_audio', url: match.URL, title: match.GuideName }, 20_000,
+          );
+        } else {
+          await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/play',
+            http_method: 'POST',
+            body: { source: 'direct_audio', url: match.URL, title: match.GuideName },
+          }, 20_000);
+        }
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.GuideName ?? name, url: match.URL });
+        return {
+          ok: true,
+          message: `Tuning to ${match.GuideName ?? name}.`,
+          data: { device_id: deviceId, channel: match.GuideName, url: match.URL, playback_started: true },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: `I could not tune to "${name}": ${error instanceof Error ? error.message : String(error)}`,
         };
       }
     },
