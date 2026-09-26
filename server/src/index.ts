@@ -19,6 +19,7 @@ import { sceneRoutes }   from './routes/scenes';
 import { knowledgeCardRoutes } from './routes/knowledge-card';
 import { alertRoutes } from './routes/alert';
 import { radioRoutes } from './routes/radio';
+import { broadcastRoutes } from './routes/broadcast';
 import { voiceStateRoutes } from './routes/voice-state';
 import { voiceRoutes } from './routes/voice';
 import { iconRoutes } from './routes/icons';
@@ -60,6 +61,7 @@ async function main() {
   await app.register(knowledgeCardRoutes, { prefix: '/api' });
   await app.register(alertRoutes, { prefix: '/api' });
   await app.register(radioRoutes, { prefix: '/api' });
+  await app.register(broadcastRoutes, { prefix: '/api' });
   await app.register(voiceStateRoutes, { prefix: '/api' });
   await app.register(voiceRoutes,      { prefix: '/api' });
   await app.register(iconRoutes,       { prefix: '/api' });

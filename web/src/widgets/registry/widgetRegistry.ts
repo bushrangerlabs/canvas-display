@@ -42,6 +42,7 @@ import { CountdownTimerWidgetMetadata } from '../widgets/CountdownTimerWidget';
 import { EnergyMonitorWidgetMetadata } from '../widgets/EnergyMonitorWidget';
 import { DabRadioWidgetMetadata } from '../widgets/DabRadioWidget';
 import { DispatcharrWidgetMetadata } from '../widgets/DispatcharrWidget';
+import { BroadcastWidgetMetadata } from '../widgets/BroadcastWidget';
 
 export interface WidgetRegistryEntry {
   type: string;
@@ -88,6 +89,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   energymonitor: EnergyMonitorWidgetMetadata,
   dabradio: DabRadioWidgetMetadata,
   dispatcharr: DispatcharrWidgetMetadata,
+  broadcast: BroadcastWidgetMetadata,
 };
 
 /**

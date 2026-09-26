@@ -108,6 +108,8 @@ export interface CoreConfig {
   /** Provider id to use for cloud AI (coding/HA automations + chat last resort).
    * Empty = pick the first non-local LLM provider. */
   cloudAiProviderId: string;
+  /** Public base URL of Core (used for media URLs the edges/HA fetch, e.g. broadcasts). */
+  publicUrl: string;
 }
 
 function str(name: string, fallback: string): string {
@@ -179,5 +181,6 @@ export function loadConfig(): CoreConfig {
     sdrRadioStreamUrl: str('SDR_RADIO_STREAM_URL', 'http://192.168.1.108:8001/tuner1.mp3'),
     cloudAiEnabled: process.env.CANVAS_CORE_CLOUD_AI_ENABLED === 'true',
     cloudAiProviderId: str('CANVAS_CORE_CLOUD_AI_PROVIDER', ''),
+    publicUrl: str('CANVAS_CORE_PUBLIC_URL', 'https://192.168.1.108:3100'),
   };
 }

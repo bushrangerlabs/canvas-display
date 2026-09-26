@@ -41,4 +41,5 @@ export const WIDGET_LAZY_MAP: Record<string, React.LazyExoticComponent<React.Com
   energymonitor: lazy(() => import('./widgets/EnergyMonitorWidget')),
   dabradio: lazy(() => import('./widgets/DabRadioWidget')),
   dispatcharr: lazy(() => import('./widgets/DispatcharrWidget')),
+  broadcast: lazy(() => import('./widgets/BroadcastWidget')),
 };

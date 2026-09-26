@@ -256,6 +256,14 @@ const NODE_CATALOG: Record<FlowNodeType, NodeMeta> = {
     ],
   },
 
+  action_broadcast_announce: {
+    label: 'Broadcast Announce', color: '#c05621', textColor: '#fff',
+    group: 'Actions', icon: '📣',
+    configFields: [
+      { key: 'message', label: 'Message to speak (all displays + media players)', type: 'textarea', placeholder: 'Dinner is ready! {{detail}}' },
+    ],
+  },
+
   action_device_command: {
     label: 'Device Command', color: '#2b6cb0', textColor: '#fff',
     group: 'Actions', icon: '📺',

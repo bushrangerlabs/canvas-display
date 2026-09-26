@@ -89,7 +89,19 @@ export const api = {
 export interface HealthResponse {
   status: string;
   role: string;
+  version: string;
   gatewayPath: string;
+}
+
+export interface VoiceCommandTemplate {
+  id: string;
+  domain: string;
+  action: string;
+  phrase_template: string;
+  service: string | null;
+  priority: number;
+  enabled: boolean;
+  requires_confirmation: boolean;
 }
 
 export interface ProviderHealth {
@@ -314,6 +326,10 @@ export interface LegacySettings {
   voice_tts_volume: string;
   voice_wake_ack_enabled: string;
   voice_wake_ack_sound: string;
+  voice_good_intent_enabled: string;
+  voice_good_intent_sound: string;
+  voice_no_intent_enabled: string;
+  voice_no_intent_sound: string;
   voice_port: string;
   voice_friendly_name: string;
   voice_ha_url: string;
@@ -466,6 +482,7 @@ export type FlowNodeType =
   | 'action_ha_service' | 'action_tts' | 'action_scene' | 'action_delay' | 'action_http'
   | 'action_set_variable' | 'action_ai_reply' | 'action_send_intent' | 'action_load_url'
   | 'action_knowledge_card' | 'action_broadcast_alert' | 'action_broadcast_intercom'
+  | 'action_broadcast_announce'
   | 'action_device_command' | 'action_log' | 'action_switch_page'
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
 
@@ -537,6 +554,8 @@ export const coreApi = {
     api.post<InvitationCreateResponse>('/api/admin/devices/invitations', { scope, ttlSeconds }),
   revokeDevice: (id: string) =>
     api.post<{ ok: boolean; device: DeviceRow }>(`/api/admin/devices/${id}/revoke`),
+  deleteDevice: (id: string) =>
+    api.delete<{ ok: boolean }>(`/api/admin/devices/${id}`),
   updateDevice: (id: string, patch: { name?: string; display_width?: number | null; display_height?: number | null }) =>
     api.put<{ device: DeviceRow }>(`/api/admin/devices/${id}`, patch),
 
@@ -679,6 +698,13 @@ export const coreApi = {
   deleteAiProvider: (id: string) =>
     api.delete<{ ok: boolean }>('/api/admin/ai-providers/' + encodeURIComponent(id)),
 
+  voiceCommandTemplates: () => api.get<{ templates: VoiceCommandTemplate[]; index: Array<{ domain: string; commands: number; phrases: number; ambiguous: number }> }>('/api/admin/voice-command-templates'),
+  saveVoiceCommandTemplate: (id: string, template: Omit<VoiceCommandTemplate, 'id'>) =>
+    api.put<{ ok: boolean; commands: number }>(`/api/admin/voice-command-templates/${encodeURIComponent(id)}`, template),
+  deleteVoiceCommandTemplate: (id: string) =>
+    api.delete<{ ok: boolean; commands: number }>(`/api/admin/voice-command-templates/${encodeURIComponent(id)}`),
+  rebuildVoiceCommandIndex: () => api.post<{ ok: boolean; commands: number }>('/api/admin/voice-command-templates/rebuild'),
+
   // MCP Servers
   mcpServers: () => api.get<McpServersResponse>('/api/admin/mcp-servers'),
   addMcpServer: (payload: McpServerAddPayload) => api.post<{ ok: boolean; name: string }>('/api/admin/mcp-servers', payload),
@@ -728,6 +754,8 @@ export const coreApi = {
       sound,
       volume,
     }),
+  deviceAppAction: (id: string, action: 'show' | 'hide' | 'restart') =>
+    api.post<{ ok: boolean; deviceId: string; action: string }>(`/api/admin/devices/${encodeURIComponent(id)}/app`, { action }),
 
   // ── Visual Automation Flows ─────────────────────────────────────────────
   listFlows: () => api.get<{ flows: FlowRow[] }>('/api/flows'),

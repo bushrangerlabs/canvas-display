@@ -50,6 +50,7 @@ export type NodeType =
   | 'action_delay' | 'action_http' | 'action_set_variable'
   | 'action_ai_reply' | 'action_send_intent' | 'action_load_url'
   | 'action_knowledge_card' | 'action_broadcast_alert' | 'action_broadcast_intercom'
+  | 'action_broadcast_announce'
   | 'action_device_command' | 'action_log'
   // logic
   | 'logic_if_else' | 'logic_switch' | 'logic_for_each';
@@ -224,6 +225,8 @@ export interface FlowExecutorDeps {
   broadcastAlert?: (title: string, message: string, type?: string, deviceIds?: string[]) => Promise<void>;
   /** Trigger mic recording on a device and broadcast real audio to all devices */
   broadcastIntercom?: (deviceId?: string, durationSeconds?: number) => Promise<void>;
+  /** Speak a message on every edge display and every HA media_player (Echo-style announce). */
+  broadcastAnnounce?: (message: string) => Promise<void>;
   /** Send a command to a display device (navigate, overlay, media, etc.) */
   sendDeviceCommand?: (deviceId: string | undefined, command: string, payload?: unknown) => Promise<void>;
 }
@@ -513,6 +516,12 @@ export class FlowExecutor {
         const deviceId = cfg.device_id ? String(cfg.device_id) : undefined;
         const duration = cfg.duration ? Number(cfg.duration) : 8;
         if (this.deps.broadcastIntercom) await this.deps.broadcastIntercom(deviceId, duration);
+        return 'any';
+      }
+
+      case 'action_broadcast_announce': {
+        const message = String(this._resolve(cfg.message, ctx) ?? '');
+        if (message && this.deps.broadcastAnnounce) await this.deps.broadcastAnnounce(message);
         return 'any';
       }
 

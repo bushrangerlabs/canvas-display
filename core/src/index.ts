@@ -82,6 +82,7 @@ import { confirmationDigest, mcpCallRequiresConfirmation, normalizeToolArguments
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-drafts.js';
 import { advertiseCore } from './discovery.js';
+import { BroadcastStore, extensionForMime, type BroadcastClip } from './broadcast.js';
 import { CORE_VERSION } from './version.js';
 
 /**
@@ -990,6 +991,13 @@ async function main(): Promise<void> {
     };
   });
 
+  // Broadcast (record → store → fan-out). The store + pending map live here so
+  // the voice-turn endpoint can use them; the fan-out itself is wired after the
+  // gateway/MQTT services exist (below).
+  const broadcastStore = new BroadcastStore();
+  const pendingBroadcasts = new Map<string, number>();
+  let broadcastFanOutRef: ((clip: BroadcastClip) => Promise<{ edges: number; ha: number }>) | null = null;
+
   fastify.post('/api/edge/voice/turn', async (request, reply) => {
     const header = request.headers.authorization;
     const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
@@ -1021,6 +1029,30 @@ async function main(): Promise<void> {
       : 'untracked';
     try {
       console.log(`[core][voice:${deviceId}] turn received turn=${turnId}`);
+      // Broadcast: "broadcast" arms a recording; the next turn's audio is stored
+      // and fanned out to every display + media player instead of transcribed.
+      const armedAt = pendingBroadcasts.get(deviceId);
+      if (armedAt && Date.now() - armedAt < 60_000 && typeof body.audioBase64 === 'string') {
+        pendingBroadcasts.delete(deviceId);
+        const buffer = Buffer.from(body.audioBase64, 'base64');
+        const clip = broadcastStore.add(buffer, 'audio/wav', `Broadcast from ${deviceId}`);
+        const fanout = broadcastFanOutRef ? await broadcastFanOutRef(clip) : { edges: 0, ha: 0 };
+        const replyText = `Broadcast sent to ${fanout.edges} display${fanout.edges === 1 ? '' : 's'} and ${fanout.ha} media player${fanout.ha === 1 ? '' : 's'}.`;
+        return {
+          transcript: '', reply: replyText, degraded: false,
+          intent: { intent: 'broadcast_sent', confidence: 1, entities: [], tool_calls: [], clarification_needed: false, response: replyText },
+          deviceId, turnId,
+        };
+      }
+      if (typeof body.transcript === 'string' && /^\s*(?:hey\s+\w+\s+)?broadcast\b/i.test(body.transcript)) {
+        pendingBroadcasts.set(deviceId, Date.now());
+        const replyText = 'What do you want to broadcast?';
+        return {
+          transcript: body.transcript, reply: replyText, degraded: false,
+          intent: { intent: 'broadcast_start', confidence: 1, entities: [], tool_calls: [], clarification_needed: false, response: replyText },
+          deviceId, turnId,
+        };
+      }
       // Load last 5 turns for conversational context
       const historyRows = await pool.query<{ transcript: string; reply: string }>(
         `SELECT transcript, reply FROM voice_turns WHERE device_id=$1 AND transcript IS NOT NULL AND reply IS NOT NULL ORDER BY created_at DESC LIMIT 5`,
@@ -1963,6 +1995,72 @@ async function main(): Promise<void> {
   };
   const mqttNavigation = new MqttNavigationService(pool, deliverPageToDevice, controlDeviceMedia);
   await mqttNavigation.start();
+
+  // --- Audio broadcast (record → store → fan-out) ---------------------------
+  // A recorded clip is stored and served at a public URL, then fanned out to
+  // every connected edge device and every HA media_player entity. Store-and-
+  // forward by design — no SIP or WebRTC.
+  const broadcastUrl = (clip: BroadcastClip): string =>
+    `${config.publicUrl.replace(/\/$/, '')}/api/broadcast/${clip.id}.${extensionForMime(clip.mimeType)}`;
+  const broadcastFanOut = async (clip: BroadcastClip): Promise<{ edges: number; ha: number }> => {
+    const url = broadcastUrl(clip);
+    const deviceIds = gateway.connectedDeviceIds();
+    const edgeResults = await Promise.allSettled(deviceIds.map(async (deviceId) => {
+      const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+      if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+        await gateway.requestAction(deviceId, 'media.play', { source: 'direct_audio', url, title: clip.title }, 20_000);
+      } else {
+        await requestDeviceAction(deviceId, 'device_http', {
+          path: '/api/media/play',
+          http_method: 'POST',
+          body: { source: 'direct_audio', url, title: clip.title },
+        }, 20_000);
+      }
+      mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: clip.title, url });
+    }));
+    const edges = edgeResults.filter(result => result.status === 'fulfilled').length;
+    let haCount = 0;
+    if (ha) {
+      const players = ha.getEntities().filter(entity => entity.entityId.startsWith('media_player.'));
+      const haResults = await Promise.allSettled(players.map(player => ha.callService('media_player', 'play_media', {
+        entity_id: player.entityId,
+        media_content_id: url,
+        media_content_type: 'music',
+      })));
+      haCount = haResults.filter(result => result.status === 'fulfilled').length;
+    }
+    return { edges, ha: haCount };
+  };
+  broadcastFanOutRef = broadcastFanOut;
+
+  fastify.post<{ Body: { audioBase64?: string; mimeType?: string; title?: string; from?: string } }>(
+    '/api/edge/broadcast',
+    async (request, reply) => {
+      const header = request.headers.authorization;
+      const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+      const expected = await resolveEdgeVoiceToken(presented);
+      if (!checkEdgeVoiceAuth(expected, presented)) {
+        return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+      }
+      const { audioBase64, mimeType, title, from } = request.body ?? {};
+      if (!audioBase64) return reply.code(400).send({ error: 'audioBase64 is required' });
+      const buffer = Buffer.from(audioBase64, 'base64');
+      if (buffer.length === 0) return reply.code(400).send({ error: 'empty audio' });
+      const clip = broadcastStore.add(buffer, mimeType ?? 'audio/wav', title ?? `Broadcast from ${from ?? 'unknown'}`);
+      const result = await broadcastFanOut(clip);
+      console.log(`[core][broadcast] ${clip.id} (${buffer.length}B) -> edges=${result.edges} ha=${result.ha}`);
+      return reply.send({ ok: true, id: clip.id, url: broadcastUrl(clip), ...result });
+    },
+  );
+
+  fastify.get<{ Params: { id: string } }>('/api/broadcast/:id', async (request, reply) => {
+    const id = request.params.id.replace(/\.[a-z0-9]+$/i, '');
+    const clip = broadcastStore.get(id);
+    if (!clip) return reply.code(404).send({ error: 'broadcast not found' });
+    reply.header('Cache-Control', 'no-store');
+    reply.type(clip.mimeType);
+    return reply.send(clip.buffer);
+  });
   intelligence.setToolContext({
     haClient: ha,
     parseHaIntent: async (transcript) => {
@@ -2763,6 +2861,18 @@ async function main(): Promise<void> {
           body: { duration: durationSeconds },
         }).catch(err => console.warn(`[flows] broadcastIntercom trigger failed for ${dId}:`, (err as Error).message));
       }
+    },
+    broadcastAnnounce: async (message) => {
+      const text = message.trim();
+      if (!text) return;
+      const speech = intelligence.providers.tts;
+      if (!speech) {
+        console.warn('[flows] broadcastAnnounce: no TTS provider configured');
+        return;
+      }
+      const audio = await speech.synthesize(text);
+      const clip = broadcastStore.add(audio, 'audio/wav', text);
+      await broadcastFanOut(clip);
     },
     switchPage: async (pageName, deviceId) => {
       // Resolve page by name or ID
