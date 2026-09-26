@@ -2230,6 +2230,13 @@ async function main(): Promise<void> {
         };
       }
     },
+    broadcastTts: async (message) => {
+      const text = message.trim();
+      if (!text) return { ok: false, message: 'A message is required.' };
+      if (!flowEnqueueTts) return { ok: false, message: 'TTS broadcast is not available.' };
+      await flowEnqueueTts(text);
+      return { ok: true, message: `Announcing: ${text}`, data: { text } };
+    },
     playDab: async (station, deviceId) => {
       if (!deviceId || deviceId === 'unknown') {
         return { ok: false, message: 'I could not identify which display requested playback.' };

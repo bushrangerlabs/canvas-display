@@ -1264,6 +1264,7 @@ function mapIntentToTool(intent: string): string | undefined {
   const map: Record<string, string> = {
     media_play: 'media.play',
     dispatcharr_play: 'dispatcharr.play',
+    announce_broadcast: 'announce.broadcast',
     media_pause: 'media.pause',
     media_resume: 'media.resume',
     media_stop: 'media.stop',
@@ -1289,6 +1290,8 @@ function mapIntentSlotsToToolParams(
       return { query: slots.query ?? slots.title, source: slots.source ?? 'youtube', media_kind: slots.media_kind };
     case 'dispatcharr_play':
       return { channel: slots.channel };
+    case 'announce_broadcast':
+      return { message: slots.message };
     case 'media_pause':
     case 'media_resume':
     case 'media_stop':

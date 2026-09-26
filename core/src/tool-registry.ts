@@ -90,6 +90,8 @@ export interface ToolContext {
   playDispatcharr?: (channel: string, deviceId?: string) => Promise<ToolResult>;
   /** DAB+ digital radio playback callback (SDR). */
   playDab?: (station: string, deviceId?: string) => Promise<ToolResult>;
+  /** Echo-style announcement: speak a message on all displays. */
+  broadcastTts?: (message: string, deviceIds?: string[]) => Promise<ToolResult>;
   /** Select or page a pending playlist choice on the originating display. */
   selectMedia?: (selection: { position?: number; action?: 'more' | 'cancel' }, deviceId?: string) => Promise<ToolResult>;
   /** Media control callback (dispatches to the originating Edge display). */
@@ -519,6 +521,29 @@ export class ToolRegistry {
           return { ok: false, message: 'Dispatcharr playback is not configured.' };
         }
         return ctx.playDispatcharr(channel, ctx.deviceId);
+      },
+    });
+
+    // announce.broadcast — Echo-style announcement to all displays
+    this.register({
+      name: 'announce.broadcast',
+      description: 'Announce a spoken message on all displays (Echo-style broadcast)',
+      schema: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'Message to announce' },
+        },
+        required: ['message'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        const message = String(params.message ?? '').trim();
+        if (!message) return { ok: false, message: 'A message is required.' };
+        if (!ctx.broadcastTts) {
+          return { ok: false, message: 'TTS broadcast is not configured.' };
+        }
+        return ctx.broadcastTts(message);
       },
     });
 

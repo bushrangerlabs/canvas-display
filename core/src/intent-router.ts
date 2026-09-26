@@ -429,6 +429,25 @@ export function routeIntent(transcript: string): IntentResult {
     };
   }
 
+  // ── Announce / broadcast (Echo-style) ──────────────────────────────────────
+  const announceMatch = lower.match(
+    /^(?:announce|broadcast|tell\s+everyone|make\s+an\s+announcement)\s*[:,]?\s*(.+)$/,
+  );
+  if (announceMatch) {
+    const message = announceMatch[1].trim();
+    if (message) {
+      return {
+        intent: 'announce_broadcast',
+        confidence: 0.95,
+        entities: [],
+        tool_calls: [{ tool: 'announce.broadcast', arguments: { message } }],
+        clarification_needed: false,
+        response: `Announcing: ${message}`,
+        matched_pattern: 'announce_broadcast',
+      };
+    }
+  }
+
   // ── DAB+ digital radio (via Music Assistant's SDR plugin) ──────────────────
   const dabMatch = lower.match(
     /(?:play|tune(?:\s+(?:to|in))?|put\s+on)\s+(.+?)\s+(?:on\s+)?(?:dab\+?|digital\s+radio)\b/,
