@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- External panels may intentionally use HTTP; do not downgrade HTTPS URLs. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">192.168.1.108</domain>
+        <domain includeSubdomains="false">canvas-core.local</domain>
+        <trust-anchors>
+            <certificates src="@raw/canvas_core_ca" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

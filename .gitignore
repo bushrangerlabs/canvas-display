@@ -13,5 +13,19 @@ target/
 *.apk
 *.deb
 
+# Android release signing material (private) — never commit the keystore or its password
+*.keystore
+*.jks
+keystore.properties
+
+# Private TLS keys and accidental local provisioning output (public CAs stay visible).
+/core/tls/**/*.key
+/canvas-core-tls-private-*/
+
 # Local dev server binary (not the sidecar)
 server/server
+
+# Android/Gradle local build state (machine-specific)
+local.properties
+.gradle/
+.kotlin/
