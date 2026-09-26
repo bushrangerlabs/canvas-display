@@ -27,7 +27,7 @@ class CoreEdgeClient(
     private val onStatus: (String) -> Unit,
     private val onVoiceConfigChanged: () -> Unit,
     private val onMediaUrl: (String, String) -> Boolean,
-    private val onMediaControl: (String) -> Boolean,
+    private val onMediaControl: (String, Double?) -> Boolean,
     private val onOpenPage: (String, Long) -> Unit,
     private val onAppControl: (String) -> Unit,
 ) {
@@ -164,13 +164,14 @@ class CoreEdgeClient(
                 }
                 "media.control" -> {
                     val control = payload.optString("action")
-                    val supported = control in setOf("pause", "resume", "stop", "next")
-                    val applied = supported && onMediaControl(control)
+                    val supported = control in setOf("pause", "resume", "stop", "next", "previous", "volume", "mute")
+                    val value = if (payload.has("value")) payload.optDouble("value") else null
+                    val applied = supported && onMediaControl(control, value)
                     JSONObject().put("ok", applied).put("action", control)
                         .apply { if (!supported) put("error", "unsupported_action") else if (!applied) put("error", "media_target_unavailable") }
                 }
                 "navigate.home" -> {
-                    val applied = onMediaControl("stop")
+                    val applied = onMediaControl("stop", null)
                     JSONObject().put("ok", applied)
                 }
                 "navigate.search" -> {

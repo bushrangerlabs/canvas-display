@@ -425,6 +425,26 @@ export function buildYouTubePlayerHtml(videoIds: string | string[], playbackId =
       return true;
     }
 
+    function previousCandidate() {
+      if (!player) return false;
+      if (candidates.length > 1) {
+        candidateIndex = (candidateIndex - 1 + candidates.length) % candidates.length;
+        reportedPlayingVideoId = '';
+        switchingCandidate = false;
+        setStatus('Loading previous YouTube result…', false);
+        report('candidate_switch', { manual: true, direction: 'previous' });
+        player.loadVideoById({ videoId: currentVideoId(), startSeconds: 0 });
+        return true;
+      }
+      if (typeof player.previousVideo === 'function') {
+        player.previousVideo();
+        report('previous', { control: 'playlist' });
+        return true;
+      }
+      report('previous_unavailable');
+      return false;
+    }
+
     function closePlayer() {
       if (player && typeof player.stopVideo === 'function') player.stopVideo();
       report('stopped', { control: 'touch_close' });
@@ -469,7 +489,20 @@ export function buildYouTubePlayerHtml(videoIds: string | string[], playbackId =
         report('stopped');
         return true;
       },
-      next: nextCandidate
+      next: nextCandidate,
+      previous: previousCandidate,
+      volume: function (level) {
+        if (!player || typeof player.setVolume !== 'function') return false;
+        player.setVolume(Math.max(0, Math.min(100, Number(level) || 0)));
+        report('volume', { level: level });
+        return true;
+      },
+      mute: function (muted) {
+        if (!player) return false;
+        if (muted) { player.mute(); report('muted'); }
+        else { player.unMute(); report('unmuted'); }
+        return true;
+      }
     };
 
     pauseButton.addEventListener('click', togglePlayback);

@@ -357,11 +357,12 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         device_id: str,
         action: str,
         *,
+        source: str = "youtube",
         level: int | None = None,
         muted: bool | None = None,
     ) -> None:
-        """Pause/resume/stop/next/volume/mute one Core-managed device."""
-        body: dict[str, Any] = {"action": action}
+        """Pause/resume/stop/next/previous/volume/mute one Core-managed device."""
+        body: dict[str, Any] = {"action": action, "source": source}
         if level is not None:
             body["level"] = level
         if muted is not None:

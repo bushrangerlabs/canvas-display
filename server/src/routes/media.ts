@@ -31,7 +31,7 @@ import {
 
 type MediaSourceType = 'music_assistant' | 'radio_browser' | 'direct_audio' | 'youtube';
 
-type MediaAction = 'play' | 'pause' | 'resume' | 'stop' | 'next' | 'volume' | 'mute';
+type MediaAction = 'play' | 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'volume' | 'mute';
 
 type AudioState = {
   state: string;
@@ -1898,11 +1898,14 @@ export async function mediaRoutes(app: FastifyInstance) {
     const body = req.body ?? {};
     const action = body.action;
     const source: MediaSourceType = body.source ?? 'direct_audio';
+    // A kiosk relaying a Core device_http request performs the control itself, so
+    // do not also broadcast it back over /ws (that would run next/previous twice).
+    const relayed = req.headers['x-canvas-relay'] === '1';
 
     if (!action) return reply.code(400).send({ error: 'action is required' });
 
     if (source === 'youtube') {
-      if (['pause', 'resume', 'stop', 'next'].includes(action)) {
+      if (['pause', 'resume', 'stop', 'next', 'previous', 'volume', 'mute'].includes(action)) {
         if (action !== 'stop' && !youtubePlaybackStatus.playback_id) {
           return reply.code(409).send({
             ok: false,
@@ -1910,15 +1913,30 @@ export async function mediaRoutes(app: FastifyInstance) {
             message: 'There is no active YouTube playback to control',
           });
         }
-        broadcast({ type: 'command', action: `youtube_${action}`, payload: {} }, 'browser');
-        if (action === 'stop') broadcast({ type: 'command', action: 'hide_floating', payload: {} }, 'browser');
+        const payload: Record<string, unknown> = {};
+        if (action === 'volume') {
+          if (body.level === undefined || body.level === null) {
+            return reply.code(400).send({ error: 'level is required for volume action' });
+          }
+          payload.value = Math.max(0, Math.min(100, body.level));
+        }
+        if (action === 'mute') {
+          if (body.muted === undefined) {
+            return reply.code(400).send({ error: 'muted is required for mute action' });
+          }
+          payload.value = body.muted ? 1 : 0;
+        }
+        if (!relayed) {
+          broadcast({ type: 'command', action: `youtube_${action}`, payload }, 'browser');
+          if (action === 'stop') broadcast({ type: 'command', action: 'hide_floating', payload: {} }, 'browser');
+        }
         youtubePlaybackStatus = {
           ...youtubePlaybackStatus,
           status: action === 'resume'
             ? 'playing'
-            : action === 'next'
+            : action === 'next' || action === 'previous'
               ? 'loading'
-              : action === 'pause' ? 'paused' : 'stopped',
+              : action === 'pause' ? 'paused' : action === 'stop' ? 'stopped' : youtubePlaybackStatus.status,
           error_code: null,
           updated_at: new Date().toISOString(),
         };

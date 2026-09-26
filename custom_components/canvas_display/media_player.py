@@ -34,6 +34,7 @@ SUPPORTED_FEATURES = (
     | MediaPlayerEntityFeature.PAUSE
     | MediaPlayerEntityFeature.STOP
     | MediaPlayerEntityFeature.NEXT_TRACK
+    | MediaPlayerEntityFeature.PREVIOUS_TRACK
     | MediaPlayerEntityFeature.PLAY_MEDIA
     | MediaPlayerEntityFeature.VOLUME_SET
     | MediaPlayerEntityFeature.VOLUME_MUTE
@@ -164,24 +165,35 @@ class CanvasDeviceMediaPlayer(CoordinatorEntity[CanvasDisplayCoordinator], Media
         return artwork or None
 
     async def async_media_play(self) -> None:
-        await self.coordinator.async_device_media_control(self._device_id, "resume")
+        await self.coordinator.async_device_media_control(self._device_id, "resume", source=self._current_source())
 
     async def async_media_pause(self) -> None:
-        await self.coordinator.async_device_media_control(self._device_id, "pause")
+        await self.coordinator.async_device_media_control(self._device_id, "pause", source=self._current_source())
 
     async def async_media_stop(self) -> None:
-        await self.coordinator.async_device_media_control(self._device_id, "stop")
+        await self.coordinator.async_device_media_control(self._device_id, "stop", source=self._current_source())
 
     async def async_media_next_track(self) -> None:
-        await self.coordinator.async_device_media_control(self._device_id, "next")
+        await self.coordinator.async_device_media_control(self._device_id, "next", source=self._current_source())
+
+    async def async_media_previous_track(self) -> None:
+        await self.coordinator.async_device_media_control(self._device_id, "previous", source=self._current_source())
 
     async def async_set_volume_level(self, volume: float) -> None:
         await self.coordinator.async_device_media_control(
-            self._device_id, "volume", level=round(max(0.0, min(volume, 1.0)) * 100)
+            self._device_id, "volume", source=self._current_source(), level=round(max(0.0, min(volume, 1.0)) * 100)
         )
 
     async def async_mute_volume(self, mute: bool) -> None:
-        await self.coordinator.async_device_media_control(self._device_id, "mute", muted=mute)
+        await self.coordinator.async_device_media_control(
+            self._device_id, "mute", source=self._current_source(), muted=mute
+        )
+
+    def _current_source(self) -> str:
+        media_id = self.media_content_id or ""
+        if "youtube.com" in media_id or "youtu.be" in media_id:
+            return "youtube"
+        return "direct_audio"
 
     async def async_play_media(
         self,

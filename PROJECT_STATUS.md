@@ -380,6 +380,18 @@ Consequence: per-device HA media players must come from the **`canvas_display` c
 - `custom_components/canvas_display`: new **Core mode** (`core_mode` + `edge_token` in the config/options flow). In Core mode the coordinator polls `/api/edge/devices` and the media_player platform creates **one entity per device** (dynamic — new devices are added on refresh). Legacy single-device mode is unchanged.
 - **Deployment still required**: copy `custom_components/canvas_display` into the HA config dir (or update via HACS) and add a Core-mode config entry (URL `https://192.168.1.108:3100`, edge token). This session had no HA config access, so the entities are not yet live in HA.
 
+### Full YouTube control (previous / volume / mute)
+
+Both edges previously exposed only `pause`/`resume`/`stop`/`next`. Added the rest across every layer:
+
+- **Player bridge** (`core/src/youtube.ts` + `server/src/services/youtube.ts`): `previous()` (cycles candidates backwards, falls back to `player.previousVideo()`), `volume(level)`, `mute(muted)`.
+- **Linux kiosk**: `control_youtube_webview` now takes an optional `value` and allowlists `previous`/`volume`/`mute`; the `youtube_*` WS handler and the `device_http /api/media/control` relay both pass it.
+- **Android**: `MultiPanelRenderer.controlMedia(action, value)` and the `media.control` gateway handler accept the new actions + value.
+- **Core**: `controlMedia`/`controlDeviceMedia` carry `value`; new tools `media.previous`, `media.volume`, `media.mute`; the edge device API forwards `source`.
+- **Double-execution fix**: the kiosk relays `device_http /api/media/control` to the sidecar, which *also* broadcast `youtube_*` back to the kiosk over `/ws` — so `next`/`previous` ran twice. The kiosk now sends `x-canvas-relay: 1` and the sidecar skips the broadcast for relayed requests (the kiosk performs the control itself).
+
+Verified live: play a YouTube query, then `pause`/`resume`/`next`/`previous`/`volume`/`mute` all return `ok`; the sidecar reports an active `playback_id` with 10 candidates.
+
 ### Deployments this session
 
 - Pi: new `canvas-display-browser-linux` + `canvas-display-server` installed to `/usr/bin/` (backups `*.bak-20260927-broadcast`); `canvas-display-browser.service` **and** `canvas-display-server.service` restarted.

@@ -1936,12 +1936,13 @@ async function main(): Promise<void> {
   };
   const controlDeviceMedia = async (
     deviceId: string,
-    action: 'pause' | 'resume' | 'stop' | 'next',
+    action: 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'volume' | 'mute',
     source = 'youtube',
+    value?: number,
   ) => requestDeviceAction(deviceId, 'device_http', {
     path: '/api/media/control',
     http_method: 'POST',
-    body: { source, action },
+    body: { source, action, value },
   }, 10_000);
   const getPlaylistSelectionPage = async (): Promise<{
     layout: Array<Record<string, unknown>>;
@@ -2128,22 +2129,22 @@ async function main(): Promise<void> {
     },
   );
 
-  fastify.post<{ Params: { id: string }; Body: { action?: string; level?: number; muted?: boolean } }>(
+  fastify.post<{ Params: { id: string }; Body: { action?: string; source?: string; level?: number; muted?: boolean; value?: number } }>(
     '/api/edge/devices/:id/media/control',
     async (request, reply) => {
       if (!(await requireEdgeToken(request, reply))) return;
       const deviceId = request.params.id;
-      const { action, level, muted } = request.body ?? {};
+      const { action, source = 'youtube', level, muted, value } = request.body ?? {};
       if (!action) return reply.code(400).send({ error: 'action is required' });
       try {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-          await gateway.requestAction(deviceId, 'media.control', { action }, 10_000);
+          await gateway.requestAction(deviceId, 'media.control', { source, action, value }, 10_000);
         } else {
           await requestDeviceAction(deviceId, 'device_http', {
             path: '/api/media/control',
             http_method: 'POST',
-            body: { action, level, muted },
+            body: { source, action, level, muted, value },
           }, 10_000);
         }
         if (action === 'stop') mqttNavigation.updateMediaState(deviceId, { state: 'idle', title: null, url: null });
@@ -2584,7 +2585,7 @@ async function main(): Promise<void> {
         };
       }
     },
-    controlMedia: async (action, source, deviceId) => {
+    controlMedia: async (action, source, deviceId, value) => {
       if (!deviceId || deviceId === 'unknown') {
         return { ok: false, message: 'I could not identify which display requested media control.' };
       }
@@ -2604,6 +2605,9 @@ async function main(): Promise<void> {
             resume: 'Resumed Music Assistant playback',
             stop: 'Stopped Music Assistant playback',
             next: 'Skipped to the next Music Assistant track',
+            previous: 'Went back to the previous Music Assistant track',
+            volume: 'Set the Music Assistant volume',
+            mute: value ? 'Muted Music Assistant playback' : 'Unmuted Music Assistant playback',
           }[action] ?? 'Updated Music Assistant playback';
           return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
         } catch (error) {
@@ -2622,25 +2626,31 @@ async function main(): Promise<void> {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
           const result = await gateway.requestAction(
-            deviceId, 'media.control', { source, action }, 10_000,
+            deviceId, 'media.control', { source, action, value }, 10_000,
           );
           const verb = {
             pause: 'Paused YouTube playback',
             resume: 'Resumed YouTube playback',
             stop: 'Stopped YouTube playback',
             next: 'Skipped to the next YouTube result',
+            previous: 'Went back to the previous YouTube result',
+            volume: 'Set the YouTube volume',
+            mute: value ? 'Muted YouTube playback' : 'Unmuted YouTube playback',
           }[action];
           mqttNavigation.updateMediaState(deviceId, {
             state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
           });
           return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
         }
-        const result = await controlDeviceMedia(deviceId, action, source);
+        const result = await controlDeviceMedia(deviceId, action, source, value);
         const verb = {
           pause: 'Paused YouTube playback',
           resume: 'Resumed YouTube playback',
           stop: 'Stopped YouTube playback',
           next: 'Skipped to the next YouTube result',
+          previous: 'Went back to the previous YouTube result',
+          volume: 'Set the YouTube volume',
+          mute: value ? 'Muted YouTube playback' : 'Unmuted YouTube playback',
         }[action];
         mqttNavigation.updateMediaState(deviceId, {
           state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',

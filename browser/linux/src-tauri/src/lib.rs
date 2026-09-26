@@ -268,12 +268,21 @@ async fn control_youtube_webview(
     app: AppHandle,
     label: String,
     action: String,
+    value: Option<f64>,
 ) -> Result<(), String> {
-    let method = match action.as_str() {
-        "pause" => "pause",
-        "resume" => "resume",
-        "stop" => "stop",
-        "next" => "next",
+    // `method` is checked for existence, then called with `args`. The action is
+    // allowlisted so callers cannot inject JS.
+    let (method, args) = match action.as_str() {
+        "pause" => ("pause", String::new()),
+        "resume" => ("resume", String::new()),
+        "stop" => ("stop", String::new()),
+        "next" => ("next", String::new()),
+        "previous" => ("previous", String::new()),
+        "volume" => (
+            "volume",
+            format!("{}", value.unwrap_or(100.0).clamp(0.0, 100.0)),
+        ),
+        "mute" => ("mute", format!("{}", value.unwrap_or(1.0) != 0.0)),
         _ => return Err(format!("unsupported YouTube control: {action}")),
     };
     // Prefer the YouTube IFrame API bridge; fall back to plain HTML5 media control
@@ -285,7 +294,7 @@ async fn control_youtube_webview(
         _ => "",
     };
     let script = format!(
-        "(function(){{try{{if(window.__canvasYouTubeControl&&window.__canvasYouTubeControl.{method}){{window.__canvasYouTubeControl.{method}();return true;}}{html5};return true}}catch(e){{return false}}}})()"
+        "(function(){{try{{if(window.__canvasYouTubeControl&&window.__canvasYouTubeControl.{method}){{window.__canvasYouTubeControl.{method}({args});return true;}}{html5};return true}}catch(e){{return false}}}})()"
     );
     let app_handle = app.clone();
     app.run_on_main_thread(move || {

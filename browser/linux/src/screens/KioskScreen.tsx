@@ -569,7 +569,9 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
             } else {
               const response = await fetch(`http://127.0.0.1:3100${path}`, {
                 method: String(cmd.payload?.http_method ?? 'POST'),
-                headers: { 'content-type': 'application/json' },
+                // Mark this as a kiosk relay so the sidecar does not also broadcast the
+                // command back to us over /ws (which would run next/previous twice).
+                headers: { 'content-type': 'application/json', 'x-canvas-relay': '1' },
                 body: cmd.payload?.body === undefined ? undefined : JSON.stringify(cmd.payload.body),
               });
               result = await response.json();
@@ -596,10 +598,12 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
               }
               if (path === '/api/media/control') {
                 const action = String(cmd.payload?.body?.action ?? '');
-                if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
+                if (!['pause', 'resume', 'stop', 'next', 'previous', 'volume', 'mute'].includes(action)) {
                   throw new Error(`Unsupported YouTube control: ${action}`);
                 }
-                await invoke('control_youtube_webview', { label: 'floating', action });
+                const rawValue = cmd.payload?.body?.value ?? cmd.payload?.body?.level;
+                const value = rawValue === undefined || rawValue === null ? undefined : Number(rawValue);
+                await invoke('control_youtube_webview', { label: 'floating', action, value });
                 if (action === 'stop') {
                   await invoke('close_webview', { label: 'floating' }).catch(console.error);
                 }
@@ -746,9 +750,14 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       case 'youtube_pause':
       case 'youtube_resume':
       case 'youtube_stop':
-      case 'youtube_next': {
+      case 'youtube_next':
+      case 'youtube_previous':
+      case 'youtube_volume':
+      case 'youtube_mute': {
         const action = cmd.type.replace('youtube_', '');
-        await invoke('control_youtube_webview', { label: 'floating', action }).catch(console.error);
+        const rawValue = (cmd.payload as Record<string, unknown> | undefined)?.value;
+        const value = rawValue === undefined || rawValue === null ? undefined : Number(rawValue);
+        await invoke('control_youtube_webview', { label: 'floating', action, value }).catch(console.error);
         if (action === 'stop') {
           await invoke('close_webview', { label: 'floating' }).catch(console.error);
         }

@@ -96,9 +96,10 @@ export interface ToolContext {
   selectMedia?: (selection: { position?: number; action?: 'more' | 'cancel' }, deviceId?: string) => Promise<ToolResult>;
   /** Media control callback (dispatches to the originating Edge display). */
   controlMedia?: (
-    action: 'pause' | 'resume' | 'stop' | 'next',
+    action: 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'volume' | 'mute',
     source: string,
     deviceId?: string,
+    value?: number,
   ) => Promise<ToolResult>;
   /** Change one panel's URL/scene/visibility on connected displays. */
   setPanel?: (command: {
@@ -622,6 +623,50 @@ export class ToolRegistry {
       executor: async (_params, ctx) => ctx.controlMedia
         ? ctx.controlMedia('next', 'youtube', ctx.deviceId)
         : { ok: false, message: 'Device media control is not configured.' },
+    });
+
+    this.register({
+      name: 'media.previous',
+      description: 'Go back to the previous media item or YouTube candidate',
+      schema: { type: 'object', properties: {}, required: [] },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (_params, ctx) => ctx.controlMedia
+        ? ctx.controlMedia('previous', 'youtube', ctx.deviceId)
+        : { ok: false, message: 'Device media control is not configured.' },
+    });
+
+    this.register({
+      name: 'media.volume',
+      description: 'Set the media player volume (0–100)',
+      schema: {
+        type: 'object',
+        properties: { level: { type: 'number', description: 'Volume level 0–100' } },
+        required: ['level'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        if (!ctx.controlMedia) return { ok: false, message: 'Device media control is not configured.' };
+        const level = Math.max(0, Math.min(100, Number(params.level)));
+        return ctx.controlMedia('volume', 'youtube', ctx.deviceId, level);
+      },
+    });
+
+    this.register({
+      name: 'media.mute',
+      description: 'Mute or unmute the media player',
+      schema: {
+        type: 'object',
+        properties: { muted: { type: 'boolean', description: 'True to mute, false to unmute' } },
+        required: ['muted'],
+      },
+      requiredRole: 'voice',
+      requiresConfirmation: false,
+      executor: async (params, ctx) => {
+        if (!ctx.controlMedia) return { ok: false, message: 'Device media control is not configured.' };
+        return ctx.controlMedia('mute', 'youtube', ctx.deviceId, params.muted ? 1 : 0);
+      },
     });
 
     // brightness.set — set display brightness

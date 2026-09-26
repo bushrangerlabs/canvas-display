@@ -106,13 +106,16 @@ class MultiPanelRenderer(
         return true
     }
 
-    fun controlMedia(action: String): Boolean {
+    fun controlMedia(action: String, value: Double? = null): Boolean {
         val target = floating ?: panels.values.lastOrNull() ?: return false
-        val method = when (action) {
-            "pause" -> "pause"
-            "resume" -> "resume"
-            "stop" -> "stop"
-            "next" -> "next"
+        val (method, args) = when (action) {
+            "pause" -> "pause" to ""
+            "resume" -> "resume" to ""
+            "stop" -> "stop" to ""
+            "next" -> "next" to ""
+            "previous" -> "previous" to ""
+            "volume" -> "volume" to (value ?: 100.0).coerceIn(0.0, 100.0).toString()
+            "mute" -> "mute" to ((value ?: 1.0) != 0.0).toString()
             else -> return false
         }
         val html5 = when (action) {
@@ -122,7 +125,7 @@ class MultiPanelRenderer(
             else -> ""
         }
         target.evaluateJavascript(
-            "(function(){try{if(window.__canvasYouTubeControl&&window.__canvasYouTubeControl.$method){window.__canvasYouTubeControl.$method();return true;}$html5;return true}catch(e){return false}})()",
+            "(function(){try{if(window.__canvasYouTubeControl&&window.__canvasYouTubeControl.$method){window.__canvasYouTubeControl.$method($args);return true;}$html5;return true}catch(e){return false}})()",
             null,
         )
         if (action == "stop") hideFloating()

@@ -258,7 +258,7 @@ class MainActivity : AppCompatActivity() {
                             true
                         }
                     },
-                    { action -> controlMedia(action) },
+                    { action, value -> controlMedia(action, value) },
                     { url, ms -> runOnUiThread { openSearchPage(url, ms) } },
                     { control -> runOnUiThread {
                         when (control) {
@@ -390,11 +390,11 @@ class MainActivity : AppCompatActivity() {
         revertRunnable = null
     }
 
-    private fun controlMedia(action: String): Boolean {
+    private fun controlMedia(action: String, value: Double? = null): Boolean {
         val completed = CountDownLatch(1)
         var applied = false
         runOnUiThread {
-            applied = renderer.controlMedia(action)
+            applied = renderer.controlMedia(action, value)
             completed.countDown()
         }
         return completed.await(2, TimeUnit.SECONDS) && applied
