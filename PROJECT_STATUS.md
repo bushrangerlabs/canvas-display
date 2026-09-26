@@ -284,3 +284,31 @@ Owner-authorized staged deployment to the existing Pi (`192.168.1.216`, `housedi
 - Android signing rollout decision (installed tablets are debug-signed).
 - Core-issued scoped HA display sessions (Linux still injects a legacy local HA long-lived token).
 - Capability/settings/voice acceptance and the final platform functionality matrix.
+
+## Edge + Core feature parity workstream (2026-09-27)
+
+User directive: **both** edge apps (Linux kiosk + native Android) must support the same functions, and Core must support them. Target is **full parity**. Tracked here so items can be marked off. Legend: `[ ]` not started · `[~]` partial · `[x]` done · `[?]` needs a decision.
+
+### Voice control
+
+- `[~]` **1. Intent model routing + conversation model + vision model + cloud fallback + coding model.** Core has `core/src/intent-router.ts`, `withConversationFailover` (`core/src/ai-log.ts`), and a multi-provider AI registry (`core/src/config.ts` routes `intent_routing`/`conversation`/`asr`/`tts`/`embedding`). Vision model: not found in `core/src` — likely missing. Cloud fallback: failover exists; "used for coding" is undefined.
+- `[~]` **2. Full YouTube control.** Linux has `youtube_pause/resume/stop/next` + `media.play`/`media.control`; Android has `media.play`/`media.control`; Core has `media.play`/`media.control` routes. "Full" control (seek, volume, queue/playlist, next-result) is likely incomplete.
+- `[~]` **3. General-question intents → Wikipedia page, search-engine fallback when Wikipedia has no hit, settable auto-return timer (configurable in code).** Core has `core/web_search_stdio.py`, `wikipedia-api`, and the knowledge-card route/widget. The knowledge-card widget has `autoDismiss`; the "return display to home page" behaviour, the search-engine fallback, and a code-settable period need verification.
+- `[ ]` **4. DAB+ radio via the Music Assistant RTL/SDR plugin (user-created).** Only a `dab_play_station` tool name exists in `tools/eval/corpus.json`; no implementation found.
+- `[~]` **5. Works with Music Assistant.** `plugins/listnr-musicassistant-provider/` exists; `custom_components/canvas_display/media_player.py` resolves a `music_assistant` source; the Hermes plugin media tools list `music_assistant`. Needs end-to-end confirmation from the edge voice path.
+- `[~]` **6. Works with the MCP servers set up in Core.** Core has an `mcp_servers` table, `mcpUrl`/`mcpUrls` config, and `core/src/providers/mcp.ts` / `multi-mcp.ts`. Needs confirmation that the edge voice path actually reaches them.
+- `[?]` **7. Custom skills in Core (create if not already).** `skills`/`skill_revisions` tables exist, but `core/src/flow-ai-drafts.ts` states "Canvas Skill v1 … was removed in v0.2.37 in favor of the visual Flow engine". **Decision needed:** revive the Skills system, or treat Flows as the custom-skill mechanism?
+- `[?]` **8. Dispatcharr voice commands via MCP or direct.** Nothing found. **Decision needed:** MCP server vs direct API integration.
+
+### Other functions
+
+- `[~]` **1. Both edge apps present themselves to Home Assistant as media players.** `custom_components/canvas_display/media_player.py` exposes a Canvas Display `media_player`. Needs confirmation that it is per-device and covers both edge platforms.
+- `[~]` **2. Amazon-Echo-style audio broadcast (maybe a SIP server in Docker).** Server has `voice/intercom-poller.ts` (device-to-device audio), `voice/tts-broadcast-poller.ts`, and `voice/alert-broadcast-poller.ts`. "Broadcast to all devices" semantics and the SIP option need design.
+- `[ ]` **3. Dispatcharr (IPTV) support.** Nothing found.
+- `[ ]` **4. Extra widget controls in Core's editor for DAB+ radio and Dispatcharr scenes.** No DAB/Dispatcharr widgets exist; `radiobutton` is a generic UI control, not a radio-station control.
+
+### Notes
+
+- Full parity is the target; inherently OS-specific functions will be implemented per-platform with equivalent outcomes (and explicit `unsupported` results where a platform genuinely cannot do something).
+- This is a first-pass source audit. Each item needs a deeper pass (and, for `[?]` items, a decision) before implementation.
+- Implementation order to be agreed with the user; the audit suggests starting with the items that are already `[~]` (cheapest to complete) and the two `[?]` decisions.
