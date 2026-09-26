@@ -271,6 +271,13 @@ Owner-authorized staged deployment to the existing Pi (`192.168.1.216`, `housedi
 - Validation after fix: rebuilt `:app:assembleDebug` (Gradle 8.14.3 from `~/.gradle/wrapper/dists`, AGP 8.7.3), `adb install -r` (in-place, enrollment preserved), granted the appop, rebooted. Log now shows `START ... MainActivity ... (BAL_ALLOW_SAW_PERMISSION) result code=0`, `ResumedActivity: .../.MainActivity`, `KioskService isForeground=true`, and `CanvasEdge: Core: online`. The first-run prompt path was also verified (`MANAGE_OVERLAY_PERMISSION` → `Settings$OverlaySettingsActivity`). Instrumentation re-run: `OK (9 tests)`. Evidence: `artifacts/android/native-edge-boot-autostart.png`.
 - Provisioning note: the overlay grant is a one-time user action (or `adb shell appops set com.bushrangerlabs.canvas_display_edge SYSTEM_ALERT_WINDOW allow`). Without it, boot autostart and Core's remote `app.show` fall back to the launcher.
 
+### Commit + push (2026-09-27)
+
+- Committed this session's fixes (`19225d9`) and tracked the native Android app (`3d0281b`), then pushed `main` to `origin` (`cfdf0d1..c3392b9`). Local and remote `main` now match.
+- The push was first blocked: the unpushed commit `5198576` ("chore: update Android edge and platform work") had accidentally committed **20.11 GiB** of Android ROM artifacts under `artifacts/android/` (176 files, e.g. `system.raw` 3.2 GB). GitHub rejects >100 MB files and >2 GB pushes, and `git push` hung trying to compress them.
+- Fix: rewrote that commit to `5eee549` (dropping `artifacts/android/`, keeping its 1303 source files), replayed the two session commits on top, added `artifacts/` to `.gitignore` (`c3392b9`), and pushed. Because `5198576` was never pushed, this was a clean fast-forward — **no force-push and nothing lost on the remote**. The 20 GB of ROMs remain on disk, now untracked/ignored.
+- Note: `browser/linux/src-tauri/binaries/canvas-display-server-*` (~55–63 MB each) are tracked and triggered GitHub's >50 MB warning (accepted, under the 100 MB hard limit).
+
 ### Still outstanding after this session
 
 - Core admin-UI Show/Hide/Restart button click-test (needs admin login).
