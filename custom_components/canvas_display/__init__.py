@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_API_TOKEN, CONF_API_URL, DOMAIN
+from .const import CONF_API_TOKEN, CONF_API_URL, CONF_CORE_MODE, CONF_EDGE_TOKEN, DOMAIN
 from .coordinator import CanvasDisplayCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,7 +165,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     api_url = entry.data.get(CONF_API_URL) or entry.options.get(CONF_API_URL)
     api_token = entry.data.get(CONF_API_TOKEN) or entry.options.get(CONF_API_TOKEN, "")
-    coordinator = CanvasDisplayCoordinator(hass, api_url, api_token)
+    core_mode = bool(entry.data.get(CONF_CORE_MODE) or entry.options.get(CONF_CORE_MODE, False))
+    edge_token = entry.data.get(CONF_EDGE_TOKEN) or entry.options.get(CONF_EDGE_TOKEN, "")
+    coordinator = CanvasDisplayCoordinator(hass, api_url, api_token, core_mode, edge_token)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}

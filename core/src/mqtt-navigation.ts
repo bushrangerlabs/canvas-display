@@ -202,6 +202,11 @@ export class MqttNavigationService {
     this.publishMediaState(deviceId);
   }
 
+  /** Read a device's last known media state (for the HA integration API). */
+  getMediaState(deviceId: string): DeviceMediaState {
+    return { ...(this.mediaStates.get(deviceId) ?? DEFAULT_MEDIA_STATE) };
+  }
+
   private publishMediaState(deviceId: string): void {
     const state = this.mediaStates.get(deviceId) ?? DEFAULT_MEDIA_STATE;
     this.publish(`canvas/devices/${deviceId}/media_player/state`, {

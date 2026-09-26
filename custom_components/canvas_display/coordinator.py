@@ -19,10 +19,20 @@ SCAN_INTERVAL = timedelta(seconds=30)
 class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls the Canvas Display server for settings and pages."""
 
-    def __init__(self, hass: HomeAssistant, api_url: str, api_token: str = "") -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        api_url: str,
+        api_token: str = "",
+        core_mode: bool = False,
+        edge_token: str = "",
+    ) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_token = api_token
+        self.core_mode = core_mode
+        self.edge_token = edge_token or api_token
         self._session: aiohttp.ClientSession | None = None
+        self._edge_session: aiohttp.ClientSession | None = None
         super().__init__(
             hass,
             _LOGGER,
@@ -37,8 +47,47 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         return self._session
 
+    def _get_edge_session(self) -> aiohttp.ClientSession:
+        """Session for the edge-token-authenticated Core device API."""
+        if self._edge_session is None or self._edge_session.closed:
+            self._edge_session = aiohttp.ClientSession(
+                headers={"Authorization": f"Bearer {self.edge_token}"}
+            )
+        return self._edge_session
+
+    async def _async_update_core(self) -> dict[str, Any]:
+        """Core mode: fetch every registered device and its media state."""
+        session = self._get_edge_session()
+        try:
+            async with session.get(
+                f"{self.api_url}/api/edge/devices",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    raise UpdateFailed(f"Core device API returned {resp.status}")
+                payload = await resp.json()
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise UpdateFailed(f"Cannot connect to Canvas Core at {self.api_url}: {err}") from err
+
+        devices = {
+            str(device.get("id")): device
+            for device in (payload.get("devices") or [])
+            if device.get("id")
+        }
+        return {
+            "online": True,
+            "core_mode": True,
+            "devices": devices,
+            "settings": {},
+            "pages": {},
+            "page_names": {},
+            "media": {},
+        }
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch settings and pages from the Canvas Display API."""
+        if self.core_mode:
+            return await self._async_update_core()
         session = self._get_session()
         try:
             async with session.get(
@@ -276,3 +325,53 @@ class CanvasDisplayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Close the aiohttp session on unload."""
         if self._session and not self._session.closed:
             await self._session.close()
+        if self._edge_session and not self._edge_session.closed:
+            await self._edge_session.close()
+
+    # ── Core mode: per-device media control ───────────────────────────────────
+
+    async def async_device_media_play(
+        self,
+        device_id: str,
+        *,
+        source: str,
+        url: str,
+        title: str | None = None,
+    ) -> None:
+        """Play media on one Core-managed device."""
+        body: dict[str, Any] = {"source": source, "url": url}
+        if title:
+            body["title"] = title
+        session = self._get_edge_session()
+        async with session.post(
+            f"{self.api_url}/api/edge/devices/{device_id}/media/play",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=25),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"device media play failed: HTTP {resp.status} — {await resp.text()}")
+        await self.async_request_refresh()
+
+    async def async_device_media_control(
+        self,
+        device_id: str,
+        action: str,
+        *,
+        level: int | None = None,
+        muted: bool | None = None,
+    ) -> None:
+        """Pause/resume/stop/next/volume/mute one Core-managed device."""
+        body: dict[str, Any] = {"action": action}
+        if level is not None:
+            body["level"] = level
+        if muted is not None:
+            body["muted"] = muted
+        session = self._get_edge_session()
+        async with session.post(
+            f"{self.api_url}/api/edge/devices/{device_id}/media/control",
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 204):
+                raise Exception(f"device media control failed: HTTP {resp.status} — {await resp.text()}")
+        await self.async_request_refresh()

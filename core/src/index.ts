@@ -2069,6 +2069,94 @@ async function main(): Promise<void> {
     reply.type(clip.mimeType);
     return reply.send(clip.buffer);
   });
+
+  // --- Edge device media API (for the HA canvas_display integration) ---------
+  // HA's MQTT integration has no media_player platform, so MQTT discovery can
+  // never create these entities. The canvas_display custom component polls this
+  // edge-authenticated surface instead and exposes one media_player per device.
+  const requireEdgeToken = async (request: { headers: Record<string, unknown> }, reply: { code: (n: number) => { send: (b: unknown) => unknown } }) => {
+    const header = request.headers.authorization;
+    const presented = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : '';
+    const expected = await resolveEdgeVoiceToken(presented);
+    if (!checkEdgeVoiceAuth(expected, presented)) {
+      reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+      return false;
+    }
+    return true;
+  };
+
+  fastify.get('/api/edge/devices', async (request, reply) => {
+    if (!(await requireEdgeToken(request, reply))) return;
+    const rows = await pool.query<{ id: string; name: string | null; architecture: string | null; status: string | null }>(
+      'SELECT id, name, architecture, status FROM devices WHERE revoked_at IS NULL ORDER BY id',
+    );
+    const connected = new Set(gateway.connectedDeviceIds());
+    return {
+      devices: rows.rows.map(row => ({
+        id: row.id,
+        name: row.name ?? row.id,
+        architecture: row.architecture ?? 'unknown',
+        online: connected.has(row.id) || row.status === 'connected',
+        media: mqttNavigation.getMediaState(row.id),
+      })),
+    };
+  });
+
+  fastify.post<{ Params: { id: string }; Body: { source?: string; url?: string; title?: string } }>(
+    '/api/edge/devices/:id/media/play',
+    async (request, reply) => {
+      if (!(await requireEdgeToken(request, reply))) return;
+      const deviceId = request.params.id;
+      const { source = 'direct_audio', url, title } = request.body ?? {};
+      if (!url) return reply.code(400).send({ error: 'url is required' });
+      try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          await gateway.requestAction(deviceId, 'media.play', { source, url, title }, 20_000);
+        } else {
+          await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/play',
+            http_method: 'POST',
+            body: { source, url, title },
+          }, 20_000);
+        }
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: title ?? url, url });
+        return { ok: true };
+      } catch (error) {
+        return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+  );
+
+  fastify.post<{ Params: { id: string }; Body: { action?: string; level?: number; muted?: boolean } }>(
+    '/api/edge/devices/:id/media/control',
+    async (request, reply) => {
+      if (!(await requireEdgeToken(request, reply))) return;
+      const deviceId = request.params.id;
+      const { action, level, muted } = request.body ?? {};
+      if (!action) return reply.code(400).send({ error: 'action is required' });
+      try {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          await gateway.requestAction(deviceId, 'media.control', { action }, 10_000);
+        } else {
+          await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/control',
+            http_method: 'POST',
+            body: { action, level, muted },
+          }, 10_000);
+        }
+        if (action === 'stop') mqttNavigation.updateMediaState(deviceId, { state: 'idle', title: null, url: null });
+        else if (action === 'pause') mqttNavigation.updateMediaState(deviceId, { state: 'paused' });
+        else if (action === 'resume') mqttNavigation.updateMediaState(deviceId, { state: 'playing' });
+        else if (action === 'volume' && typeof level === 'number') mqttNavigation.updateMediaState(deviceId, { volume: Math.max(0, Math.min(1, level)) });
+        else if (action === 'mute' && typeof muted === 'boolean') mqttNavigation.updateMediaState(deviceId, { muted });
+        return { ok: true };
+      } catch (error) {
+        return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
+      }
+    },
+  );
   intelligence.setToolContext({
     haClient: ha,
     parseHaIntent: async (transcript) => {

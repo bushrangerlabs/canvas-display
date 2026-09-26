@@ -375,6 +375,11 @@ So the kiosk's `fetch('http://127.0.0.1:3100/...')` is **redirected to the syste
 
 Consequence: per-device HA media players must come from the **`canvas_display` custom component** (this repo), not MQTT. That requires deploying the component to the HA config dir, which this session could not reach (no SSH/Samba credentials for the HA host). The MQTT discovery publishing in `MqttNavigationService` is now dead weight and should be replaced by a Core API the component can poll.
 
+**Implemented (needs HA deployment):**
+- Core: `GET /api/edge/devices` (edge-token auth) returns every registered device with `{id,name,architecture,online,media}`; `POST /api/edge/devices/:id/media/play` and `/media/control` route to the device (gateway `media.play`/`media.control` for Android, `device_http` for the kiosk) and update the MQTT media state. Verified live: play reached the Pi (`mpv` playing) and stop returned it to idle.
+- `custom_components/canvas_display`: new **Core mode** (`core_mode` + `edge_token` in the config/options flow). In Core mode the coordinator polls `/api/edge/devices` and the media_player platform creates **one entity per device** (dynamic — new devices are added on refresh). Legacy single-device mode is unchanged.
+- **Deployment still required**: copy `custom_components/canvas_display` into the HA config dir (or update via HACS) and add a Core-mode config entry (URL `https://192.168.1.108:3100`, edge token). This session had no HA config access, so the entities are not yet live in HA.
+
 ### Deployments this session
 
 - Pi: new `canvas-display-browser-linux` + `canvas-display-server` installed to `/usr/bin/` (backups `*.bak-20260927-broadcast`); `canvas-display-browser.service` **and** `canvas-display-server.service` restarted.

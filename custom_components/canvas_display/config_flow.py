@@ -5,7 +5,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_API_TOKEN, CONF_API_URL, DOMAIN
+from .const import CONF_API_TOKEN, CONF_API_URL, CONF_CORE_MODE, CONF_EDGE_TOKEN, DOMAIN
 
 
 class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -19,19 +19,33 @@ class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             api_url = user_input[CONF_API_URL].rstrip("/")
             api_token = user_input.get(CONF_API_TOKEN, "")
-            error = await _test_connection(api_url, api_token)
+            core_mode = bool(user_input.get(CONF_CORE_MODE, False))
+            edge_token = user_input.get(CONF_EDGE_TOKEN, "")
+            error = await _test_connection(api_url, api_token, core_mode, edge_token)
             if error:
                 errors["base"] = error
             else:
-                # Use device_name from server as the entry title
-                title = await _get_device_name(api_url, api_token) or "Canvas Display"
-                return self.async_create_entry(title=title, data={CONF_API_URL: api_url, CONF_API_TOKEN: api_token})
+                if core_mode:
+                    title = "Canvas Core"
+                else:
+                    title = await _get_device_name(api_url, api_token) or "Canvas Display"
+                return self.async_create_entry(
+                    title=title,
+                    data={
+                        CONF_API_URL: api_url,
+                        CONF_API_TOKEN: api_token,
+                        CONF_CORE_MODE: core_mode,
+                        CONF_EDGE_TOKEN: edge_token,
+                    },
+                )
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
                 vol.Required(CONF_API_URL): cv.string,
                 vol.Required(CONF_API_TOKEN): cv.string,
+                vol.Optional(CONF_CORE_MODE, default=False): cv.boolean,
+                vol.Optional(CONF_EDGE_TOKEN, default=""): cv.string,
             }),
             errors=errors,
         )
@@ -43,7 +57,7 @@ class CanvasDisplayConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class CanvasDisplayOptionsFlow(config_entries.OptionsFlow):
-    """Allow changing the API URL after setup."""
+    """Allow changing the API URL / Core mode after setup."""
 
     async def async_step_init(self, user_input=None):
         errors: dict[str, str] = {}
@@ -51,31 +65,58 @@ class CanvasDisplayOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             api_url = user_input[CONF_API_URL].rstrip("/")
             api_token = user_input.get(CONF_API_TOKEN, "")
-            error = await _test_connection(api_url, api_token)
+            core_mode = bool(user_input.get(CONF_CORE_MODE, False))
+            edge_token = user_input.get(CONF_EDGE_TOKEN, "")
+            error = await _test_connection(api_url, api_token, core_mode, edge_token)
             if error:
                 errors["base"] = error
             else:
-                return self.async_create_entry(title="", data={CONF_API_URL: api_url, CONF_API_TOKEN: api_token})
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_API_URL: api_url,
+                        CONF_API_TOKEN: api_token,
+                        CONF_CORE_MODE: core_mode,
+                        CONF_EDGE_TOKEN: edge_token,
+                    },
+                )
 
         current_url = self.config_entry.data.get(CONF_API_URL, "")
         current_token = self.config_entry.data.get(CONF_API_TOKEN, "")
+        current_core = bool(self.config_entry.data.get(CONF_CORE_MODE, False))
+        current_edge = self.config_entry.data.get(CONF_EDGE_TOKEN, "")
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
                 vol.Required(CONF_API_URL, default=current_url): cv.string,
                 vol.Required(CONF_API_TOKEN, default=current_token): cv.string,
+                vol.Optional(CONF_CORE_MODE, default=current_core): cv.boolean,
+                vol.Optional(CONF_EDGE_TOKEN, default=current_edge): cv.string,
             }),
             errors=errors,
         )
 
 
-async def _test_connection(api_url: str, api_token: str) -> str | None:
+async def _test_connection(
+    api_url: str,
+    api_token: str,
+    core_mode: bool = False,
+    edge_token: str = "",
+) -> str | None:
     """Return error key if connection fails, None if OK."""
+    if core_mode:
+        # Core mode authenticates with the edge voice token against the
+        # edge device API (stable, auto-provisioned) rather than an admin session.
+        token = edge_token or api_token
+        path = "/api/edge/devices"
+    else:
+        token = api_token
+        path = "/api/admin/devices"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{api_url}/api/admin/devices",
-                headers={"Authorization": f"Bearer {api_token}"},
+                f"{api_url}{path}",
+                headers={"Authorization": f"Bearer {token}"},
                 timeout=aiohttp.ClientTimeout(total=5),
             ) as resp:
                 if resp.status != 200:
