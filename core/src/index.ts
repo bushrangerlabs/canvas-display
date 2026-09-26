@@ -2210,6 +2210,66 @@ async function main(): Promise<void> {
         };
       }
     },
+    playDab: async (station, deviceId) => {
+      if (!deviceId || deviceId === 'unknown') {
+        return { ok: false, message: 'I could not identify which display requested playback.' };
+      }
+      const name = station.trim();
+      if (!name) return { ok: false, message: 'A DAB+ station name is required.' };
+      try {
+        const base = config.sdrRadioUrl.replace(/\/$/, '');
+        const res = await fetch(`${base}/api/stations`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) {
+          return { ok: false, message: `SDR radio returned HTTP ${res.status}.` };
+        }
+        const data = (await res.json()) as { dab?: Array<{ id?: string; name?: string }> };
+        const dab = data.dab ?? [];
+        const needle = name.toLowerCase();
+        const match = dab.find(s => (s.name ?? '').toLowerCase() === needle)
+          ?? dab.find(s => (s.id ?? '').toLowerCase() === needle)
+          ?? dab.find(s => (s.name ?? '').toLowerCase().includes(needle));
+        if (!match?.id) {
+          return { ok: false, message: `I could not find the DAB+ station "${name}".` };
+        }
+        const tune = await fetch(`${base}/api/tuners/${config.sdrRadioTuner}/play`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ station: `dab:${match.id}` }),
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!tune.ok) {
+          const detail = await tune.text().catch(() => '');
+          return {
+            ok: false,
+            message: `I could not tune to ${match.name ?? name}: ${detail || `HTTP ${tune.status}`}`,
+          };
+        }
+        const streamUrl = config.sdrRadioStreamUrl;
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          await gateway.requestAction(
+            deviceId, 'media.play', { source: 'direct_audio', url: streamUrl, title: match.name }, 20_000,
+          );
+        } else {
+          await requestDeviceAction(deviceId, 'device_http', {
+            path: '/api/media/play',
+            http_method: 'POST',
+            body: { source: 'direct_audio', url: streamUrl, title: match.name },
+          }, 20_000);
+        }
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.name ?? name, url: streamUrl });
+        return {
+          ok: true,
+          message: `Tuning to ${match.name ?? name} on digital radio.`,
+          data: { device_id: deviceId, station: match.name, url: streamUrl, playback_started: true },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: `I could not tune to "${name}": ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    },
     playDispatcharr: async (channel, deviceId) => {
       if (!deviceId || deviceId === 'unknown') {
         return { ok: false, message: 'I could not identify which display requested playback.' };

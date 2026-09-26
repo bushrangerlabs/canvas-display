@@ -88,6 +88,8 @@ export interface ToolContext {
   playMedia?: (query: string, source: string, deviceId?: string, mediaKind?: string) => Promise<ToolResult>;
   /** Dispatcharr (IPTV) channel playback callback. */
   playDispatcharr?: (channel: string, deviceId?: string) => Promise<ToolResult>;
+  /** DAB+ digital radio playback callback (SDR). */
+  playDab?: (station: string, deviceId?: string) => Promise<ToolResult>;
   /** Select or page a pending playlist choice on the originating display. */
   selectMedia?: (selection: { position?: number; action?: 'more' | 'cancel' }, deviceId?: string) => Promise<ToolResult>;
   /** Media control callback (dispatches to the originating Edge display). */
@@ -486,8 +488,11 @@ export class ToolRegistry {
         if (!ctx.playMedia) {
           return { ok: false, message: 'Device media playback is not configured.' };
         }
-        // DAB+ stations are exposed through Music Assistant's SDR plugin.
-        return ctx.playMedia(station, 'music_assistant', ctx.deviceId, 'radio');
+        if (!ctx.playDab) {
+          return { ok: false, message: 'DAB+ radio is not configured.' };
+        }
+        // DAB+ stations are tuned via the SDR radio REST API.
+        return ctx.playDab(station, ctx.deviceId);
       },
     });
 

@@ -97,6 +97,12 @@ export interface CoreConfig {
   searxngPublicUrl: string;
   /** Dispatcharr (IPTV) base URL. Its HDHomeRun lineup is used to resolve channels. */
   dispatcharrUrl: string;
+  /** SDR radio (DAB+/FM) REST API base URL. */
+  sdrRadioUrl: string;
+  /** SDR radio tuner id used for DAB+ playback. */
+  sdrRadioTuner: string;
+  /** Icecast stream URL for the SDR tuner (played on the edge device). */
+  sdrRadioStreamUrl: string;
 }
 
 function str(name: string, fallback: string): string {
@@ -163,5 +169,8 @@ export function loadConfig(): CoreConfig {
     knowledgeDisplaySeconds: int('CANVAS_CORE_KNOWLEDGE_DISPLAY_SECONDS', 30),
     searxngPublicUrl: str('SEARXNG_PUBLIC_URL', 'http://192.168.1.108:8082'),
     dispatcharrUrl: str('DISPATCHARR_URL', 'http://theserver.localdomain:9191'),
+    sdrRadioUrl: str('SDR_RADIO_URL', 'http://192.168.1.108:8088'),
+    sdrRadioTuner: str('SDR_RADIO_TUNER', 'tuner1'),
+    sdrRadioStreamUrl: str('SDR_RADIO_STREAM_URL', 'http://192.168.1.108:8001/tuner1.mp3'),
   };
 }
