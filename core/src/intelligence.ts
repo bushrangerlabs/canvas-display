@@ -227,6 +227,27 @@ export interface IntelligenceOptions {
   /** LAN-reachable search engine base URL (e.g. SearXNG) used as the fallback
    * when a general-knowledge query has no Wikipedia article. */
   knowledgeSearchUrl?: string;
+  /** Master switch: allow AI to use cloud models (off by default). */
+  cloudAiEnabled?: boolean;
+  /** Provider id to use for cloud AI (coding/HA automations + chat last resort). */
+  cloudAiProviderId?: string;
+  /** Sink for cloud-AI usage records (for later fine-tuning). Called only when a
+   * cloud provider is actually used. */
+  cloudUsageLogger?: (entry: CloudUsageEntry) => void;
+}
+
+/** A record of one cloud-AI invocation, persisted for later fine-tuning. */
+export interface CloudUsageEntry {
+  purpose: 'chat_fallback' | 'coding' | 'ha_automation';
+  providerId: string;
+  model?: string;
+  deviceId?: string;
+  operation?: string;
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+  prompt?: string;
+  response?: string;
 }
 
 /** Extended privacy repository interface used by the intelligence pipeline. */
@@ -449,16 +470,29 @@ export function createIntelligence(
         instance: llm,
       }];
     }
-    const candidates = registry.getLlmCandidates('conversation', {
-      requireTools,
-      localOnly: voiceLlmPolicy === 'local-only',
-    });
+    // Local models first. The cloud model is only ever a LAST RESORT, and only
+    // when the operator has explicitly enabled cloud AI.
+    const localCandidates = registry.getLlmCandidates('conversation', { requireTools, localOnly: true });
+    const cloud = cloudCandidate(requireTools);
+    const candidates = cloud ? [...localCandidates, cloud] : localCandidates;
     if (candidates.length > 0) return candidates;
     return [{
       id: 'degraded-llm', kind: 'llama-cpp', model: undefined, healthy: true,
       capabilities: { tools: true, streaming: false, structuredOutput: false, vision: false, local: true },
       instance: llm,
     }];
+  }
+
+  /** The configured cloud LLM candidate, or undefined when cloud AI is disabled. */
+  function cloudCandidate(requireTools = false): LlmCandidate | undefined {
+    if (opts.cloudAiEnabled !== true || !registry) return undefined;
+    const all = registry.getLlmCandidates('conversation', { requireTools });
+    const preferred = opts.cloudAiProviderId;
+    if (preferred) {
+      const match = all.find(candidate => candidate.id === preferred);
+      if (match) return match;
+    }
+    return all.find(candidate => !candidate.capabilities.local);
   }
 
   async function withConversationFailover<T>(
@@ -491,6 +525,20 @@ export function createIntelligence(
           latencyMs,
           ok: true,
         });
+        if (!candidate.capabilities.local) {
+          // Cloud model used — record it separately for later fine-tuning.
+          try {
+            opts.cloudUsageLogger?.({
+              purpose: 'chat_fallback',
+              providerId: candidate.id,
+              model: candidate.model,
+              deviceId: trace?.deviceId,
+              operation,
+              ok: true,
+              latencyMs,
+            });
+          } catch { /* logging must never break the turn */ }
+        }
         return value;
       } catch (error) {
         lastError = error;

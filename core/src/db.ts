@@ -84,6 +84,9 @@ export async function migrate(pool: pg.Pool): Promise<void> {
   await addColumnIfNotExists(pool, 'devices', 'invitation_id', 'TEXT');
   await addColumnIfNotExists(pool, 'devices', 'audio_config', 'JSONB');
   await addColumnIfNotExists(pool, 'devices', 'voice_config', 'JSONB');
+  // Per-device page roles (e.g. {"home": pageId, "weather": pageId, "news": pageId}),
+  // resolved by the voice assistant's navigate.role tool.
+  await addColumnIfNotExists(pool, 'devices', 'page_roles', 'JSONB');
   // Physical display resolution (native pixels) so the Editor canvas and Pages
   // layout previews can match each device's real screen instead of assuming 16:9.
   await addColumnIfNotExists(pool, 'devices', 'display_width', 'INTEGER');
@@ -246,6 +249,27 @@ export async function migrate(pool: pg.Pool): Promise<void> {
   await addColumnIfNotExists(pool, 'mcp_servers', 'command', 'TEXT');
   await addColumnIfNotExists(pool, 'mcp_servers', 'args', 'TEXT');
   await addColumnIfNotExists(pool, 'mcp_servers', 'server_env', 'TEXT');
+
+  // --- cloud_ai_usage: separate log of cloud-model invocations (for fine-tuning) ---
+  // Kept apart from the general AI log so cloud usage can be reviewed/exported
+  // on its own. Only written when a cloud provider is actually used.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cloud_ai_usage (
+      id UUID PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+      purpose TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      model TEXT,
+      device_id TEXT,
+      operation TEXT,
+      ok BOOLEAN NOT NULL DEFAULT true,
+      latency_ms INTEGER,
+      error TEXT,
+      prompt TEXT,
+      response TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cloud_ai_usage_ts ON cloud_ai_usage (ts DESC);
+  `);
 
   console.log('[core][db] migrations applied');
   // --- assets: content-addressed asset metadata (Phase4 staged publication) --
@@ -523,6 +547,66 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_ha_devices_area ON ha_devices (area_id);
     CREATE INDEX IF NOT EXISTS idx_ha_entity_registry_device ON ha_entity_registry (device_id, area_id);
+    CREATE TABLE IF NOT EXISTS voice_entity_aliases (
+      alias TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL REFERENCES ha_entities(entity_id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_voice_entity_aliases_entity ON voice_entity_aliases (entity_id);
+    CREATE TABLE IF NOT EXISTS voice_command_templates (
+      id TEXT PRIMARY KEY,
+      domain TEXT NOT NULL,
+      action TEXT NOT NULL,
+      phrase_template TEXT NOT NULL,
+      service TEXT,
+      priority INTEGER NOT NULL DEFAULT 100,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      requires_confirmation BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (length(domain) BETWEEN 1 AND 80),
+      CHECK (length(action) BETWEEN 1 AND 80),
+      CHECK (length(phrase_template) BETWEEN 1 AND 160)
+    );
+    CREATE TABLE IF NOT EXISTS voice_command_index (
+      phrase TEXT NOT NULL,
+      template_id TEXT NOT NULL REFERENCES voice_command_templates(id) ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES ha_entities(entity_id) ON DELETE CASCADE,
+      domain TEXT NOT NULL,
+      action TEXT NOT NULL,
+      service TEXT,
+      priority INTEGER NOT NULL,
+      requires_confirmation BOOLEAN NOT NULL DEFAULT false,
+      PRIMARY KEY (phrase, template_id, entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_voice_command_index_phrase ON voice_command_index (phrase, priority DESC);
+    INSERT INTO voice_command_templates(id, domain, action, phrase_template, service) VALUES
+      ('light-on-prefix', 'light', 'turn_on', 'turn on {name}', 'turn_on'),
+      ('light-on-suffix', 'light', 'turn_on', 'turn {name} on', 'turn_on'),
+      ('light-off-prefix', 'light', 'turn_off', 'turn off {name}', 'turn_off'),
+      ('light-off-suffix', 'light', 'turn_off', 'turn {name} off', 'turn_off'),
+      ('light-toggle', 'light', 'toggle', 'toggle {name}', 'toggle'),
+      ('light-status', 'light', 'status', '{name} status', NULL),
+      ('light-status-question', 'light', 'status', 'what is the status of {name}', NULL),
+      ('switch-on-prefix', 'switch', 'turn_on', 'turn on {name}', 'turn_on'),
+      ('switch-off-prefix', 'switch', 'turn_off', 'turn off {name}', 'turn_off'),
+      ('switch-toggle', 'switch', 'toggle', 'toggle {name}', 'toggle'),
+      ('cover-open', 'cover', 'open', 'open {name}', 'open_cover'),
+      ('cover-close', 'cover', 'close', 'close {name}', 'close_cover'),
+      ('cover-stop', 'cover', 'stop', 'stop {name}', 'stop_cover'),
+      ('cover-status', 'cover', 'status', '{name} status', NULL),
+      ('fan-on', 'fan', 'turn_on', 'turn on {name}', 'turn_on'),
+      ('fan-off', 'fan', 'turn_off', 'turn off {name}', 'turn_off'),
+      ('fan-toggle', 'fan', 'toggle', 'toggle {name}', 'toggle'),
+      ('climate-status', 'climate', 'status', '{name} status', NULL)
+    ON CONFLICT (id) DO NOTHING;
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ha_entities_entity_id_unique ON ha_entities (entity_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ha_areas_area_id_unique ON ha_areas (area_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ha_devices_device_id_unique ON ha_devices (device_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ha_entity_registry_entity_id_unique ON ha_entity_registry (entity_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_entity_aliases_alias_unique ON voice_entity_aliases (alias);
   `);
 
   // --- AI providers: multi-provider model registry (D-010 extension) ---
@@ -645,6 +729,18 @@ export async function migrate(pool: pg.Pool): Promise<void> {
       finished_at  TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS idx_flow_executions_flow ON flow_executions (flow_id, started_at DESC);
+  `);
+
+  // Custom icons — user-uploaded SVGs referenced as `custom:<name>` in widget
+  // configs. Stored here (not localStorage) so every browser/kiosk/edge device
+  // rendering a scene can resolve the same icon, not just the one that made it.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS custom_icons (
+      name       TEXT PRIMARY KEY,
+      svg        TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 
   console.log('[core][db] migrations applied');

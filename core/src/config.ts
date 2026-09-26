@@ -103,6 +103,11 @@ export interface CoreConfig {
   sdrRadioTuner: string;
   /** Icecast stream URL for the SDR tuner (played on the edge device). */
   sdrRadioStreamUrl: string;
+  /** Master switch: allow AI to use cloud models (off by default). */
+  cloudAiEnabled: boolean;
+  /** Provider id to use for cloud AI (coding/HA automations + chat last resort).
+   * Empty = pick the first non-local LLM provider. */
+  cloudAiProviderId: string;
 }
 
 function str(name: string, fallback: string): string {
@@ -172,5 +177,7 @@ export function loadConfig(): CoreConfig {
     sdrRadioUrl: str('SDR_RADIO_URL', 'http://192.168.1.108:8088'),
     sdrRadioTuner: str('SDR_RADIO_TUNER', 'tuner1'),
     sdrRadioStreamUrl: str('SDR_RADIO_STREAM_URL', 'http://192.168.1.108:8001/tuner1.mp3'),
+    cloudAiEnabled: process.env.CANVAS_CORE_CLOUD_AI_ENABLED === 'true',
+    cloudAiProviderId: str('CANVAS_CORE_CLOUD_AI_PROVIDER', ''),
   };
 }

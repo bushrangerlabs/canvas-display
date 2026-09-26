@@ -11,7 +11,7 @@ import { getPool, migrate } from './db.js';
 
 const execFileAsync = promisify(execFile);
 import { registerGateway } from './gateway.js';
-import { createIntelligence, type Intelligence } from './intelligence.js';
+import { createIntelligence, type Intelligence, type CloudUsageEntry } from './intelligence.js';
 import { parseContentAsToolCalls, type LlmProvider } from './providers/llm.js';
 import { createHomeAssistantClient, type HomeAssistantClient } from './providers/ha.js';
 import {
@@ -131,11 +131,19 @@ async function main(): Promise<void> {
   const privacyRepo = new InMemoryPrivacyRepository();
   const privacyFilter = new PrivacyFilter();
 
+  // Cloud-AI usage logging is wired once the DB pool exists (below). The sink is
+  // only invoked when a cloud provider is actually used.
+  let cloudUsageSink: ((entry: CloudUsageEntry) => void) | null = null;
+  const logCloudUsage = (entry: CloudUsageEntry): void => { cloudUsageSink?.(entry); };
+
   // Canvas Intelligence — wire provider clients from config (degraded mode if unset).
   const intelligence: Intelligence = createIntelligence(config, {
     privacyRepo,
     privacyFilter,
     knowledgeSearchUrl: config.searxngPublicUrl,
+    cloudAiEnabled: config.cloudAiEnabled,
+    cloudAiProviderId: config.cloudAiProviderId,
+    cloudUsageLogger: logCloudUsage,
   });
 
   // D-012 Home Assistant integration (Core is the primary HA integration point).
@@ -153,6 +161,18 @@ async function main(): Promise<void> {
   // Connect to PostgreSQL and apply bootstrap migrations BEFORE registering auth /
   // device-registry routes (they need the pool). Fail closed if Postgres is down.
   const pool = getPool(config);
+  cloudUsageSink = (entry) => {
+    void pool.query(
+      `INSERT INTO cloud_ai_usage
+         (id, purpose, provider_id, model, device_id, operation, ok, latency_ms, error, prompt, response)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        randomUUID(), entry.purpose, entry.providerId, entry.model ?? null, entry.deviceId ?? null,
+        entry.operation ?? null, entry.ok, entry.latencyMs ?? null, entry.error ?? null,
+        entry.prompt ?? null, entry.response ?? null,
+      ],
+    ).catch(err => console.warn('[core][cloud-ai] failed to log usage:', err instanceof Error ? err.message : err));
+  };
   try {
     await pool.query('SELECT 1');
     await migrate(pool);
@@ -2780,8 +2800,26 @@ async function main(): Promise<void> {
   await migrateFlowAiDraftsTable(pool);
   const AUTOMATION_GAP_INTERVAL_MS = 30 * 60_000;
   const checkAutomationGaps = () => {
-    const conversationProvider = intelligence.registry?.getLlmProvider('conversation') ?? intelligence.providers.llm;
+    // Coding / HA-automation drafting may use the cloud model directly when the
+    // operator has enabled cloud AI; otherwise it uses the local conversation model.
+    const cloudProvider = config.cloudAiEnabled && intelligence.registry
+      ? (config.cloudAiProviderId
+          ? intelligence.registry.getLlmProviderById(config.cloudAiProviderId)
+          : undefined)
+        ?? intelligence.registry.getLlmCandidates('conversation').find(c => !c.capabilities.local)?.instance
+      : undefined;
+    const conversationProvider = cloudProvider
+      ?? intelligence.registry?.getLlmProvider('conversation')
+      ?? intelligence.providers.llm;
     if (!conversationProvider) return;
+    if (cloudProvider) {
+      logCloudUsage({
+        purpose: 'ha_automation',
+        providerId: config.cloudAiProviderId || 'cloud',
+        operation: 'flow_draft',
+        ok: true,
+      });
+    }
     runAutomationGapDetection(pool, flowRepo, conversationProvider).catch(err =>
       console.warn('[core][auto-flow] gap detection failed:', (err as Error).message)
     );
