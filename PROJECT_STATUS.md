@@ -71,7 +71,15 @@ Validation:
 - `cd core && npm test -- --test-name-pattern='assignment|device library'` — the argument order caused the complete 477-test suite to run; 473 passed and the same four pre-existing failures recorded below remained (Whisper response format, two intelligence registry/failover expectations, and intent-router media routing).
 - `cd web && npm run lint -- --quiet` — blocked by the pre-existing `react-hooks/preserve-manual-memoization` error in `web/src/components/VoiceStateOverlay.tsx:78`; the changed files did not report lint errors.
 
-No deployment, commit, or live-device validation was performed. The next concrete step for release is to build `web/`, copy its output into `core/public/`, build Core, and deploy both together under the documented Core deployment procedure after explicit owner authorization.
+Committed and deployed after explicit owner authorization:
+
+- Commit `5cc131f` (`feat: configure default start page per device`) was pushed to `origin/main`.
+- Rebuilt `web/`, synchronized `web/dist/` into `core/public/`, and rebuilt Core successfully.
+- Synchronized `core/dist/` and `core/public/` to `/home/spetchal/canvas-core/core/` on the Core host, then ran `docker compose up -d --build canvas-core`.
+- `docker compose ps canvas-core` reported the recreated container running; `GET http://127.0.0.1:3101/health` returned `status: ok`, role `canvas-core`, version `0.3.1`.
+- The bundle served by the deployed Core was `/assets/index-DobzDV3h.js`; it contains `Default start page` and no longer contains `Save default pages`.
+
+The admin UI and Core reconnect behavior are deployed. A physical edge reboot was not performed, so boot-page selection remains locally tested and production-served but not yet accepted through a full device restart.
 
 Repository-wide structural audit with focused source/config/diff inspection across major subsystems. This was not a line-by-line audit of every file or generated artifact. No remote devices/services were contacted.
 
