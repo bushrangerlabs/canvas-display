@@ -803,6 +803,22 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
                 <Typography variant="body2">Speaker Volume: {audioConfig.speaker_volume ?? 90}%</Typography>
                 <Slider value={audioConfig.speaker_volume ?? 90} min={0} max={100}
                   onChange={(_, v) => setAudioConfig(c => ({ ...c, speaker_volume: v as number }))} />
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2">Snapcast (multi-room audio)</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Core is authoritative — the edge reads these on its next config sync.
+                </Typography>
+                <FormControlLabel
+                  control={<Switch checked={audioConfig.snapcast_enabled ?? true}
+                    onChange={e => setAudioConfig(c => ({ ...c, snapcast_enabled: e.target.checked }))} />}
+                  label="Join the Snapcast server"
+                />
+                <TextField size="small" fullWidth label="Snapcast server (blank = Core host)"
+                  value={audioConfig.snapcast_host ?? ''}
+                  onChange={e => setAudioConfig(c => ({ ...c, snapcast_host: e.target.value }))} />
+                <TextField size="small" fullWidth type="number" label="Snapcast port"
+                  value={audioConfig.snapcast_port ?? 1704}
+                  onChange={e => setAudioConfig(c => ({ ...c, snapcast_port: Number(e.target.value) }))} />
                 <Stack direction="row" spacing={1}>
                   <Button size="small" variant="contained" onClick={saveAudio} disabled={saving}>
                     {saving ? <CircularProgress size={14} /> : 'Save Audio'}

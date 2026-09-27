@@ -6,7 +6,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Voice settings for this device, as configured by an admin in Canvas Core. */
+/** Edge settings for this device, as configured by an admin in Canvas Core. */
 data class VoiceConfig(
     val wakeWord: String,
     val wakeThreshold: Float,
@@ -18,6 +18,10 @@ data class VoiceConfig(
     val noIntentEnabled: Boolean,
     val noIntentSound: String,
     val edgeVoiceToken: String?,
+    // Snapcast (multi-room synchronised audio) — Core-authoritative.
+    val snapcastEnabled: Boolean,
+    val snapcastHost: String,
+    val snapcastPort: Int,
 )
 
 /**
@@ -52,6 +56,9 @@ class VoiceConfigClient(context: Context, private val coreUrl: String) {
                 noIntentEnabled = json.optBoolean("no_intent_enabled", true),
                 noIntentSound = json.optString("no_intent_sound", "builtin:wood_tap"),
                 edgeVoiceToken = json.optString("edge_voice_token", "").ifBlank { null },
+                snapcastEnabled = json.optBoolean("snapcast_enabled", true),
+                snapcastHost = json.optString("snapcast_host", ""),
+                snapcastPort = json.optInt("snapcast_port", 1704),
             )
         }
     }

@@ -352,6 +352,25 @@ class MainActivity : AppCompatActivity() {
         Thread { service.start() }.start()
     }
 
+    /**
+     * Apply the Core-authoritative Snapcast settings and restart the client when
+     * they change. Core is the source of truth (admin UI → `PUT /api/admin/devices/:id/audio`),
+     * so the on-device fields are only a fallback for an unconfigured device.
+     */
+    private fun applySnapcastConfig(voiceConfig: VoiceConfig) {
+        val changed = config.snapcastEnabled != voiceConfig.snapcastEnabled ||
+            config.snapcastHost != voiceConfig.snapcastHost ||
+            config.snapcastPort != voiceConfig.snapcastPort
+        config.snapcastEnabled = voiceConfig.snapcastEnabled
+        config.snapcastHost = voiceConfig.snapcastHost
+        config.snapcastPort = voiceConfig.snapcastPort
+        if (!changed) return
+        android.util.Log.i("CanvasEdge", "Snapcast config from Core changed; restarting client")
+        snapcastService?.stop()
+        snapcastService = null
+        if (config.snapcastEnabled) startSnapcastClient()
+    }
+
     /** Fetches this device's voice settings from Core (admin-configured, never set
      * locally) and starts/stops the on-device wake-word pipeline to match. Called on
      * startup and again on every gateway reconnect so admin changes take effect without
@@ -365,7 +384,10 @@ class MainActivity : AppCompatActivity() {
                     config.wakeWord = voiceConfig.wakeWord
                     config.wakeThreshold = voiceConfig.wakeThreshold
                     voiceConfig.edgeVoiceToken?.let { config.edgeVoiceToken = it }
-                    runOnUiThread { maybeStartVoicePipeline(voiceConfig) }
+                    runOnUiThread {
+                        applySnapcastConfig(voiceConfig)
+                        maybeStartVoicePipeline(voiceConfig)
+                    }
                 }
                 .onFailure { android.util.Log.w("CanvasVoice", "voice-config fetch failed: ${it.message}") }
         }.start()

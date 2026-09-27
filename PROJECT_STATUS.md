@@ -659,11 +659,19 @@ after = round(r / (r - 1))      // frames between single-frame corrections
 - **Snapcast now resumes after a DLNA push.** `AudioSinkArbiter` gained an `onIdle` hook (fired when the last owner releases the sink, outside the lock so the listener can re-acquire). `SnapcastService` distinguishes *desired* from *running*: the arbiter's releaser now **suspends** (stops the client, keeps `desired = true`) instead of stopping, and `onIdle` resumes when the sink goes free. An explicit `stop()` clears `desired` so it stays down. Verified on the tablet: a DLNA push logs `releasing the audio sink`, and the DLNA stop logs `resuming after the sink went idle` followed by a fresh connect + codec header.
 - **Snapcast settings are now editable on-device** (server, port, enable) in the setup screen. Note the setup screen was **dead code** — `showSetup()` was never called — so it is now reachable via a **long-press on the status overlay** (available while the display is connecting or showing an error). The host still defaults to the Core host when left blank.
 
+**Core-authoritative Snapcast settings (2026-09-28, this session):**
+
+- **Core**: `PUT /api/admin/devices/:id/audio` accepts `snapcast_enabled` / `snapcast_host` / `snapcast_port` (stored in the existing `audio_config` jsonb, so no migration; the port is validated 1–65535). `GET /api/devices/:id/voice-config` now returns them (defaults `true` / `''` / `1704`).
+- **Admin UI**: the device Audio tab gained a *Snapcast (multi-room audio)* section — enable switch, server (blank = Core host) and port.
+- **Android**: `VoiceConfigClient` parses the new fields and `MainActivity.applySnapcastConfig` applies them, restarting the Snapcast client only when they actually change. The on-device fields remain as a fallback for an unconfigured device.
+
+**Verified end-to-end:** the Core endpoint returns the stored values (`snapcast_host: "192.168.1.108"`), and the tablet logged `Snapcast config from Core changed; restarting client` followed by a reconnect to the Core-provided host.
+
 **Known gaps:**
 
 - Sync is **~±20–40 ms**, not snapclient's sub-millisecond accuracy. The soft correction is deliberately slow (0.05% ≈ 0.5 ms/s) and only handles drift; a residual systematic offset remains because the `AudioTrack` output-buffer delay is estimated rather than reported by the backend the way ALSA/Pulse do for snapclient.
-- The Snapcast settings are **local**, not Core-authoritative. The user's stated model is Core-authoritative edge settings; the natural follow-up is to extend the Core edge-config endpoint (the one `VoiceConfigClient` already uses) with the Snapcast host/port/enabled fields.
-- The setup screen has no other entry point than the status long-press; a proper settings affordance (or Core-driven config) would be better.
+- The setup screen's only entry point is the status long-press; with Core now authoritative it is only a fallback for an unconfigured device.
+- **Pre-existing Core test failures**: `npm test` in `core/` reports 4 failures (Whisper transcription, `createIntelligence` registry/failover, intent-router media routing). Confirmed pre-existing — they fail identically with this session's Core changes stashed.
 
 ### Android DLNA notes / gotchas
 

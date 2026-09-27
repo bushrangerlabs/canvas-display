@@ -987,6 +987,11 @@ async function main(): Promise<void> {
       no_intent_enabled: voice.no_intent_enabled ?? true,
       no_intent_sound: voice.no_intent_sound ?? 'builtin:wood_tap',
       mic_device: audio.mic_device ?? 'default',
+      // Snapcast (multi-room synchronised audio). Core is authoritative; the
+      // edge reads these instead of keeping its own settings screen.
+      snapcast_enabled: audio.snapcast_enabled ?? true,
+      snapcast_host: audio.snapcast_host ?? '',
+      snapcast_port: audio.snapcast_port ?? 1704,
       edge_voice_token: token,
     };
   });

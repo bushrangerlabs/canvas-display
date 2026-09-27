@@ -489,6 +489,18 @@ export async function registerDeviceRoutes(
       if (body?.speaker_device !== undefined) audioConfig.speaker_device = body.speaker_device;
       if (body?.mic_volume !== undefined) audioConfig.mic_volume = body.mic_volume;
       if (body?.speaker_volume !== undefined) audioConfig.speaker_volume = body.speaker_volume;
+      // Snapcast (multi-room synchronised audio). Core is authoritative: the
+      // edge reads these from GET /api/devices/:id/voice-config.
+      if (body?.snapcast_enabled !== undefined) audioConfig.snapcast_enabled = Boolean(body.snapcast_enabled);
+      if (body?.snapcast_host !== undefined) audioConfig.snapcast_host = String(body.snapcast_host ?? '').trim();
+      if (body?.snapcast_port !== undefined) {
+        const port = Number(body.snapcast_port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          reply.code(400);
+          return { error: 'invalid_snapcast_port' };
+        }
+        audioConfig.snapcast_port = port;
+      }
 
       await repo.query(
         `UPDATE devices SET audio_config = $1::jsonb WHERE id = $2`,
