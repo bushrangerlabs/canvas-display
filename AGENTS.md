@@ -101,6 +101,10 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
 * `server/src/audio/arbiter.ts` arbitrates the single audio sink between mpv and the Snapcast client (`server/src/audio/snapcast.ts`, systemd user unit `canvas-snapclient.service`). Config: `CANVAS_SNAPCLIENT_ENABLED`, `CANVAS_SNAPCLIENT_SERVICE`.
 * The Pi previously ran a `gmediarender` prototype (`canvas-dlna-renderer.service`, port 49494) that is **audio-only** and superseded — remove it and its manual HA `dlna_dmr` entry when deploying this renderer.
 * DLNA state is exposed at `GET /api/dlna/state`; Snapcast/sink state at `GET /api/audio/snapcast`.
+* Both the system sidecar (`:8099`) and the kiosk-spawned one try to bind the DLNA port; the system service wins (it starts first at boot) and the other logs `EADDRINUSE` and continues. The kiosk connects to the **system** sidecar, so video broadcast reaches it — but this ordering dependency is fragile.
+* When rsyncing `server/` to a Pi build dir, **exclude `data/`** — `server/.env` sets `DB_PATH=./data/...`, so a local dev database lives there and would otherwise be copied across.
+* The kiosk's `/tmp/canvas-ui-kiosk.log` is block-buffered; a missing line is not proof something did not happen. `screen_off`/`screen_on` use `xset` (X11) and are no-ops under Wayland/labwc. Capture the Pi display with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim <file>`.
+* **Known kiosk bug (unresolved):** the `show_floating` overlay never opens (`openFloatingUrl` in `browser/linux/src/screens/KioskScreen.tsx`), which breaks YouTube fullscreen playback, knowledge-card overlays and DLNA video. Audio DLNA is unaffected.
 
 ### Core + web control plane (show/hide/restart)
 

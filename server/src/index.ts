@@ -29,8 +29,8 @@ import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { broadcast } from './ws/index';
 import { startDlna, stopDlna, videoWrapperUrl } from './dlna/index';
 import type { DlnaPlaybackAdapter } from './dlna/renderer';
-import { registerSinkReleaser } from './audio/arbiter';
-import { stopSnapclient } from './audio/snapcast';
+import { acquireSink, registerSinkReleaser } from './audio/arbiter';
+import { isSnapclientRunning, stopSnapclient } from './audio/snapcast';
 import {
   getAudioState,
   pauseAudio,
@@ -63,9 +63,14 @@ function useDirectCoreVoice(): boolean {
  * takes the sink the other is released first, so mpv playback and the Snapcast
  * client never play over each other.
  */
-function initAudioArbiter(): void {
+async function initAudioArbiter(): Promise<void> {
   registerSinkReleaser('mpv', async () => { await stopAudio(); });
   registerSinkReleaser('snapcast', async () => { await stopSnapclient(); });
+  // The Snapcast client may already be running from before this sidecar start;
+  // record it as the current owner so the first mpv play releases it.
+  if (await isSnapclientRunning()) {
+    await acquireSink('snapcast');
+  }
 }
 
 // ─── DLNA MediaRenderer ───────────────────────────────────────────────────────
@@ -253,7 +258,7 @@ async function main() {
     startIntercomPoller();
 
     // Arbitrate the single audio sink between mpv and the Snapcast client.
-    initAudioArbiter();
+    await initAudioArbiter();
 
     // Expose the display as a UPnP/DLNA MediaRenderer so Home Assistant
     // (dlna_dmr) and Music Assistant can push audio and video to it.

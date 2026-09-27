@@ -497,3 +497,38 @@ The display has one audio output; mpv (voice TTS / radio / DLNA pushes) and the 
 5. **Android parity**: the native Android app has no DLNA renderer or Snapcast client yet. Snapclient is buildable for Android (the `badaix/snapdroid` project bundles native ARM/X86 clients); a Kotlin DLNA renderer would mirror this design.
 6. **Core ↔ Music Assistant direct API** and **Core `/api/tts` `/api/stt` `/api/conversation`** endpoints (so Core/edges are standalone and HA can use them as a TTS/STT device) remain from the previous session's plan.
 7. **Deploy the HA `canvas_display` component in Core mode** (needs HA config access) — unchanged from the previous session.
+
+### Pi deployment + acceptance (2026-09-27/28)
+
+Deployed to the Pi (`192.168.1.216`) this session:
+
+- Built the arm64 sidecar natively on the Pi (`/home/spetchal/build/canvas-server`), installed to `/usr/bin/canvas-display-server` (backup `canvas-display-server.bak-20260927-dlna`), and restarted **both** `canvas-display-server.service` (system, `:8099`) and `canvas-display-browser.service` (user).
+- **Retired the gmrender prototype**: `systemctl --user stop/disable canvas-dlna-renderer.service`; port 49494 is now free. The manually-added HA `dlna_dmr` entry for it still needs removing in HA.
+
+**Verified on the Pi:**
+
+- `GET /api/dlna/state` → `enabled:true`, `base_url http://192.168.1.216:49500`; `GET /description.xml` serves a valid MediaRenderer description; the DLNA UUID is stable across restarts.
+- **DLNA audio push works end-to-end**: `SetAVTransportURI` + `Play` for `http://192.168.1.108:8001/tuner1.mp3` → `200`/`200`, state `PLAYING` with an advancing position, and `mpv` running with that URL.
+- **Audio arbiter works**: with `canvas-snapclient.service` active at sidecar start the arbiter reports `owner:"snapcast"`; the DLNA audio push then **stopped snapclient** (`inactive`) and reported `owner:"mpv"`.
+- The kiosk is connected to the **system** sidecar as a `browser` client (`Hello from browser (pi5-living-room)`), so `broadcast(..., 'browser')` reaches it. Note both sidecars run the same binary and both try to bind 49500; the system service wins (it starts first at boot) and the kiosk-spawned one logs `EADDRINUSE` and continues without DLNA. This ordering dependency is fragile — see the follow-up below.
+- **DLNA video push is classified and routed correctly**: a `.mp4` push reports `isVideo:true` and `PLAYING` and is dispatched to the kiosk `show_floating` path.
+
+### BLOCKER FOUND: the kiosk's `show_floating` overlay does not open (pre-existing)
+
+While verifying the DLNA video path I found that the kiosk **never opens the floating overlay**. Verified with live screenshots (`grim` confirmed working by stopping/starting the kiosk and seeing the frame change):
+
+- `POST /api/media/open {url}` → `show_floating` → **no visual change**, and the Rust log shows **no** `[create_one_panel] … 'floating'` / `[navigate_webview] label=floating` entry.
+- `POST /api/media/play {source:'youtube', …}` (the path the previous session recorded as verified) → **no visual change** either.
+- Control commands that *do* work on the same connection: `reload` (WS disconnect/reconnect observed), `navigate_panel` (`[navigate_webview]` logged), `load_page` (panels created).
+
+So the failure is specific to `openFloatingUrl` (`browser/linux/src/screens/KioskScreen.tsx`), which every floating-overlay feature shares: **YouTube fullscreen playback, knowledge-card overlays, and the new DLNA video routing**. The most likely cause is the first unguarded call in `openFloatingUrl`, `WebviewWindow.getByLabel('floating')` (a Tauri v2 API that may be missing a capability/permission in the deployed build); `getDisplayGeometry()` already has a try/catch fallback so it is not the culprit. **This is not caused by the DLNA work** — the DLNA renderer routes video correctly; the kiosk side is what fails.
+
+**Next action:** reproduce with the kiosk WebView devtools/console visible (or add a temporary log line at the top of `openFloatingUrl`) to capture the thrown error, then fix and rebuild the kiosk. Until then, DLNA **audio** is functional end-to-end and DLNA **video** is not.
+
+### Operational notes learned this session
+
+- **`server/.env` sets `DB_PATH=./data/canvas-ui.db`**, which takes precedence over `CANVAS_DATA_DIR`. Local smoke tests therefore write to the repo's gitignored `server/data/`. When rsyncing `server/` to a Pi build dir, **exclude `data/`** or you will copy a dev database across (harmless for the running service, which uses `CANVAS_DATA_DIR=/home/spetchal/.local/share/canvas-display`, but confusing).
+- The kiosk's `/tmp/canvas-ui-kiosk.log` is **block-buffered** — recent lines may be missing until the buffer flushes. Do not treat a missing line as proof that something did not happen unless the log has since grown past it.
+- `screen_off`/`screen_on` use `xset dpms` (X11) and are **no-ops under Wayland/labwc**, so they cannot be used to test whether the kiosk is processing commands.
+- `grim` (with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0`) is a reliable way to capture the Pi's display; identical PNG hashes across commands are meaningful.
+- Restarting the kiosk can briefly leave the `panel-fallback` webview on top of the page panels (a race between the fallback effect and the sidecar's `load_page` push); a second restart cleared it. Worth fixing alongside the `show_floating` bug.
