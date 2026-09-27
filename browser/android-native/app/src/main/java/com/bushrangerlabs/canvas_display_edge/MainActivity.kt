@@ -199,6 +199,13 @@ class MainActivity : AppCompatActivity() {
         val token = field("Home Assistant token", config.homeAssistantToken)
         val invitation = field("Pairing invitation token", config.invitationToken)
         val name = field("Device name", config.deviceName)
+        val snapcastHost = field("Snapcast server (blank = Core host)", config.snapcastHost)
+        val snapcastPort = field("Snapcast port", config.snapcastPort.toString())
+        val snapcastEnabled = android.widget.CheckBox(this).apply {
+            text = "Join Snapcast (multi-room audio)"
+            setTextColor(Color.WHITE)
+            isChecked = config.snapcastEnabled
+        }
         val save = Button(this).apply { text = "Connect" }
         status = TextView(this).apply { setTextColor(Color.LTGRAY) }
         save.setOnClickListener {
@@ -207,10 +214,14 @@ class MainActivity : AppCompatActivity() {
             config.homeAssistantToken = token.text.toString()
             config.invitationToken = invitation.text.toString()
             config.deviceName = name.text.toString()
+            config.snapcastHost = snapcastHost.text.toString()
+            snapcastPort.text.toString().toIntOrNull()?.let { config.snapcastPort = it }
+            config.snapcastEnabled = snapcastEnabled.isChecked
             showRenderer()
         }
         root.addView(title)
-        listOf(name, core, ha, token, invitation, save, status!!).forEach { root.addView(it) }
+        listOf(name, core, ha, token, invitation, snapcastEnabled, snapcastHost, snapcastPort, save, status!!)
+            .forEach { root.addView(it) }
         setContentView(root)
         root.requestFocus()
     }
@@ -232,6 +243,13 @@ class MainActivity : AppCompatActivity() {
         }
         val statusParams = FrameLayout.LayoutParams(-2, -2)
         statusParams.gravity = android.view.Gravity.CENTER
+        // Long-press the status overlay to reach the settings screen. It is the
+        // only on-device entry point (the kiosk has no chrome), and it is
+        // available while the display is connecting or showing an error.
+        status?.setOnLongClickListener {
+            showSetup()
+            true
+        }
         root.addView(status, statusParams)
         setContentView(root)
         root.requestFocus()

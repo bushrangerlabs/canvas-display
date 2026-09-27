@@ -382,6 +382,32 @@ class DlnaTest {
         assertTrue(url.contains("title=My+Clip") || url.contains("title=My%20Clip"))
     }
 
+    @Test fun arbiterNotifiesWhenSinkGoesIdle() {
+        val arbiter = com.bushrangerlabs.canvas_display_edge.dlna.AudioSinkArbiter
+        val media = com.bushrangerlabs.canvas_display_edge.dlna.AudioSinkArbiter.Owner.MEDIA
+        val snapcast = com.bushrangerlabs.canvas_display_edge.dlna.AudioSinkArbiter.Owner.SNAPCAST
+        arbiter.reset()
+        var idleCount = 0
+        arbiter.onIdle = { idleCount += 1 }
+
+        arbiter.acquire(media)
+        // A non-owner release must not fire the idle listener.
+        arbiter.release(snapcast)
+        assertEquals(0, idleCount)
+
+        arbiter.release(media)
+        assertEquals(1, idleCount)
+
+        // Switching owners must not fire it either.
+        arbiter.acquire(media)
+        arbiter.acquire(snapcast)
+        assertEquals(1, idleCount)
+
+        arbiter.release(snapcast)
+        assertEquals(2, idleCount)
+        arbiter.reset()
+    }
+
     @Test fun arbiterReleasesPreviousOwner() {
         com.bushrangerlabs.canvas_display_edge.dlna.AudioSinkArbiter.reset()
         val released = mutableListOf<String>()

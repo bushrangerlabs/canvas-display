@@ -654,11 +654,16 @@ after = round(r / (r - 1))      // frames between single-frame corrections
 
 **Verified on the tablet:** the correction engages (`rate=1/2000`, `corrected` climbing) and the **true lateness** (`serverNow - playAt`, logged separately from `age` because `age` includes the output-buffer term) now stays within **±40 ms**, mostly ±20 ms, where it was previously unbounded. `AudioTrack` kept writing frames throughout.
 
+**Auto-resume + settings (2026-09-28, this session):**
+
+- **Snapcast now resumes after a DLNA push.** `AudioSinkArbiter` gained an `onIdle` hook (fired when the last owner releases the sink, outside the lock so the listener can re-acquire). `SnapcastService` distinguishes *desired* from *running*: the arbiter's releaser now **suspends** (stops the client, keeps `desired = true`) instead of stopping, and `onIdle` resumes when the sink goes free. An explicit `stop()` clears `desired` so it stays down. Verified on the tablet: a DLNA push logs `releasing the audio sink`, and the DLNA stop logs `resuming after the sink went idle` followed by a fresh connect + codec header.
+- **Snapcast settings are now editable on-device** (server, port, enable) in the setup screen. Note the setup screen was **dead code** — `showSetup()` was never called — so it is now reachable via a **long-press on the status overlay** (available while the display is connecting or showing an error). The host still defaults to the Core host when left blank.
+
 **Known gaps:**
 
 - Sync is **~±20–40 ms**, not snapclient's sub-millisecond accuracy. The soft correction is deliberately slow (0.05% ≈ 0.5 ms/s) and only handles drift; a residual systematic offset remains because the `AudioTrack` output-buffer delay is estimated rather than reported by the backend the way ALSA/Pulse do for snapclient.
-- Snapcast does **not** automatically resume after a DLNA push releases the sink; it must be restarted (a "resume background music after an announcement" behaviour would be a small follow-up).
-- The Snapcast host defaults to the Core host (`EdgeConfig.resolvedSnapcastHost`); `snapcastEnabled`/`snapcastHost`/`snapcastPort` are configurable but have no UI yet.
+- The Snapcast settings are **local**, not Core-authoritative. The user's stated model is Core-authoritative edge settings; the natural follow-up is to extend the Core edge-config endpoint (the one `VoiceConfigClient` already uses) with the Snapcast host/port/enabled fields.
+- The setup screen has no other entry point than the status long-press; a proper settings affordance (or Core-driven config) would be better.
 
 ### Android DLNA notes / gotchas
 

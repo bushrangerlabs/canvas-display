@@ -24,6 +24,14 @@ object AudioSinkArbiter {
 
     @Volatile private var current: Owner = Owner.IDLE
 
+    /**
+     * Invoked when the sink becomes idle (the last owner released it).
+     *
+     * Used to resume background playback that was suspended when something else
+     * took the sink — e.g. Snapcast resuming after a DLNA push finishes.
+     */
+    @Volatile var onIdle: (() -> Unit)? = null
+
     fun registerReleaser(owner: Owner, release: () -> Unit) {
         synchronized(releasers) { releasers[owner] = release }
     }
@@ -46,12 +54,19 @@ object AudioSinkArbiter {
     /** Release the sink, but only if [owner] still holds it. */
     @Synchronized
     fun release(owner: Owner) {
-        if (current == owner) current = Owner.IDLE
+        if (current != owner) return
+        current = Owner.IDLE
+        // Notify outside the lock: the listener may acquire the sink again.
+        val listener = onIdle
+        if (listener != null) {
+            runCatching { listener() }.onFailure { DlnaLog.warn("arbiter idle listener failed: ${it.message}") }
+        }
     }
 
     /** Test helper — reset the arbiter to a clean state. */
     fun reset() {
         synchronized(releasers) { releasers.clear() }
+        onIdle = null
         current = Owner.IDLE
     }
 }

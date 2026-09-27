@@ -29,6 +29,13 @@ class SnapcastService(
     @Volatile var running = false
         private set
 
+    /**
+     * Whether Snapcast *should* be playing. It stays true while the client is
+     * merely suspended because something else took the audio sink, so it can
+     * resume when the sink goes idle again.
+     */
+    @Volatile private var desired = false
+
     /** Server-reported stream info, for diagnostics. */
     val codec: String? get() = client.codec
     val bufferMs: Int get() = client.serverBufferMs
@@ -46,11 +53,14 @@ class SnapcastService(
             sink = player,
             onStatus = { DlnaLog.info("snapcast: $it") },
         )
-        // When another subsystem takes the sink, stop the Snapcast client.
-        AudioSinkArbiter.registerReleaser(AudioSinkArbiter.Owner.SNAPCAST) { stop() }
+        // When another subsystem takes the sink, suspend (not stop) so we can
+        // resume once it is released again.
+        AudioSinkArbiter.registerReleaser(AudioSinkArbiter.Owner.SNAPCAST) { suspend() }
+        AudioSinkArbiter.onIdle = { resumeIfDesired() }
     }
 
     fun start() {
+        desired = true
         if (running) return
         running = true
         DlnaLog.info("snapcast: taking the audio sink")
@@ -60,13 +70,27 @@ class SnapcastService(
         DlnaLog.info("snapcast client starting for $host:$port")
     }
 
+    /** Explicit stop: Snapcast will not resume until [start] is called again. */
     fun stop() {
+        desired = false
+        suspend()
+    }
+
+    /** Release the sink but remember that Snapcast should be playing. */
+    private fun suspend() {
         if (!running) return
         running = false
         DlnaLog.info("snapcast: releasing the audio sink")
         client.stop()
         player.stop()
         AudioSinkArbiter.release(AudioSinkArbiter.Owner.SNAPCAST)
+    }
+
+    /** Resume after the sink went idle, if Snapcast is still wanted. */
+    private fun resumeIfDesired() {
+        if (!desired || running) return
+        DlnaLog.info("snapcast: resuming after the sink went idle")
+        start()
     }
 
     /** Ask the server to set this client's volume (0–100). */
