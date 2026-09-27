@@ -61,9 +61,11 @@ Core contained a built-in `ha.onEntityChange` callback from release `v0.2.30` th
 
 Removed the entire hard-coded doorbell listener from `core/src/index.ts`. Core still maintains its general HA cache and configured flow trigger surface; doorbell behavior must now be created explicitly in Home Assistant or the Core flow system. No hard-coded entity replacement was added. Core build passed. The corrected Core was deployed and health checked; no pending doorbell deliveries remained.
 
+Follow-up audit found no other hard-coded HA entity-to-action automation in Core, the Display sidecar, Linux kiosk or Android app. Remaining HA listeners are infrastructure: Core caches all entity changes, forwards them to explicitly enabled `trigger_ha_state` flows, and marks scenes stale when their configured entity subscriptions change; the sidecar polls HA state for display WebSocket updates. None independently calls an HA service or creates an alert. The recurring automation-gap job can create disabled AI flow drafts for administrator review but cannot enable or execute them. Live configuration had one enabled manual-only flow named `test` and no enabled routines.
+
 ### Durable broadcast, DLNA and Snapcast reliability (2026-09-27)
 
-The approved reliability-first broadcast plan is implemented and deployed across Core, web, the Linux Display sidecar/kiosk, and native Android. It has not been committed or pushed.
+The approved reliability-first broadcast plan is implemented and deployed across Core, web, the Linux Display sidecar/kiosk, and native Android, and was pushed in commit `353c702`.
 
 - Core now persists broadcast output routes, events, per-output delivery state, attempts, leases and ten-minute expiry in PostgreSQL (`core/src/broadcast-delivery.ts`, `core/src/db.ts`). Edge deliveries require player `started`/`completed`/`failed` acknowledgements and reclaim expired claimed/started leases. HA and raw-DLNA routes retry failures until event expiry.
 - The admin Settings page has a Broadcast outputs checklist, discovery refresh, logical-output grouping, preferred-route selection, online state, and recent delivery results. Sources include Canvas edges, HA `media_player` entities and LAN DLNA renderers. Preferred routes suppress duplicate delivery to the same logical output.
