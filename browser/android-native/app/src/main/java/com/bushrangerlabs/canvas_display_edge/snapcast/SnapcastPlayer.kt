@@ -2,6 +2,7 @@ package com.bushrangerlabs.canvas_display_edge.snapcast
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaFormat
@@ -53,8 +54,18 @@ class SnapcastPlayer(
     private var chunkCount = 0
     private var framesWritten = 0L
     private var droppedChunks = 0
-    private val ages = ArrayDeque<Long>()
+    private var correctedFrames = 0L
+    private var playedFrames = 0L
+    private var correctAfterXFrames = 0
     private var lastStatsAt = 0L
+    // Snapclient keeps three windows of recent scheduling errors and only starts
+    // correcting once the short and mini medians agree with the instantaneous age.
+    private val longAges = MedianWindow(500)
+    private val shortAges = MedianWindow(100)
+    private val miniAges = MedianWindow(20)
+    // True scheduling error (serverNow - playAt, without the output-buffer term).
+    // This is the number that actually says whether we are in sync.
+    private val lateness = MedianWindow(200)
 
     fun start() {
         if (running) return
@@ -74,7 +85,13 @@ class SnapcastPlayer(
         runCatching { track?.release() }
         track = null
         framesWritten = 0
-        ages.clear()
+        correctedFrames = 0
+        playedFrames = 0
+        correctAfterXFrames = 0
+        longAges.clear()
+        shortAges.clear()
+        miniAges.clear()
+        lateness.clear()
     }
 
     fun setVolume(percent: Int) {
@@ -83,13 +100,7 @@ class SnapcastPlayer(
     }
 
     /** Median scheduling error in microseconds (positive = late). */
-    fun medianAgeMicros(): Long {
-        synchronized(ages) {
-            if (ages.isEmpty()) return 0
-            val sorted = ages.sorted()
-            return sorted[sorted.size / 2]
-        }
-    }
+    fun medianAgeMicros(): Long = longAges.median()
 
     // ─── SnapcastSink ─────────────────────────────────────────────────────────
 
@@ -208,7 +219,7 @@ class SnapcastPlayer(
                         .setChannelMask(channelMask)
                         .build(),
                 )
-                .setBufferSizeInBytes(maxOf(minBuffer * 2, 32 * 1024))
+                .setBufferSizeInBytes(minBuffer.coerceAtLeast(16 * 1024))
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
             created.setVolume(volume)
@@ -219,9 +230,21 @@ class SnapcastPlayer(
 
     private fun frameSize(): Int = (bitsPerSample / 8) * channels
 
-    /** How long audio written now will sit in the output buffer before playing. */
+    /**
+     * How long audio written now will sit in the output buffer before playing.
+     *
+     * Prefers [AudioTrack.getTimestamp], which reports the frame position and
+     * the clock time at which that frame was presented — the accurate way to
+     * know the output latency. Falls back to the (lagging) playback head.
+     */
     private fun dacTimeMicros(): Long {
         val output = track ?: return 0
+        val timestamp = AudioTimestamp()
+        if (runCatching { output.getTimestamp(timestamp) }.getOrDefault(false)) {
+            val framesSince = framesWritten - timestamp.framePosition
+            val nanosSince = System.nanoTime() - timestamp.nanoTime
+            return framesSince * 1_000_000L / sampleRate - nanosSince / 1000L
+        }
         val head = runCatching { output.playbackHeadPosition.toLong() }.getOrDefault(0L)
         return SnapcastSync.dacTimeMicros(framesWritten, head, sampleRate)
     }
@@ -235,48 +258,74 @@ class SnapcastPlayer(
             } ?: continue
 
             val output = track ?: continue
-            val frames = item.data.size / frameSize().coerceAtLeast(1)
+            val frameSize = frameSize().coerceAtLeast(1)
+            val frames = item.data.size / frameSize
 
             // Snapclient's sync rule: age = serverNow - playAt + dacTime.
-            val serverNow = nowMicros() + clockOffsetMicros()
-            val age = SnapcastSync.age(serverNow, item.playAtServerMicros, dacTimeMicros())
-
-            when (SnapcastSync.decide(age)) {
-                SnapcastSync.Decision.DROP -> {
-                    droppedChunks += 1
-                    continue
-                }
-                SnapcastSync.Decision.WAIT -> {
-                    try {
-                        Thread.sleep(SnapcastSync.waitMillis(age))
-                    } catch (_: InterruptedException) {
-                        return
+            // Retry the SAME item while it is too early — re-queueing it would
+            // push it behind later chunks and scramble the audio order.
+            var age: Long
+            var dropped = false
+            while (true) {
+                val serverNow = nowMicros() + clockOffsetMicros()
+                lateness.add(serverNow - item.playAtServerMicros)
+                age = SnapcastSync.age(serverNow, item.playAtServerMicros, dacTimeMicros())
+                when (SnapcastSync.decide(age)) {
+                    SnapcastSync.Decision.DROP -> {
+                        droppedChunks += 1
+                        dropped = true
+                        break
                     }
-                    queue.offer(item)
-                    continue
+                    SnapcastSync.Decision.WAIT -> {
+                        try {
+                            Thread.sleep(SnapcastSync.waitMillis(age))
+                        } catch (_: InterruptedException) {
+                            return
+                        }
+                        continue
+                    }
+                    SnapcastSync.Decision.PLAY -> break
                 }
-                SnapcastSync.Decision.PLAY -> Unit
+            }
+            if (dropped) continue
+
+            // Soft correction: nudge the playback rate by dropping/duplicating a
+            // single frame every few thousand frames once the drift is stable.
+            longAges.add(age)
+            shortAges.add(age)
+            miniAges.add(age)
+            if (shortAges.isFull()) {
+                correctAfterXFrames = SnapcastSync.correctAfterXFrames(
+                    shortMedianMicros = shortAges.median(),
+                    miniMedianMicros = miniAges.median(),
+                    ageMicros = age,
+                )
+            }
+            val (correction, remaining) = SnapcastSync.framesCorrection(playedFrames, correctAfterXFrames, frames)
+            playedFrames = remaining
+            val payload = if (correction != 0) {
+                correctedFrames += correction
+                SnapcastSync.applyFrameCorrection(item.data, frameSize, correction)
+            } else {
+                item.data
             }
 
-            runCatching { output.write(item.data, 0, item.data.size) }
-            framesWritten += frames
-            recordAge(age)
+            runCatching { output.write(payload, 0, payload.size) }
+            framesWritten += payload.size / frameSize
+            recordStats()
         }
     }
 
-    private fun recordAge(age: Long) {
-        synchronized(ages) {
-            ages.addLast(age)
-            while (ages.size > 100) ages.removeFirst()
-        }
+    private fun recordStats() {
         val now = System.currentTimeMillis()
-        if (now - lastStatsAt >= 10_000) {
-            lastStatsAt = now
-            onStatus(
-                "sync: median=${medianAgeMicros() / 1000}ms dropped=$droppedChunks " +
-                    "buffered=${dacTimeMicros() / 1000}ms offset=${clockOffsetMicros() / 1000}ms",
-            )
-        }
+        if (now - lastStatsAt < 10_000) return
+        lastStatsAt = now
+        val rate = if (correctAfterXFrames == 0) "off" else "1/$correctAfterXFrames"
+        onStatus(
+            "sync: lateness=${lateness.median() / 1000}ms age=${longAges.median() / 1000}ms " +
+                "short=${shortAges.median() / 1000}ms dropped=$droppedChunks corrected=$correctedFrames " +
+                "rate=$rate buffered=${dacTimeMicros() / 1000}ms offset=${clockOffsetMicros() / 1000}ms",
+        )
     }
 
     private fun nowMicros(): Long = System.nanoTime() / 1000

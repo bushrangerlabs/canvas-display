@@ -1,5 +1,6 @@
 package com.bushrangerlabs.canvas_display_edge
 
+import com.bushrangerlabs.canvas_display_edge.snapcast.MedianWindow
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapJson
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastClockSync
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastProtocol
@@ -11,6 +12,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -217,9 +219,9 @@ class SnapcastTest {
     }
 
     @Test fun waitMillisIsBounded() {
-        assertEquals(100L, SnapcastSync.waitMillis(-100_000))
+        assertEquals(10L, SnapcastSync.waitMillis(-100_000))
         assertEquals(1L, SnapcastSync.waitMillis(-100))
-        assertEquals(200L, SnapcastSync.waitMillis(-5_000_000))
+        assertEquals(10L, SnapcastSync.waitMillis(-5_000_000))
     }
 
     @Test fun dacTimeFromBufferedFrames() {
@@ -229,5 +231,98 @@ class SnapcastTest {
         assertEquals(0L, SnapcastSync.dacTimeMicros(framesWritten = 48_000, playbackHeadFrames = 48_000, sampleRate = 48_000))
         // Head ahead of written (should not happen) clamps to zero.
         assertEquals(0L, SnapcastSync.dacTimeMicros(framesWritten = 10, playbackHeadFrames = 99, sampleRate = 48_000))
+    }
+
+    // ─── Soft correction ──────────────────────────────────────────────────────
+
+    @Test fun noCorrectionWhenDriftIsSmall() {
+        assertEquals(0, SnapcastSync.correctAfterXFrames(shortMedianMicros = 50, miniMedianMicros = 0, ageMicros = 0))
+        // Short median alone is not enough: the mini median must agree.
+        assertEquals(0, SnapcastSync.correctAfterXFrames(shortMedianMicros = 5_000, miniMedianMicros = 0, ageMicros = 0))
+        assertEquals(0, SnapcastSync.correctAfterXFrames(shortMedianMicros = 5_000, miniMedianMicros = 100_000, ageMicros = 0))
+    }
+
+    @Test fun lateDriftDropsFrames() {
+        val period = SnapcastSync.correctAfterXFrames(
+            shortMedianMicros = 1_000,
+            miniMedianMicros = 100_000,
+            ageMicros = 100_000,
+        )
+        // rate = 1 - min((1000/100)*0.00005, 0.0005) = 0.9995 -> ~2000 frames per dropped frame.
+        assertTrue("expected a positive period, was $period", period > 0)
+        assertTrue("expected ~2000, was $period", period in 1900..2100)
+    }
+
+    @Test fun earlyDriftDuplicatesFrames() {
+        val period = SnapcastSync.correctAfterXFrames(
+            shortMedianMicros = -1_000,
+            miniMedianMicros = -100_000,
+            ageMicros = -100_000,
+        )
+        assertTrue("expected a negative period, was $period", period < 0)
+        assertTrue("expected ~-2000, was $period", period in -2100..-1900)
+    }
+
+    @Test fun rateDeltaIsCapped() {
+        // A huge drift must not exceed the 0.05% cap -> period ~2000, not smaller.
+        val period = SnapcastSync.correctAfterXFrames(1_000_000, 1_000_000, 1_000_000)
+        assertTrue("expected the cap to apply, was $period", period in 1900..2100)
+    }
+
+    @Test fun framesCorrectionAccumulates() {
+        // Period 1000: after 2500 frames we owe 2 frames of correction, remainder 500.
+        val (correction, remaining) = SnapcastSync.framesCorrection(playedFrames = 0, correctAfterXFrames = 1000, frames = 2500)
+        assertEquals(2, correction)
+        assertEquals(500L, remaining)
+        // Below the period nothing is corrected.
+        val (none, kept) = SnapcastSync.framesCorrection(playedFrames = 0, correctAfterXFrames = 1000, frames = 400)
+        assertEquals(0, none)
+        assertEquals(400L, kept)
+        // Disabled period leaves the counter alone.
+        val (off, untouched) = SnapcastSync.framesCorrection(playedFrames = 123, correctAfterXFrames = 0, frames = 999)
+        assertEquals(0, off)
+        assertEquals(123L, untouched)
+    }
+
+    @Test fun applyFrameCorrectionDropsFrames() {
+        val frameSize = 2
+        val pcm = ByteArray(10 * frameSize) { it.toByte() }
+        val dropped = SnapcastSync.applyFrameCorrection(pcm, frameSize, framesCorrection = 2)
+        assertEquals(8 * frameSize, dropped.size)
+        // The first frame is preserved.
+        assertArrayEquals(pcm.copyOfRange(0, frameSize), dropped.copyOfRange(0, frameSize))
+    }
+
+    @Test fun applyFrameCorrectionDuplicatesFrames() {
+        val frameSize = 2
+        val pcm = ByteArray(10 * frameSize) { it.toByte() }
+        val duplicated = SnapcastSync.applyFrameCorrection(pcm, frameSize, framesCorrection = -2)
+        assertEquals(12 * frameSize, duplicated.size)
+        assertArrayEquals(pcm.copyOfRange(0, frameSize), duplicated.copyOfRange(0, frameSize))
+    }
+
+    @Test fun applyFrameCorrectionIsNoOpWhenZero() {
+        val pcm = ByteArray(20) { it.toByte() }
+        assertSame(pcm, SnapcastSync.applyFrameCorrection(pcm, 2, 0))
+    }
+
+    @Test fun applyFrameCorrectionNeverEmptiesTheBuffer() {
+        val pcm = ByteArray(4 * 2) { it.toByte() }
+        // Asking to drop more frames than exist must still produce audio.
+        val result = SnapcastSync.applyFrameCorrection(pcm, 2, framesCorrection = 99)
+        assertTrue(result.isNotEmpty())
+    }
+
+    @Test fun medianWindowReportsMedian() {
+        val window = MedianWindow(5)
+        assertTrue(!window.isFull())
+        listOf(5L, 1L, 3L).forEach { window.add(it) }
+        assertEquals(3L, window.median())
+        listOf(9L, 7L).forEach { window.add(it) }
+        assertTrue(window.isFull())
+        // Ring holds 1,3,9,7,5 -> sorted 1,3,5,7,9 -> median 5.
+        assertEquals(5L, window.median())
+        window.clear()
+        assertEquals(0L, window.median())
     }
 }

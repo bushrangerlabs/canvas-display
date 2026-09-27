@@ -637,9 +637,26 @@ age = (serverNow - chunkStart) - bufferMs + dacTime
 
 **Verified on the tablet:** chunk timestamps are 24 ms apart (correct), the offset resolves to ~970,553 s (the server/tablet boot-time difference), and the sync stats report `median=13–21ms dropped=0 buffered=24–92ms` with the `AudioTrack` still writing frames. That is a large improvement over the previous unscheduled playback, though not yet snapclient's sub-millisecond accuracy (it soft-corrects with a resampler; we do not).
 
+**Soft correction (2026-09-28, this session):**
+
+Residual drift is now corrected the way snapclient does it — by dropping or duplicating a single frame every few thousand frames, which is inaudible:
+
+```
+rate  = 1 ∓ min((|shortMedian| / 100) * 0.00005, 0.0005)
+r     = 1 / rate
+after = round(r / (r - 1))      // frames between single-frame corrections
+```
+
+- `SnapcastSync.correctAfterXFrames` mirrors snapclient's gating (correction only starts once the short *and* mini medians agree with the instantaneous age) and caps the rate adjustment at 0.05%.
+- `SnapcastSync.applyFrameCorrection` drops/duplicates frames spread evenly across the buffer; `SnapcastSync.framesCorrection` accumulates the frame counter.
+- `MedianWindow` mirrors snapclient's `Buffer`/`MiniBuffer`/`ShortBuffer` statistics.
+- `SnapcastPlayer` uses `AudioTrack.getTimestamp()` (falling back to `playbackHeadPosition`) for the output-buffer delay, and its write loop now **retries the same chunk** while it is too early — re-queueing it pushed it behind later chunks and scrambled the audio order.
+
+**Verified on the tablet:** the correction engages (`rate=1/2000`, `corrected` climbing) and the **true lateness** (`serverNow - playAt`, logged separately from `age` because `age` includes the output-buffer term) now stays within **±40 ms**, mostly ±20 ms, where it was previously unbounded. `AudioTrack` kept writing frames throughout.
+
 **Known gaps:**
 
-- Sync is **~15–20 ms**, not sample-accurate: there is no resampler-based soft correction, only the coarse wait/drop rule. Adding a resampler (or `AudioTrack` playback-rate adjustment) would close the remaining gap.
+- Sync is **~±20–40 ms**, not snapclient's sub-millisecond accuracy. The soft correction is deliberately slow (0.05% ≈ 0.5 ms/s) and only handles drift; a residual systematic offset remains because the `AudioTrack` output-buffer delay is estimated rather than reported by the backend the way ALSA/Pulse do for snapclient.
 - Snapcast does **not** automatically resume after a DLNA push releases the sink; it must be restarted (a "resume background music after an announcement" behaviour would be a small follow-up).
 - The Snapcast host defaults to the Core host (`EdgeConfig.resolvedSnapcastHost`); `snapcastEnabled`/`snapcastHost`/`snapcastPort` are configurable but have no UI yet.
 
