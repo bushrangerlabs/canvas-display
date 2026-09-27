@@ -55,6 +55,12 @@ There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometr
 
 ## Work completed in this session
 
+### Removed hard-coded HA doorbell trigger (2026-09-27)
+
+Core contained a built-in `ha.onEntityChange` callback from release `v0.2.30` that treated doorbell-named binary sensors as a button press and directly created an alert plus TTS broadcast. The live entity `binary_sensor.doorbell_motion_3` has `device_class: motion`; ordinary motion therefore produced four false “Someone is at the door” broadcasts between 21:52 and 22:04 AEST. Durable delivery made the source visible but did not create the trigger.
+
+Removed the entire hard-coded doorbell listener from `core/src/index.ts`. Core still maintains its general HA cache and configured flow trigger surface; doorbell behavior must now be created explicitly in Home Assistant or the Core flow system. No hard-coded entity replacement was added. Core build passed. The corrected Core was deployed and health checked; no pending doorbell deliveries remained.
+
 ### Durable broadcast, DLNA and Snapcast reliability (2026-09-27)
 
 The approved reliability-first broadcast plan is implemented and deployed across Core, web, the Linux Display sidecar/kiosk, and native Android. It has not been committed or pushed.

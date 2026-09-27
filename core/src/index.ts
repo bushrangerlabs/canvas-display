@@ -1575,57 +1575,6 @@ async function main(): Promise<void> {
       },
     );
 
-    // Doorbell automation: when a HA binary_sensor with device_class=doorbell
-    // transitions to 'on', broadcast TTS + alert to all connected display devices.
-    if (ha) {
-      const doorbellCooldownMs = 10_000;
-      const lastDoorbellFire = new Map<string, number>();
-      let lastAnyDoorbellFire = 0;
-      ha.onEntityChange((entityId, entity) => {
-        const attrs = entity.attributes as Record<string, unknown> | undefined ?? {};
-        const lowerEntityId = entityId.toLowerCase();
-        const hasDoorbellClass = attrs.device_class === 'doorbell';
-        const isDoorbellBinarySensor =
-          lowerEntityId.startsWith('binary_sensor.') && lowerEntityId.includes('doorbell');
-        const isDoorbellEntity = (hasDoorbellClass || isDoorbellBinarySensor) && entity.state === 'on';
-        if (!isDoorbellEntity) return;
-        const now = Date.now();
-        if (now - lastAnyDoorbellFire < doorbellCooldownMs) return; // global debounce across related entities
-        const lastFire = lastDoorbellFire.get(entityId) ?? 0;
-        if (now - lastFire < doorbellCooldownMs) return; // debounce
-        lastAnyDoorbellFire = now;
-        lastDoorbellFire.set(entityId, now);
-
-        const friendlyName = (attrs.friendly_name as string | undefined) ?? entityId;
-        const title = 'Doorbell';
-        const message = `${friendlyName} — someone is at the door`;
-        const timestamp = new Date().toISOString();
-        const alert: PendingAlert = { title, message, type: 'warning', timestamp };
-        void broadcastDelivery.enqueue({ kind: 'alert', title, payload: alert }).catch(error => {
-          console.warn('[core][doorbell] alert queue failed:', (error as Error).message);
-        });
-        console.log(`[core][doorbell] Detected: ${entityId}, broadcasting alert`);
-
-        // Also broadcast TTS
-        const speech = intelligence.providers.tts;
-        if (speech) {
-          void (async () => {
-            try {
-              const port = config.port ?? 3100;
-              const token = await resolveEdgeVoiceToken('');
-              if (!token) return;
-              await fetch(`http://127.0.0.1:${port}/api/edge/tts/broadcast`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ text: 'Someone is at the door' }),
-              });
-            } catch (err) {
-              console.warn('[core][doorbell] TTS broadcast failed:', (err as Error).message);
-            }
-          })();
-        }
-      });
-    }
   }
 
   // --- Device-to-device Intercom -------------------------------------------
