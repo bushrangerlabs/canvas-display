@@ -49,5 +49,16 @@ export const config = {
   sdrRadioStreamUrl: process.env.SDR_RADIO_STREAM_URL ?? 'http://192.168.1.108:8001/tuner1.mp3',
   // Dispatcharr (IPTV) — used by the Dispatcharr widget and voice playback.
   dispatcharrUrl: process.env.DISPATCHARR_URL ?? 'http://theserver.localdomain:9191',
+  // DLNA MediaRenderer — exposes the display as a UPnP/DLNA renderer so Home
+  // Assistant (dlna_dmr) and Music Assistant can push audio and video to it.
+  dlnaEnabled: (process.env.CANVAS_DLNA_ENABLED ?? 'true').toLowerCase() !== 'false',
+  dlnaPort: parseInt(process.env.CANVAS_DLNA_PORT ?? '49500'),
+  dlnaUuid: process.env.CANVAS_DLNA_UUID ?? '',
+  dlnaFriendlyName: process.env.CANVAS_DLNA_FRIENDLY_NAME ?? '',
+  dlnaHost: process.env.CANVAS_DLNA_HOST ?? '',
+  // Snapcast client — multi-room synchronised audio. Managed as a systemd user
+  // unit so the audio arbiter can hand the sink between Snapcast and mpv.
+  snapclientEnabled: (process.env.CANVAS_SNAPCLIENT_ENABLED ?? 'true').toLowerCase() !== 'false',
+  snapclientService: process.env.CANVAS_SNAPCLIENT_SERVICE ?? 'canvas-snapclient.service',
   get isHaAddon(): boolean { return !!this.haSupervisorToken; },
 };

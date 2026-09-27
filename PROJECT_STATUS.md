@@ -446,3 +446,54 @@ Verified: MA's `music_assistant.play_media` works via REST (`entity_id` must be 
 - Pi: new `canvas-display-browser-linux` + `canvas-display-server` installed to `/usr/bin/` (backups `*.bak-20260927-broadcast`); `canvas-display-browser.service` **and** `canvas-display-server.service` restarted.
 - Core: rebuilt `core/dist`, rsync'd, `docker compose up -d --build canvas-core`.
 - Android: `app-debug.apk` installed on the tablet.
+
+## DLNA MediaRenderer + audio arbiter (2026-09-27/28, this session)
+
+User directive carried in from the previous session: **go the DLNA + Snapcast route** (not Sendspin), make Core + edges standalone, expose each edge as **both an HA media player and a DLNA device**, support **video** and **album art**, and get **multi-room sync** via Snapcast. Constraint still in force: **only test on the Canvas edge devices** (Pi + tablet) — do not target other DLNA/HA media devices in the house.
+
+### What was built (sidecar, `server/`)
+
+A dependency-free UPnP/DLNA **MediaRenderer** so Home Assistant's `dlna_dmr` integration and Music Assistant's DLNA player provider can discover and push media to a display without manual configuration. New module `server/src/dlna/`:
+
+| File | Responsibility |
+|---|---|
+| `xml.ts` | XML escape/unescape, element/attribute readers, DIDL-Lite parsing, UPnP duration parse/format, SOAP action-header parse + envelope/fault builders |
+| `descriptions.ts` | Device description + AVTransport / RenderingControl / ConnectionManager SCPDs; `SINK_PROTOCOL_INFO` declares both **audio and video** MIME types |
+| `renderer.ts` | Transport state machine (AVTransport, RenderingControl, ConnectionManager) + GENA subscriber registry; maps actions onto an injected `DlnaPlaybackAdapter` |
+| `ssdp.ts` | SSDP M-SEARCH responder + NOTIFY alive/byebye with the full service list (so HA auto-discovers it) |
+| `index.ts` | HTTP control surface (`/description.xml`, `/service/*.xml`, `/control/*`, `/event/*`, `/video`, `/health`), GENA NOTIFY delivery, lifecycle |
+
+Key behaviours:
+- **Audio → mpv, video → the kiosk floating WebView.** The renderer classifies media from the DIDL `protocolInfo` MIME type first, then the UPnP class, then the URL extension. Audio calls the existing `playAudio` (mpv); video broadcasts `show_floating` to the kiosk with a full-screen `<video>` wrapper page served by the renderer (`/video?url=…`).
+- **DIDL-Lite metadata** (title/artist/album/`albumArtURI`/duration) is parsed and surfaced through `GET /api/dlna/state`.
+- **Stable UUID**: `CANVAS_DLNA_UUID` → persisted `server_settings.dlna_uuid` → generated once. Verified stable across restarts (so HA does not create duplicate devices).
+- **Friendly name**: `CANVAS_DLNA_FRIENDLY_NAME` → `server_settings.device_name` → `Canvas Display (<hostname>)`.
+- **Config** (`server/src/config.ts`): `CANVAS_DLNA_ENABLED` (default true), `CANVAS_DLNA_PORT` (default **49500**), `CANVAS_DLNA_UUID`, `CANVAS_DLNA_FRIENDLY_NAME`, `CANVAS_DLNA_HOST`.
+- New route `GET /api/dlna/state` (`server/src/routes/dlna.ts`).
+
+### Audio arbiter + Snapcast control
+
+The display has one audio output; mpv (voice TTS / radio / DLNA pushes) and the Snapcast client both want it. New `server/src/audio/`:
+
+- `arbiter.ts` — tracks the sink owner (`idle` / `mpv` / `snapcast`) and releases the previous owner before a new one starts. Releasers are injected, so the module has no import cycle with the audio routes.
+- `snapcast.ts` — starts/stops the Snapcast client as a systemd **user** unit (default `canvas-snapclient.service`, override with `CANVAS_SNAPCLIENT_SERVICE`; disable with `CANVAS_SNAPCLIENT_ENABLED=false`). Best-effort: a missing unit never blocks playback.
+- Wired in `server/src/index.ts` (`initAudioArbiter`): `mpv` releaser → `stopAudio()`, `snapcast` releaser → `stopSnapclient()`. `playAudio` acquires `mpv`; `stopAudio` releases it.
+- New routes: `GET /api/audio/snapcast` → `{ enabled, service, running, owner }`; `POST /api/audio/snapcast { action: 'start'|'stop' }`.
+- `seekAudio(seconds)` added to `server/src/routes/audio.ts` (used by DLNA `Seek`).
+
+### Validation (this session)
+
+- `cd server && npm test` → **46 tests pass** (new: 19 DLNA unit, 4 DLNA HTTP integration, 6 arbiter; plus the existing 17 YouTube tests). New `test` script added to `server/package.json`.
+- `cd server && npx tsc --noEmit` → clean; `npm run build` → clean.
+- **Live smoke test** (local, `node dist/index.js` with a temp data dir): server boots, `GET /health` → `{"ok":true}`, `GET /api/dlna/state` reports `enabled:true` with the LAN base URL, `GET /description.xml` serves a valid MediaRenderer description, `GET /api/audio/snapcast` → `{enabled:false,…,owner:"idle"}` (disabled for the test), and the DLNA UUID is identical across two restarts.
+- Local env note: `better-sqlite3` had to be rebuilt (`npm rebuild better-sqlite3`) because the checked-in native module was built for Node 20 while the local runtime is Node 22.
+
+### Not yet done (next steps)
+
+1. **Deploy the sidecar to the Pi** — build the arm64 sidecar on the Pi (see `AGENTS.md` → Build & deployment) and install to `/usr/bin/canvas-display-server`, then restart **both** `canvas-display-browser.service` and `canvas-display-server.service` (the nftables `3100→8099` redirect means updating only one is not enough).
+2. **Remove the `gmediarender` prototype** on the Pi (`canvas-dlna-renderer.service`, port 49494) — it is audio-only and is superseded by this renderer. Also remove the manually-added HA `dlna_dmr` entry for it.
+3. **Acceptance on the Pi**: confirm HA `dlna_dmr` auto-discovers the new renderer (no manual entry), push an audio track (mpv) and a video (kiosk floating WebView), and confirm album art + title reach the UI.
+4. **Snapcast arbiter acceptance**: with `canvas-snapclient.service` running, start a DLNA push and confirm snapclient stops; then start snapclient and confirm mpv stops.
+5. **Android parity**: the native Android app has no DLNA renderer or Snapcast client yet. Snapclient is buildable for Android (the `badaix/snapdroid` project bundles native ARM/X86 clients); a Kotlin DLNA renderer would mirror this design.
+6. **Core ↔ Music Assistant direct API** and **Core `/api/tts` `/api/stt` `/api/conversation`** endpoints (so Core/edges are standalone and HA can use them as a TTS/STT device) remain from the previous session's plan.
+7. **Deploy the HA `canvas_display` component in Core mode** (needs HA config access) — unchanged from the previous session.

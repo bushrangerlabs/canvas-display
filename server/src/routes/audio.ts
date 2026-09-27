@@ -16,6 +16,8 @@
 import type { FastifyInstance }     from 'fastify';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import net                           from 'net';
+import { acquireSink, releaseSink, getSinkOwner, registerSinkReleaser } from '../audio/arbiter';
+import { getSnapcastStatus, startSnapclient, stopSnapclient } from '../audio/snapcast';
 
 // ─── In-memory audio state ────────────────────────────────────────────────────
 
@@ -186,6 +188,9 @@ function setSystemMute(muted: boolean): void {
 }
 
 export async function playAudio(input: { url: string; title?: string; volume?: number }): Promise<AudioState> {
+  // Local mpv playback takes the audio sink; this stops the Snapcast client if
+  // it currently owns the output so the two never play over each other.
+  await acquireSink('mpv');
   const volume = Math.max(0, Math.min(100, input.volume ?? _state.volume));
   setSystemVolume(volume);
   spawnMpv(input.url, volume);
@@ -219,6 +224,7 @@ export async function stopAudio(): Promise<AudioState> {
   _state.state = 'idle';
   _state.url = '';
   _state.title = '';
+  await releaseSink('mpv');
   return getAudioState();
 }
 
@@ -228,6 +234,14 @@ export async function setAudioVolume(level: number): Promise<AudioState> {
   _state.volume = clamped;
   _state.muted = false;
   await mpvIpc({ command: ['set_property', 'volume', clamped] }).catch(() => undefined);
+  return getAudioState();
+}
+
+/** Seek the current mpv stream to an absolute position (seconds). */
+export async function seekAudio(seconds: number): Promise<AudioState> {
+  const target = Math.max(0, Number(seconds));
+  if (!Number.isFinite(target)) throw new Error('Invalid seek target');
+  await mpvIpc({ command: ['seek', target, 'absolute'] });
   return getAudioState();
 }
 
@@ -341,4 +355,25 @@ export async function audioRoutes(app: FastifyInstance) {
       return state;
     },
   );
+
+  // ─── Snapcast (multi-room sync) ─────────────────────────────────────────────
+
+  // GET /api/audio/snapcast → { enabled, service, running, owner }
+  app.get('/audio/snapcast', async () => ({ ...(await getSnapcastStatus()), owner: getSinkOwner() }));
+
+  // POST /api/audio/snapcast  { action: 'start' | 'stop' }
+  app.post<{ Body: { action?: 'start' | 'stop' } }>('/audio/snapcast', async (req, reply) => {
+    const action = req.body?.action;
+    if (action !== 'start' && action !== 'stop') {
+      return reply.code(400).send({ error: "action must be 'start' or 'stop'" });
+    }
+    if (action === 'start') {
+      // Snapcast takes the sink; this stops local mpv playback first.
+      await acquireSink('snapcast');
+      return startSnapclient();
+    }
+    const status = await stopSnapclient();
+    await releaseSink('snapcast');
+    return status;
+  });
 }

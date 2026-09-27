@@ -93,6 +93,14 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
     4. `sudo install -m 0755 canvas-display-server /usr/bin/canvas-display-server` then `systemctl --user restart canvas-display-browser.service` (the kiosk respawns its sidecar).
   * The native `better_sqlite3.node` is resolved at runtime from `NATIVE_BINDING_DIR` (via `pkg-native-patch.ts` + `bindings-shim.ts`, which the `--alias:bindings` above wires in) — never bundle it into the snapshot.
   * After replacing the sidecar, confirm only one `canvas-display-server` process is running (a stale PID keeps port 3100 bound and the new sidecar can't bind).
+  * Sidecar tests: `cd server && npm test` (`tsx --test` over `src/audio/*.test.ts`, `src/dlna/*.test.ts`, `src/services/*.test.ts`). `npx tsc --noEmit` for types. If `better-sqlite3` fails to load locally with `NODE_MODULE_VERSION`, run `npm rebuild better-sqlite3`.
+
+### DLNA renderer + Snapcast (sidecar)
+
+* The sidecar hosts a UPnP/DLNA **MediaRenderer** (`server/src/dlna/`) so HA `dlna_dmr` and Music Assistant can push audio/video to a display. It listens on `CANVAS_DLNA_PORT` (default **49500**) and advertises over SSDP on UDP 1900. Audio plays through mpv; video opens the kiosk's floating WebView via a `/video` wrapper page.
+* `server/src/audio/arbiter.ts` arbitrates the single audio sink between mpv and the Snapcast client (`server/src/audio/snapcast.ts`, systemd user unit `canvas-snapclient.service`). Config: `CANVAS_SNAPCLIENT_ENABLED`, `CANVAS_SNAPCLIENT_SERVICE`.
+* The Pi previously ran a `gmediarender` prototype (`canvas-dlna-renderer.service`, port 49494) that is **audio-only** and superseded — remove it and its manual HA `dlna_dmr` entry when deploying this renderer.
+* DLNA state is exposed at `GET /api/dlna/state`; Snapcast/sink state at `GET /api/audio/snapcast`.
 
 ### Core + web control plane (show/hide/restart)
 

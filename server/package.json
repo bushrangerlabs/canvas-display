@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "tsx --test src/audio/*.test.ts src/dlna/*.test.ts src/services/*.test.ts",
     "type-check": "tsc --noEmit",
     "build:sidecar": "tsc && rm -rf ../browser/linux/src-tauri/binaries/public && cp -r public ../browser/linux/src-tauri/binaries/public && npx pkg dist/index.js --target node20-linux-x64 --compress GZip --output ../browser/linux/src-tauri/binaries/canvas-display-server-x86_64-unknown-linux-gnu"
   },
