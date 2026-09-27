@@ -27,7 +27,7 @@ import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type LegacyPage, type SceneRecord, type RequestClassification, type VoiceCommandTemplate } from '../api/client';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
@@ -58,8 +58,6 @@ const VOICE_CUE_PRESETS = [
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general');
   const [settings, setSettings] = useState<LegacySettings | null>(null);
-  const [pages, setPages] = useState<LegacyPage[]>([]);
-  const [scenes, setScenes] = useState<SceneRecord[]>([]);
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [audio, setAudio] = useState<AudioState | null>(null);
@@ -76,7 +74,7 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [s, p, st, a, mq, cb, pageRows, sceneRows] = await Promise.all([
+      const [s, p, st, a, mq, cb] = await Promise.all([
         coreApi.settings().catch((e) => {
           if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
           throw e;
@@ -92,8 +90,6 @@ export default function SettingsPage() {
         coreApi.audioState().catch(() => null),
         coreApi.mqttStatus().catch(() => null),
         coreApi.coreBridgeStatus().catch(() => null),
-        coreApi.pages().catch(() => []),
-        coreApi.scenes().then(result => result.scenes).catch(() => []),
       ]);
       setSettings(s);
       setPrivacy(p);
@@ -101,8 +97,6 @@ export default function SettingsPage() {
       setAudio(a);
       setMqtt(mq);
       setCoreBridge(cb);
-      setPages(pageRows);
-      setScenes(sceneRows);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -200,7 +194,6 @@ export default function SettingsPage() {
             <Tabs value={activeTab} onChange={(_, value: string) => setActiveTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Settings sections">
               <Tab value="general" label="General" />
               <Tab value="integrations" label="Integrations" />
-              <Tab value="default-pages" label="Default pages" />
               <Tab value="request-routing" label="Request routing" />
               <Tab value="privacy-storage" label="Privacy &amp; storage" />
               <Tab value="ai" label="AI providers" />
@@ -395,10 +388,6 @@ export default function SettingsPage() {
               </Paper>
 
               </>}
-
-              {activeTab === 'default-pages' && settings && (
-                <DefaultPagesSection settings={settings} pages={pages} scenes={scenes} onChange={setSettings} onSave={saveSettings} />
-              )}
 
               {activeTab === 'request-routing' && settings && (
                 <RequestRoutingSection settings={settings} onChange={setSettings} onSave={saveSettings} />
@@ -599,79 +588,6 @@ function Row({ label, value }: { label: string; value: string }) {
       <Typography variant="caption" color="text.secondary" sx={{ minWidth: 180 }}>{label}</Typography>
       <Typography variant="body2">{value}</Typography>
     </Stack>
-  );
-}
-
-function playlistSlotsForPage(page: LegacyPage, scenes: SceneRecord[]): number[] {
-  return (page.panels ?? []).flatMap(panel => {
-    if (panel.content_type !== 'scene' || !panel.scene_id) return [];
-    const scene = scenes.find(item => item.id === panel.scene_id && item.status === 'published');
-    const widgets = (scene?.manifest as { widgets?: Array<{ type?: string; hidden?: boolean; config?: Record<string, unknown> }> } | undefined)?.widgets ?? [];
-    return widgets
-      .filter(widget => widget.type === 'playlistresult' && !widget.hidden)
-      .map(widget => Math.max(1, Math.min(8, Math.trunc(Number(widget.config?.resultSlot ?? 1)))));
-  });
-}
-
-function playlistPageProblem(page: LegacyPage, scenes: SceneRecord[]): string | null {
-  const slots = playlistSlotsForPage(page, scenes);
-  if (slots.length === 0) return 'No published Playlist Result widgets';
-  if (new Set(slots).size !== slots.length) return 'Result slots are duplicated';
-  if (![...slots].sort((a, b) => a - b).every((slot, index) => slot === index + 1)) return 'Result slots must start at 1 without gaps';
-  return null;
-}
-
-function DefaultPagesSection({ settings, pages, scenes, onChange, onSave }: {
-  settings: LegacySettings;
-  pages: LegacyPage[];
-  scenes: SceneRecord[];
-  onChange: (settings: LegacySettings) => void;
-  onSave: (patch: Partial<LegacySettings>) => Promise<void>;
-}) {
-  const selected = pages.find(page => page.id === settings.playlist_selection_page_id);
-  const selectedProblem = selected ? playlistPageProblem(selected, scenes) : null;
-  return (
-    <Paper sx={{ p: 2.5 }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Default pages</Typography>
-      <Typography variant="caption" color="text.secondary">
-        Assign stable page roles used by Core features. More page roles can be added here as Canvas grows.
-      </Typography>
-      <Divider sx={{ my: 2 }} />
-      <Stack spacing={1.5}>
-        <FormControl size="small" fullWidth>
-          <InputLabel>Playlist selection page</InputLabel>
-          <Select
-            label="Playlist selection page"
-            value={settings.playlist_selection_page_id ?? ''}
-            onChange={event => onChange({ ...settings, playlist_selection_page_id: event.target.value })}
-          >
-            <MenuItem value=""><em>Built-in automatic playlist screen</em></MenuItem>
-            {pages.map(page => {
-              const slots = playlistSlotsForPage(page, scenes);
-              const problem = playlistPageProblem(page, scenes);
-              return <MenuItem key={page.id} value={page.id} disabled={!!problem}>{page.name} — {problem ?? `${slots.length} result slot${slots.length === 1 ? '' : 's'}`}</MenuItem>;
-            })}
-          </Select>
-        </FormControl>
-        <Typography variant="caption" color="text.secondary">
-          Core fills the enabled Playlist Result widgets on this page. The page is stored by ID, so renaming it is safe.
-        </Typography>
-        {settings.playlist_selection_page_id && !selected && <Alert severity="warning">The assigned page no longer exists. Select another page or use the built-in screen.</Alert>}
-        {selectedProblem && <Alert severity="warning">{selectedProblem}. Fix the page's published scene before saving it as the default.</Alert>}
-        <Box>
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<SaveIcon fontSize="small" />}
-            disabled={!!selectedProblem}
-            onClick={() => onSave({ playlist_selection_page_id: settings.playlist_selection_page_id })}
-            sx={{ textTransform: 'none' }}
-          >
-            Save default pages
-          </Button>
-        </Box>
-      </Stack>
-    </Paper>
   );
 }
 

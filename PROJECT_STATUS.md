@@ -55,6 +55,24 @@ There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometr
 
 ## Work completed in this session
 
+### Per-device default start page (2026-09-27)
+
+The Core-wide **Default pages** settings tab was removed from `web/src/pages/SettingsPage.tsx`. Each edge device now has a **Default start page** selector in the Info tab of `web/src/pages/DevicesPage.tsx`. It reads the existing per-device `device_page_state.default_page_id` through the page-library API and uses the existing assignment/unassignment routes, so selecting a page applies it immediately and persists it as that device's default.
+
+`core/src/gateway.ts` now prefers `default_page_id` over transient `active_page_id` when a native edge reconnects. Devices without a configured default retain the previous active-page replay behavior. No database migration was needed because the per-device default column and assignment model already existed.
+
+Validation:
+
+- `cd web && npm run build` — passed (existing Vite chunk-size and ineffective-dynamic-import warnings only).
+- `cd core && npm run type-check` — passed.
+- `git diff --check` — passed.
+- `cd core && npx tsx --test --test-name-pattern='assignment|device library' test/legacy-routes.test.ts` — passed, 4/4 focused page-library/default-assignment tests.
+- `cd web && npx eslint src/pages/DevicesPage.tsx src/pages/SettingsPage.tsx --quiet` — passed.
+- `cd core && npm test -- --test-name-pattern='assignment|device library'` — the argument order caused the complete 477-test suite to run; 473 passed and the same four pre-existing failures recorded below remained (Whisper response format, two intelligence registry/failover expectations, and intent-router media routing).
+- `cd web && npm run lint -- --quiet` — blocked by the pre-existing `react-hooks/preserve-manual-memoization` error in `web/src/components/VoiceStateOverlay.tsx:78`; the changed files did not report lint errors.
+
+No deployment, commit, or live-device validation was performed. The next concrete step for release is to build `web/`, copy its output into `core/public/`, build Core, and deploy both together under the documented Core deployment procedure after explicit owner authorization.
+
 Repository-wide structural audit with focused source/config/diff inspection across major subsystems. This was not a line-by-line audit of every file or generated artifact. No remote devices/services were contacted.
 
 Fixed a reproducible regression in the already-modified separate editor HTML widget:

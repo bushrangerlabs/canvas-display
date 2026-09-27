@@ -817,7 +817,9 @@ export function registerGateway(
           'SELECT active_page_id, default_page_id FROM device_page_state WHERE device_id = $1',
           [deviceId],
         );
-        const replayPageId = activeState.rows[0]?.active_page_id ?? activeState.rows[0]?.default_page_id;
+        // A configured start page is authoritative at connection time. Active pages
+        // are runtime navigation state and remain the fallback for devices without one.
+        const replayPageId = activeState.rows[0]?.default_page_id ?? activeState.rows[0]?.active_page_id;
         if (replayPageId) {
           const pageResult = await getPool(config).query('SELECT * FROM pages WHERE id = $1', [replayPageId]);
           const panelsResult = await getPool(config).query('SELECT * FROM page_panels WHERE page_id = $1 ORDER BY position, id', [replayPageId]);

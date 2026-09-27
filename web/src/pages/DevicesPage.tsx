@@ -24,7 +24,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type DeviceRow, type InvitationRecord, type AuthorityStatusSummary, type AuthorityMode } from '../api/client';
+import { coreApi, ApiError, type DeviceRow, type InvitationRecord, type AuthorityStatusSummary, type AuthorityMode, type LegacyPage } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, BoolChip, fmtRelative } from '../components/ui';
 
 const AUTHORITY_MODES: AuthorityMode[] = ['legacy', 'shadow', 'core', 'rollback_pending'];
@@ -375,6 +375,10 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
   const [displayWidth, setDisplayWidth] = useState<number | ''>('');
   const [displayHeight, setDisplayHeight] = useState<number | ''>('');
   const [savingDisplay, setSavingDisplay] = useState(false);
+  const [pages, setPages] = useState<LegacyPage[]>([]);
+  const [defaultPageId, setDefaultPageId] = useState('');
+  const [savedDefaultPageId, setSavedDefaultPageId] = useState('');
+  const [savingDefaultPage, setSavingDefaultPage] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -439,6 +443,14 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
       })
       .catch(e => setError((e as Error).message))
       .finally(() => setLoading(false));
+    Promise.all([coreApi.pages(), coreApi.devicePageLibrary(device.id)])
+      .then(([pageRows, pageState]) => {
+        const pageId = pageState.default_page_id ?? '';
+        setPages(pageRows);
+        setDefaultPageId(pageId);
+        setSavedDefaultPageId(pageId);
+      })
+      .catch(e => setError((e as Error).message));
     void loadAudioDevices();
     void coreApi.getDeviceVoiceMetrics(device.id).then(setVoiceMetrics).catch(() => setVoiceMetrics(null));
   }, [device, loadAudioDevices]);
@@ -507,6 +519,24 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
       onRefresh();
     } catch (e) { setError((e as Error).message); }
     finally { setSavingDisplay(false); }
+  }
+
+  async function saveDefaultPage() {
+    if (!device || defaultPageId === savedDefaultPageId) return;
+    setSavingDefaultPage(true); setError(null); setTestResult(null);
+    try {
+      if (defaultPageId) {
+        await coreApi.assignPage(defaultPageId, device.id);
+      } else if (savedDefaultPageId) {
+        await coreApi.unassignPage(savedDefaultPageId, device.id);
+      }
+      setSavedDefaultPageId(defaultPageId);
+      setTestResult({ note: defaultPageId
+        ? `Start page set to “${pages.find(page => page.id === defaultPageId)?.name ?? defaultPageId}”.`
+        : 'Start page cleared.' });
+      onRefresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSavingDefaultPage(false); }
   }
 
   async function runTest(kind: 'mic' | 'speaker' | 'wakeword') {
@@ -741,6 +771,33 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
                   />
                   <Button size="small" variant="contained" onClick={saveDisplay} disabled={savingDisplay}>
                     {savingDisplay ? <CircularProgress size={14} /> : 'Save'}
+                  </Button>
+                </Stack>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2">Start page</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  This page opens when the edge app starts or reconnects to Core.
+                </Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' } }}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel>Default start page</InputLabel>
+                    <Select
+                      label="Default start page"
+                      value={defaultPageId}
+                      onChange={event => setDefaultPageId(String(event.target.value))}
+                    >
+                      <MenuItem value=""><em>No default page</em></MenuItem>
+                      {pages.map(page => <MenuItem key={page.id} value={page.id}>{page.name}</MenuItem>)}
+                    </Select>
+                  </FormControl>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={saveDefaultPage}
+                    disabled={savingDefaultPage || defaultPageId === savedDefaultPageId}
+                    sx={{ minWidth: 88 }}
+                  >
+                    {savingDefaultPage ? <CircularProgress size={14} /> : 'Save'}
                   </Button>
                 </Stack>
                 <Divider sx={{ my: 1 }} />
