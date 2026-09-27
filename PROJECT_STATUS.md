@@ -427,6 +427,18 @@ Verified: the observed hallucination is now discarded (`Ignoring ambient transcr
 
 Note: the wake word itself scored 0.988, so a threshold change would not help — the guard is at the command level. Thresholds are constants in `intelligence.ts` and easy to tune.
 
+### Music Assistant — wired to the HA media-player path (2026-09-27)
+
+The user installed **YouTube Music** in MA, so MA can now resolve music (`music_assistant.search` for "bohemian rhapsody" returns `ytmusic--vaATCauJ://track/...`). Confirmed the user's model is correct: MA ships a **`hass_players`** provider ("Home Assistant MediaPlayers") that plays to HA media players, and its player id **is the HA entity_id**.
+
+Implemented:
+- **Component** (`custom_components/canvas_display/media_player.py`): each Core-mode entity now gets a **predictable entity_id** `media_player.canvas_<slug(device_id)>` (so Core can address its MA player) and exposes `canvas_device_id` as an attribute. `_resolve_source` now prefers a URL over the media type — MA's `hass_players` sends a resolved stream URL with `media_content_type: music`, which previously misclassified as `music_assistant`. Titles come from MA's `extra.metadata`.
+- **Core** (`playMedia`/`controlMedia` for `music_assistant`): instead of the old circular sidecar call, Core now calls HA `music_assistant.play_media` with `entity_id = media_player.canvas_<slug>` and `media_id = <query>`; MA resolves and streams to the device. Control uses HA `media_player.media_pause`/`media_play`/`media_stop`/`media_next_track`/`media_previous_track`/`volume_set`/`volume_mute` on the same entity. If the entity is missing, Core returns an actionable error instead of a false success.
+
+Verified: MA's `music_assistant.play_media` works via REST (`entity_id` must be in the **body**, not `target` — `target` 400s) and played Bohemian Rhapsody from YouTube Music on an MA player. Core now reports `Music Assistant is not set up for this display yet (no media_player.canvas_…)` until the HA component is deployed.
+
+**Remaining (user actions):** deploy the HA component in Core mode (`scripts/deploy-ha-component.sh`), then in MA add the **Home Assistant** plugin (HA URL + long-lived token) and the **Home Assistant MediaPlayers** player provider, and tick the Canvas players.
+
 ### Deployments this session
 
 - **`local-llm` provider fixed**: the remote `.env` pointed `CANVAS_CORE_LLM_BASE_URL` at a dead `:8092`; repointed to the running local router (`router-qwen3-1.7b` on `:8081`). Core now reports every provider UP (`local-llm`, `local-asr`, `local-tts`, `mcp 8/8`, `ha 2107 entities`). Backup: `.env.bak-20260927`.

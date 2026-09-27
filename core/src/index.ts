@@ -2270,23 +2270,34 @@ async function main(): Promise<void> {
         return { ok: false, message: 'I could not identify which display requested playback.' };
       }
       if (source === 'music_assistant') {
-        // Music Assistant playback is resolved by the device's local Display server
-        // (which talks to HA/Music Assistant). Android has no local server, so it is
-        // not supported there yet — see the HA media_player workstream item.
+        // Music Assistant resolves the query itself and streams to the device's MA
+        // player. MA's `hass_players` provider uses the HA entity_id as its player
+        // id, and the canvas_display component assigns a predictable entity_id per
+        // device (media_player.canvas_<slug>), so we can target it directly.
+        if (!ha) {
+          return { ok: false, message: 'Music Assistant playback needs Home Assistant to be configured.' };
+        }
+        const entityId = `media_player.canvas_${deviceId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
+        if (!ha.getEntities().some(entity => entity.entityId === entityId)) {
+          return {
+            ok: false,
+            message:
+              `Music Assistant is not set up for this display yet (no ${entityId}). ` +
+              'Deploy the Canvas Display Home Assistant integration in Core mode and enable ' +
+              'Music Assistant\'s "Home Assistant MediaPlayers" provider.',
+          };
+        }
         try {
-          const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-          if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-            return { ok: false, message: 'Music Assistant playback is not supported on Android yet.' };
-          }
-          const result = await requestDeviceAction(deviceId, 'device_http', {
-            path: '/api/media/play',
-            http_method: 'POST',
-            body: { source: 'music_assistant', url: query, title: query },
-          }, 20_000);
+          await ha.callService('music_assistant', 'play_media', {
+            entity_id: entityId,
+            media_id: query,
+            media_type: 'track',
+          });
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query });
           return {
             ok: true,
             message: `Playing "${query}" from Music Assistant.`,
-            data: { device_id: deviceId, source, result, playback_started: true },
+            data: { device_id: deviceId, source, entity_id: entityId, playback_started: true },
           };
         } catch (error) {
           return {
@@ -2590,16 +2601,36 @@ async function main(): Promise<void> {
         return { ok: false, message: 'I could not identify which display requested media control.' };
       }
       if (source === 'music_assistant') {
-        try {
-          const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-          if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-            return { ok: false, message: 'Music Assistant control is not supported on Android yet.' };
+        // Control the device's MA player. MA's hass_players player id is the HA
+        // entity_id, so HA's media_player services reach the same player.
+        if (!ha) {
+          return { ok: false, message: 'Music Assistant control needs Home Assistant to be configured.' };
+        }
+        const entityId = `media_player.canvas_${deviceId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
+        const service = {
+          pause: 'media_pause',
+          resume: 'media_play',
+          stop: 'media_stop',
+          next: 'media_next_track',
+          previous: 'media_previous_track',
+          volume: 'volume_set',
+          mute: 'volume_mute',
+        }[action];
+        if (!service) {
+          return { ok: false, message: `Music Assistant does not support "${action}".` };
+        }
+        const data: Record<string, unknown> = { entity_id: entityId };
+        if (action === 'volume') {
+          if (typeof value !== 'number') {
+            return { ok: false, message: 'A volume level is required.' };
           }
-          const result = await requestDeviceAction(deviceId, 'device_http', {
-            path: '/api/media/control',
-            http_method: 'POST',
-            body: { source: 'music_assistant', action },
-          }, 10_000);
+          data.volume_level = Math.max(0, Math.min(1, value / 100));
+        }
+        if (action === 'mute') {
+          data.is_volume_muted = Boolean(value);
+        }
+        try {
+          await ha.callService('media_player', service, data);
           const verb = {
             pause: 'Paused Music Assistant playback',
             resume: 'Resumed Music Assistant playback',
@@ -2609,7 +2640,7 @@ async function main(): Promise<void> {
             volume: 'Set the Music Assistant volume',
             mute: value ? 'Muted Music Assistant playback' : 'Unmuted Music Assistant playback',
           }[action] ?? 'Updated Music Assistant playback';
-          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
+          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, entity_id: entityId } };
         } catch (error) {
           return {
             ok: false,

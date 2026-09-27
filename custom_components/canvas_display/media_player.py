@@ -12,6 +12,7 @@ Two modes:
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.components.media_player import MediaPlayerEntity
@@ -103,6 +104,13 @@ class CanvasDeviceMediaPlayer(CoordinatorEntity[CanvasDisplayCoordinator], Media
         self._entry_id = entry_id
         self._device_id = device_id
         self._attr_unique_id = f"canvas_display_{entry_id}_{device_id}_media_player"
+        # Predictable entity_id so Core can address this device's Music Assistant
+        # player (MA's hass_players player id is the HA entity_id).
+        self.entity_id = canvas_entity_id(device_id)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"canvas_device_id": self._device_id}
 
     @property
     def _device(self) -> dict[str, Any]:
@@ -202,24 +210,58 @@ class CanvasDeviceMediaPlayer(CoordinatorEntity[CanvasDisplayCoordinator], Media
         **kwargs: Any,
     ) -> None:
         source = _resolve_source(media_type, media_id)
-        title = kwargs.get("title") or kwargs.get("media_title")
-        extra = kwargs.get("extra") or {}
-        if title is None and isinstance(extra, dict):
-            title = extra.get("title")
         await self.coordinator.async_device_media_play(
-            self._device_id, source=source, url=media_id, title=title
+            self._device_id, source=source, url=media_id, title=_title_from_kwargs(kwargs)
         )
 
 
+def _slug(value: str) -> str:
+    """HA entity_id slug: lowercase, non-alphanumerics become underscores."""
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def canvas_entity_id(device_id: str) -> str:
+    """The predictable HA entity_id for a Canvas device.
+
+    Music Assistant's ``hass_players`` provider uses the HA entity_id as its own
+    player id, so Core can target the device's MA player with this value.
+    """
+    return f"media_player.canvas_{_slug(device_id)}"
+
+
+def _title_from_kwargs(kwargs: dict[str, Any]) -> str | None:
+    """Extract a display title from HA play_media kwargs.
+
+    Music Assistant passes ``extra={'metadata': {'title': ..., 'artist': ...}}``.
+    """
+    title = kwargs.get("title") or kwargs.get("media_title")
+    extra = kwargs.get("extra")
+    if title is None and isinstance(extra, dict):
+        title = extra.get("title")
+        metadata = extra.get("metadata")
+        if title is None and isinstance(metadata, dict):
+            title = metadata.get("title")
+            artist = metadata.get("artist")
+            if title and artist:
+                title = f"{artist} - {title}"
+    return title or None
+
+
 def _resolve_source(media_type: MediaType | str, media_id: str) -> str:
-    media_type_value = str(media_type).lower()
+    """Map an HA play_media call to a Core media source.
+
+    A URL is always played directly: Music Assistant's ``hass_players`` provider
+    resolves the track itself and sends a stream URL with ``media_content_type``
+    of ``music``, so the media type must not override a real URL.
+    """
     lower_id = media_id.lower()
-    if "youtube.com" in lower_id or "youtu.be" in lower_id:
-        return "youtube"
+    if lower_id.startswith("http://") or lower_id.startswith("https://"):
+        if "youtube.com" in lower_id or "youtu.be" in lower_id:
+            return "youtube"
+        return "direct_audio"
+    media_type_value = str(media_type).lower()
     if media_type_value in {"channel", "radio", "tvshow", "station"}:
         return "radio_browser"
-    if media_id.startswith("http://") or media_id.startswith("https://"):
-        return "direct_audio"
     return "music_assistant"
 
 
@@ -308,11 +350,7 @@ class CanvasDisplayMediaPlayer(CoordinatorEntity[CanvasDisplayCoordinator], Medi
         **kwargs: Any,
     ) -> None:
         source = _resolve_source(media_type, media_id)
-        title = kwargs.get("title") or kwargs.get("media_title")
-        extra = kwargs.get("extra") or {}
-        if title is None and isinstance(extra, dict):
-            title = extra.get("title")
-        await self.coordinator.async_media_play(source=source, url=media_id, title=title)
+        await self.coordinator.async_media_play(source=source, url=media_id, title=_title_from_kwargs(kwargs))
 
     def _current_source(self) -> str:
         media_id = self.media_content_id or ""
