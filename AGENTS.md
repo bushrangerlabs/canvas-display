@@ -77,6 +77,8 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
 * Release signing: keystore `browser/android-native/keystore/canvas-edge-release.keystore` + `keystore.properties` (both **gitignored secrets**). `app/build.gradle.kts` reads `keystore.properties`; when absent, release is unsigned.
 * Two signing identities exist in the field: `app-debug.apk` uses the machine debug key (in-place `adb install -r` preserves enrollment); `app-release.apk` uses the new keystore, a *different* identity, so it cannot update a debug-installed app without `adb uninstall` (wipes enrollment). Keep this in mind before switching devices to release builds.
 * Deploy to a tablet: `adb install -r app/build/outputs/apk/debug/app-debug.apk` (adb here: `~/Android/Sdk/platform-tools/adb`).
+* Unit tests: `<gradle> :app:testDebugUnitTest` (JVM — `src/test`); instrumentation: `:app:assembleDebugAndroidTest` then `adb shell am instrument -w com.bushrangerlabs.canvas_display_edge.test/androidx.test.runner.AndroidJUnitRunner`.
+* The app hosts a **DLNA MediaRenderer** (`.../dlna/`) on port **49500**, mirroring the Linux sidecar: SSDP + HTTP + SOAP + GENA, audio via `MediaPlayer`, video via the floating WebView. `DlnaService` acquires a `WifiManager.MulticastLock` (Android only delivers multicast to a lock holder). `DlnaLog.sink` is a no-op by default so the `dlna` package stays Android-free for JVM tests; `DlnaService` wires it to logcat (`CanvasDlna`). There is **no Snapcast client on Android yet**.
 
 ### Linux kiosk — `browser/linux/`
 

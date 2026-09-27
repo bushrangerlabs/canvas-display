@@ -22,6 +22,9 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.bushrangerlabs.canvas_display_edge.dlna.AndroidDlnaAdapter
+import com.bushrangerlabs.canvas_display_edge.dlna.DlnaHttpServer
+import com.bushrangerlabs.canvas_display_edge.dlna.DlnaService
 import com.bushrangerlabs.canvas_display_edge.voice.VoicePipeline
 import com.bushrangerlabs.canvas_display_edge.voice.VoiceConfig
 import java.util.concurrent.CountDownLatch
@@ -60,6 +63,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pageStore: EdgePageStore
     private var lastPage: EdgePage? = null
     private var directAudioPlayer: MediaPlayer? = null
+    private var dlnaService: DlnaService? = null
+    private var dlnaAdapter: AndroidDlnaAdapter? = null
     private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var revertRunnable: Runnable? = null
 
@@ -213,6 +218,7 @@ class MainActivity : AppCompatActivity() {
         rendererContainer = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(rendererContainer, FrameLayout.LayoutParams(-1, -1))
         renderer = MultiPanelRenderer(rendererContainer) { clearRevertTimer() }
+        startDlnaRenderer()
         pageStore = EdgePageStore(this)
         status = TextView(this).apply {
             setTextColor(Color.WHITE)
@@ -272,6 +278,37 @@ class MainActivity : AppCompatActivity() {
             }
         }.start()
         refreshVoiceConfigAndMaybeStart()
+    }
+
+    /**
+     * Expose this device as a UPnP/DLNA MediaRenderer so Home Assistant
+     * (`dlna_dmr`) and Music Assistant can push audio and video to it.
+     *
+     * Audio plays through a native [MediaPlayer] (no window); video opens the
+     * floating WebView with the renderer's own `/video` wrapper page.
+     */
+    private fun startDlnaRenderer() {
+        val adapter = AndroidDlnaAdapter(
+            context = this,
+            onPlayVideo = { url, title ->
+                runOnUiThread {
+                    val base = dlnaService?.baseUrl.orEmpty()
+                    val target = if (base.isNotEmpty()) DlnaHttpServer.videoWrapperUrl(base, url, title) else url
+                    renderer.showFloating(target, fullscreen = false)
+                }
+            },
+            onStopVideo = { runOnUiThread { renderer.hideFloating() } },
+        )
+        dlnaAdapter = adapter
+        val service = DlnaService(
+            context = this,
+            adapter = adapter,
+            friendlyName = config.deviceName,
+            modelNumber = "0.3.1",
+        )
+        dlnaService = service
+        // Binding the SSDP socket can block briefly; keep it off the UI thread.
+        Thread { service.start() }.start()
     }
 
     /** Fetches this device's voice settings from Core (admin-configured, never set
@@ -402,8 +439,14 @@ class MainActivity : AppCompatActivity() {
 
     /** Play a direct audio URL (e.g. a Core broadcast clip) through the device speaker.
      *  Unlike YouTube/WebView media, this uses a native [MediaPlayer] so a recorded
-     *  announcement plays without opening a window. */
+     *  announcement plays without opening a window. Routed through the DLNA adapter so
+     *  it shares one audio sink with DLNA pushes (see [AudioSinkArbiter]). */
     private fun playDirectAudio(url: String) {
+        val adapter = dlnaAdapter
+        if (adapter != null) {
+            adapter.playAudio(url, null, 100)
+            return
+        }
         try {
             directAudioPlayer?.release()
         } catch (_: Throwable) {
@@ -502,6 +545,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        dlnaService?.stop()
+        dlnaService = null
+        dlnaAdapter = null
         if (::renderer.isInitialized) renderer.destroyAll()
         voicePipeline?.stop()
         voicePipeline = null

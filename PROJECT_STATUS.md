@@ -550,3 +550,47 @@ A second, independent defect: panel/floating webviews are **child** webviews, so
 - `screen_off`/`screen_on` use `xset dpms` (X11) and are **no-ops under Wayland/labwc**, so they cannot be used to test whether the kiosk is processing commands.
 - `grim` (with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0`) is a reliable way to capture the Pi's display; identical PNG hashes across commands are meaningful.
 - Restarting the kiosk can briefly leave the `panel-fallback` webview on top of the page panels (a race between the fallback effect and the sidecar's `load_page` push); a second restart cleared it. Worth fixing alongside the `show_floating` bug.
+
+## Android edge: DLNA MediaRenderer (2026-09-27/28, this session)
+
+The Android edge app had **none** of the Linux sidecar's media-rendering stack (no DLNA/SSDP/UPnP, no Snapcast, no audio arbiter) — it only had `MediaPlayer` for direct/broadcast audio and the WebView overlay for video. This session added the **DLNA MediaRenderer** for parity.
+
+### What was built (`browser/android-native/app/src/main/java/.../dlna/`)
+
+| File | Responsibility |
+|---|---|
+| `DlnaXml.kt` | XML escape/unescape, element/attribute readers, DIDL-Lite parsing, UPnP duration parse/format, SOAP action-header parse + envelope/fault builders |
+| `DlnaDescriptions.kt` | Device description + AVTransport / RenderingControl / ConnectionManager SCPDs; `SINK_PROTOCOL_INFO` declares both **audio and video** MIME types |
+| `DlnaRenderer.kt` | Transport state machine + GENA subscriber registry; maps actions onto an injected `DlnaPlaybackAdapter` |
+| `SsdpServer.kt` | SSDP M-SEARCH responder + NOTIFY alive/byebye with the full service list; `DlnaNetwork`/`DlnaLog` helpers |
+| `DlnaHttpServer.kt` | HTTP control surface (`/description.xml`, `/service/*.xml`, `/control/*`, `/event/*`, `/video`, `/health`), GENA NOTIFY delivery |
+| `AndroidDlnaAdapter.kt` | `MediaPlayer`-backed audio, WebView-overlay video, and the `AudioSinkArbiter` |
+| `DlnaService.kt` | Lifecycle: stable UUID (SharedPreferences), friendly name, `WifiManager.MulticastLock`, SSDP + HTTP wiring |
+
+Behaviour mirrors the sidecar: audio → native `MediaPlayer` (no window), video → the existing floating WebView loading the renderer's own `/video` wrapper page. Media kind is classified from the DIDL MIME type → UPnP class → URL extension. Port **49500** (same as Linux).
+
+`MainActivity` starts the renderer once the `MultiPanelRenderer` exists and stops it in `onDestroy`. `playDirectAudio` (Core broadcast clips) now routes through the DLNA adapter so direct audio and DLNA pushes share one audio sink.
+
+### Verified on the tablet (`A1064US260402203`, 192.168.1.41)
+
+- `GET http://192.168.1.41:49500/description.xml` serves a valid MediaRenderer description; `/health` reports renderer state.
+- **SSDP discovery works**: an M-SEARCH for `urn:schemas-upnp-org:device:MediaRenderer:1` gets a response from `192.168.1.41:1900` with `LOCATION=http://192.168.1.41:49500/description.xml` (probe helper: `scripts/ssdp-probe.py`).
+- **Audio**: `SetAVTransportURI` + `Play` for the DAB+ Icecast stream → `200`/`200`, state `PLAYING` with an advancing position.
+- **Video**: a `.mp4` push reports `isVideo:true` and opens the floating WebView with the `/video` wrapper (confirmed by screenshot — the test clip plays over the page panels).
+- `RenderingControl.GetVolume` and `AVTransport.GetTransportInfo` return well-formed SOAP responses.
+- `cd browser/android-native && <gradle> :app:testDebugUnitTest` → **31 tests pass** (24 new DLNA + 7 existing); `:app:assembleDebug` and `:app:assembleDebugAndroidTest` build.
+
+### Not done: Snapcast on Android
+
+There is **no Snapcast client on Android**. Unlike the DLNA renderer (pure Kotlin), Snapcast needs either:
+
+1. a **native `snapclient` binary** for Android (arm64), executed from the app's `nativeLibraryDir` — this is what the `badaix/snapdroid` project does. It requires the Android NDK and snapcast's C++ build, and the binary must be shipped per-ABI; or
+2. a **Kotlin implementation of the Snapcast protocol** (TCP control channel with length-prefixed JSON, UDP audio chunks with a custom header, and the time-sync ping/pong), playing through `AudioTrack` with drift correction.
+
+Option 1 is closer to the proven Linux path; option 2 avoids shipping native code. Either way the `AudioSinkArbiter` added this session is already in place to hand the sink between Snapcast and local playback.
+
+### Android DLNA notes / gotchas
+
+- Android only delivers multicast to an app holding a `WifiManager.MulticastLock` — `DlnaService` acquires one (`CHANGE_WIFI_MULTICAST_STATE` + `ACCESS_WIFI_STATE` added to the manifest).
+- Android's `MulticastSocket` ends up as a **dual-stack** socket (`[::]:1900`) even when bound to the IPv4 wildcard; it still receives the IPv4 SSDP group, so this is fine (verified by the M-SEARCH probe).
+- `DlnaLog.sink` defaults to a no-op so the `dlna` package stays Android-free for JVM tests; `DlnaService` wires it to logcat (`CanvasDlna`).
