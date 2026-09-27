@@ -607,7 +607,7 @@ Option 2 was chosen and built: a **Kotlin Snapcast client** (`.../snapcast/`). T
 - `Hello` (type 5) uses **capitalised** field names: `MAC`, `HostName`, `Version`, `ClientName`, `OS`, `Arch`, `Instance`, `ID`, `SnapStreamProtocolVersion` (2).
 - `ServerSettings` (3) is `{bufferMs, latency, muted, volume}`; the stream list is not included.
 - `CodecHeader` (1) is binary: `uint32 codecLen` + codec + `uint32 dataLen` + data. For FLAC the data is a **complete FLAC stream header** (`fLaC` + STREAMINFO + …), which is exactly what `MediaCodec` wants as `csd-0`.
-- `WireChunk` (2) is `uint64 timestamp` (server clock, µs) + `uint32 dataLen` + data.
+- `WireChunk` (2) is `int32 timestamp.sec` + `int32 timestamp.usec` + `uint32 dataLen` + data — **not** a uint64 timestamp. The timestamp is the chunk's playout time on the server clock.
 - `Time` (4) payload is just the client's `latency` (8 bytes); the sync clocks ride in the header's `sent`/`received` fields.
 - The bundled MA snapserver uses **flac @ 48000:16:2** (`/etc/snapserver.conf` leaves `codec` commented, and the default is flac).
 
@@ -618,9 +618,28 @@ Option 2 was chosen and built: a **Kotlin Snapcast client** (`.../snapcast/`). T
 - **Arbiter handover works**: a DLNA audio push logged `snapcast: releasing the audio sink` and stopped the client.
 - `cd browser/android-native && <gradle> :app:testDebugUnitTest` → **46 tests pass** (15 new Snapcast + 24 DLNA + 7 existing).
 
+**Clock-scheduled playback (2026-09-28, this session):**
+
+Playback is now scheduled against the server clock using snapclient's own rule (from `client/stream.cpp`):
+
+```
+age = (serverNow - chunkStart) - bufferMs + dacTime
+  age == 0 -> play now;  age < 0 -> too early (wait);  age > 0 -> too old (drop)
+```
+
+- `SnapcastSync` holds the pure rule (`playAt`, `age`, `decide`, `waitMillis`, `dacTimeMicros`) so it is JVM-testable; `SnapcastPlayer` applies it in its write loop, using `AudioTrack.playbackHeadPosition` to estimate `dacTime` (how long audio written now sits in the output buffer).
+- `SnapcastClient` keeps the server↔client offset fresh with a 1 Hz `Time` exchange; `SnapcastClockSync` prefers the lowest-round-trip sample.
+
+**Two protocol bugs found and fixed while verifying this** (both produced plausible-looking but wrong numbers):
+
+1. `WireChunk` carries **`int32 timestamp.sec` + `int32 timestamp.usec`**, not a `uint64` timestamp (`common/message/wire_chunk.hpp`). Reading it as a uint64 made consecutive chunks appear ~28 hours apart.
+2. The client's `Time` header used `System.currentTimeMillis()` while `nowMicros()` used `System.nanoTime()` — two different epochs — so the NTP-style offset came out as **0**. Both now use the monotonic clock.
+
+**Verified on the tablet:** chunk timestamps are 24 ms apart (correct), the offset resolves to ~970,553 s (the server/tablet boot-time difference), and the sync stats report `median=13–21ms dropped=0 buffered=24–92ms` with the `AudioTrack` still writing frames. That is a large improvement over the previous unscheduled playback, though not yet snapclient's sub-millisecond accuracy (it soft-corrects with a resampler; we do not).
+
 **Known gaps:**
 
-- Playback is **not drift-corrected**: chunks are written to `AudioTrack` as they arrive rather than scheduled against the server clock, so this is not yet sample-accurate multi-room sync. `SnapcastClockSync` already estimates the offset (and `SnapcastClient` keeps it fresh) — the scheduling step is the remaining work.
+- Sync is **~15–20 ms**, not sample-accurate: there is no resampler-based soft correction, only the coarse wait/drop rule. Adding a resampler (or `AudioTrack` playback-rate adjustment) would close the remaining gap.
 - Snapcast does **not** automatically resume after a DLNA push releases the sink; it must be restarted (a "resume background music after an announcement" behaviour would be a small follow-up).
 - The Snapcast host defaults to the Core host (`EdgeConfig.resolvedSnapcastHost`); `snapcastEnabled`/`snapcastHost`/`snapcastPort` are configurable but have no UI yet.
 

@@ -190,14 +190,19 @@ object SnapcastProtocol {
         return CodecHeader(codec, payload.copyOfRange(dataStart, dataStart + dataLength))
     }
 
-    /** Parse a WireChunk payload (`uint64 timestamp` + `uint32 dataLen` + data). */
+    /**
+     * Parse a WireChunk payload: `int32 timestamp.sec` + `int32 timestamp.usec` +
+     * `uint32 dataLen` + data. The timestamp is the chunk's playout time on the
+     * server clock (snapcast `WireChunk::start()`).
+     */
     fun parseWireChunk(payload: ByteArray): WireChunk? {
         if (payload.size < 12) return null
         val buffer = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-        val timestamp = buffer.long
+        val sec = buffer.int
+        val usec = buffer.int
         val dataLength = buffer.int
         if (dataLength < 0 || 12 + dataLength > payload.size) return null
-        return WireChunk(timestamp, payload.copyOfRange(12, 12 + dataLength))
+        return WireChunk(sec.toLong() * 1_000_000L + usec, payload.copyOfRange(12, 12 + dataLength))
     }
 
     private fun readFully(input: InputStream, count: Int): ByteArray? {

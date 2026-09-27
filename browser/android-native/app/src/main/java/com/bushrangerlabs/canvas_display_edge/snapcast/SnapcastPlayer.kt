@@ -2,7 +2,6 @@ package com.bushrangerlabs.canvas_display_edge.snapcast
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaFormat
@@ -12,18 +11,35 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * Plays a Snapcast stream.
+ * Plays a Snapcast stream with server-clock scheduling.
+ *
+ * Snapclient's sync rule (client/stream.cpp) is:
+ *
+ * ```
+ * age = (serverNow - chunkStart) - bufferMs + dacTime
+ *   age == 0 -> play now
+ *   age  < 0 -> too early, wait (play silence in the meantime)
+ *   age  > 0 -> too old, drop
+ * ```
+ *
+ * `chunkStart` is the chunk's capture time on the server clock, so a chunk
+ * should be *heard* at `chunkStart + bufferMs`. `dacTime` is how long the audio
+ * we are about to write will sit in the output buffer before it is played.
  *
  * FLAC (snapserver's default codec) is decoded with Android's platform FLAC
- * decoder; `pcm` streams are written straight to [AudioTrack]. Decoded PCM is
- * queued and written on a dedicated thread so the socket reader is never
- * blocked by audio output.
+ * decoder; `pcm` streams are written straight to [AudioTrack].
  */
 class SnapcastPlayer(
     private val onStatus: (String) -> Unit = {},
+    /** Server clock minus client clock, in microseconds. */
+    private val clockOffsetMicros: () -> Long = { 0L },
+    /** End-to-end buffer reported by the server, in milliseconds. */
+    private val bufferMs: () -> Int = { 1000 },
 ) : SnapcastClient.SnapcastSink {
 
-    private val queue = ArrayBlockingQueue<ByteArray>(256)
+    private data class PcmItem(val playAtServerMicros: Long, val data: ByteArray)
+
+    private val queue = ArrayBlockingQueue<PcmItem>(256)
     private var writer: Thread? = null
     private var track: AudioTrack? = null
     private var codec: MediaCodec? = null
@@ -31,11 +47,14 @@ class SnapcastPlayer(
     private var channels = 2
     private var bitsPerSample = 16
     private var isPcm = false
-    private var flacHeader: ByteArray? = null
 
     @Volatile private var running = false
     @Volatile private var volume = 1.0f
     private var chunkCount = 0
+    private var framesWritten = 0L
+    private var droppedChunks = 0
+    private val ages = ArrayDeque<Long>()
+    private var lastStatsAt = 0L
 
     fun start() {
         if (running) return
@@ -54,17 +73,28 @@ class SnapcastPlayer(
         runCatching { track?.stop() }
         runCatching { track?.release() }
         track = null
+        framesWritten = 0
+        ages.clear()
     }
 
     fun setVolume(percent: Int) {
-        volume = (percent.coerceIn(0, 100)) / 100f
+        volume = percent.coerceIn(0, 100) / 100f
         runCatching { track?.setVolume(volume) }
+    }
+
+    /** Median scheduling error in microseconds (positive = late). */
+    fun medianAgeMicros(): Long {
+        synchronized(ages) {
+            if (ages.isEmpty()) return 0
+            val sorted = ages.sorted()
+            return sorted[sorted.size / 2]
+        }
     }
 
     // ─── SnapcastSink ─────────────────────────────────────────────────────────
 
     override fun onCodecHeader(codec: String, data: ByteArray) {
-        onStatus("snapcast codec: $codec (${data.size} byte header)")
+        onStatus("codec: $codec (${data.size} byte header)")
         isPcm = codec.equals("pcm", ignoreCase = true)
         if (isPcm) {
             parsePcmFormat(data)?.let { (rate, bits, ch) ->
@@ -73,7 +103,6 @@ class SnapcastPlayer(
                 channels = ch
             }
         } else {
-            flacHeader = data
             configureFlacDecoder(data)
         }
         ensureTrack()
@@ -85,12 +114,12 @@ class SnapcastPlayer(
             chunkCount += 1
             onStatus("chunk #$chunkCount ts=$timestampMicros ${data.size}B")
         }
+        val playAt = timestampMicros + bufferMs().toLong() * 1000L
         if (isPcm) {
-            // Offer rather than block: drop audio instead of stalling the socket.
-            queue.offer(data)
+            queue.offer(PcmItem(playAt, data))
             return
         }
-        decodeFlac(data)
+        decodeFlac(data, playAt)
     }
 
     override fun onStopped() {
@@ -108,12 +137,12 @@ class SnapcastPlayer(
             decoder.start()
             codec = decoder
         }.onFailure {
-            onStatus("snapcast FLAC decoder unavailable: ${it.message}")
+            onStatus("FLAC decoder unavailable: ${it.message}")
             codec = null
         }
     }
 
-    private fun decodeFlac(frame: ByteArray) {
+    private fun decodeFlac(frame: ByteArray, playAt: Long) {
         val decoder = codec ?: return
         runCatching {
             val inputIndex = decoder.dequeueInputBuffer(10_000)
@@ -123,11 +152,11 @@ class SnapcastPlayer(
                 buffer.put(frame)
                 decoder.queueInputBuffer(inputIndex, 0, frame.size, 0, 0)
             }
-            drainDecoder(decoder)
-        }.onFailure { onStatus("snapcast FLAC decode failed: ${it.message}") }
+            drainDecoder(decoder, playAt)
+        }.onFailure { onStatus("FLAC decode failed: ${it.message}") }
     }
 
-    private fun drainDecoder(decoder: MediaCodec) {
+    private fun drainDecoder(decoder: MediaCodec, playAt: Long) {
         val info = MediaCodec.BufferInfo()
         while (true) {
             val outputIndex = decoder.dequeueOutputBuffer(info, 0)
@@ -138,7 +167,7 @@ class SnapcastPlayer(
                 buffer.position(info.offset)
                 buffer.limit(info.offset + info.size)
                 buffer.get(pcm)
-                queue.offer(pcm)
+                queue.offer(PcmItem(playAt, pcm))
             }
             decoder.releaseOutputBuffer(outputIndex, false)
         }
@@ -179,24 +208,76 @@ class SnapcastPlayer(
                         .setChannelMask(channelMask)
                         .build(),
                 )
-                .setBufferSizeInBytes(maxOf(minBuffer * 4, 64 * 1024))
+                .setBufferSizeInBytes(maxOf(minBuffer * 2, 32 * 1024))
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
             created.setVolume(volume)
             created.play()
             track = created
-        }.onFailure { onStatus("snapcast AudioTrack unavailable: ${it.message}") }
+        }.onFailure { onStatus("AudioTrack unavailable: ${it.message}") }
+    }
+
+    private fun frameSize(): Int = (bitsPerSample / 8) * channels
+
+    /** How long audio written now will sit in the output buffer before playing. */
+    private fun dacTimeMicros(): Long {
+        val output = track ?: return 0
+        val head = runCatching { output.playbackHeadPosition.toLong() }.getOrDefault(0L)
+        return SnapcastSync.dacTimeMicros(framesWritten, head, sampleRate)
     }
 
     private fun writeLoop() {
         while (running) {
-            val chunk = try {
-                queue.poll(500, TimeUnit.MILLISECONDS)
+            val item = try {
+                queue.poll(200, TimeUnit.MILLISECONDS)
             } catch (_: InterruptedException) {
                 return
             } ?: continue
+
             val output = track ?: continue
-            runCatching { output.write(chunk, 0, chunk.size) }
+            val frames = item.data.size / frameSize().coerceAtLeast(1)
+
+            // Snapclient's sync rule: age = serverNow - playAt + dacTime.
+            val serverNow = nowMicros() + clockOffsetMicros()
+            val age = SnapcastSync.age(serverNow, item.playAtServerMicros, dacTimeMicros())
+
+            when (SnapcastSync.decide(age)) {
+                SnapcastSync.Decision.DROP -> {
+                    droppedChunks += 1
+                    continue
+                }
+                SnapcastSync.Decision.WAIT -> {
+                    try {
+                        Thread.sleep(SnapcastSync.waitMillis(age))
+                    } catch (_: InterruptedException) {
+                        return
+                    }
+                    queue.offer(item)
+                    continue
+                }
+                SnapcastSync.Decision.PLAY -> Unit
+            }
+
+            runCatching { output.write(item.data, 0, item.data.size) }
+            framesWritten += frames
+            recordAge(age)
         }
     }
+
+    private fun recordAge(age: Long) {
+        synchronized(ages) {
+            ages.addLast(age)
+            while (ages.size > 100) ages.removeFirst()
+        }
+        val now = System.currentTimeMillis()
+        if (now - lastStatsAt >= 10_000) {
+            lastStatsAt = now
+            onStatus(
+                "sync: median=${medianAgeMicros() / 1000}ms dropped=$droppedChunks " +
+                    "buffered=${dacTimeMicros() / 1000}ms offset=${clockOffsetMicros() / 1000}ms",
+            )
+        }
+    }
+
+    private fun nowMicros(): Long = System.nanoTime() / 1000
 }

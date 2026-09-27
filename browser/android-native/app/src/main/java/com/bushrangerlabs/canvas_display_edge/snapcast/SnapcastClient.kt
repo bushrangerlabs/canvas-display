@@ -167,6 +167,10 @@ class SnapcastClient(
                             t3 = SnapcastProtocol.Clock(message.sentSec, message.sentUsec).micros(),
                             t4 = t4,
                         )
+                        if (!loggedSync) {
+                            loggedSync = true
+                            onStatus("clock sync: offset=${clockSync.offsetMicros}us (server-client)")
+                        }
                     }
                 }
                 SnapcastProtocol.TYPE_ERROR -> {
@@ -178,6 +182,7 @@ class SnapcastClient(
     }
 
     @Volatile private var pendingTimeSentMicros = 0L
+    @Volatile private var loggedSync = false
 
     private fun startSyncLoop() {
         syncThread?.interrupt()
@@ -209,9 +214,12 @@ class SnapcastClient(
 
     private fun nowMicros(): Long = System.nanoTime() / 1000
 
-    private fun nowSec(): Int = (System.currentTimeMillis() / 1000).toInt()
+    // The header's sent/received clocks must use the SAME monotonic source as
+    // nowMicros(), otherwise the NTP-style offset is computed across two
+    // different epochs and comes out as garbage.
+    private fun nowSec(): Int = (nowMicros() / 1_000_000L).toInt()
 
-    private fun nowUsec(): Int = ((System.currentTimeMillis() % 1000) * 1000).toInt()
+    private fun nowUsec(): Int = (nowMicros() % 1_000_000L).toInt()
 
     companion object {
         const val CLIENT_VERSION = "0.34.0"

@@ -3,6 +3,7 @@ package com.bushrangerlabs.canvas_display_edge
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapJson
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastClockSync
 import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastProtocol
+import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastSync
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -129,13 +130,15 @@ class SnapcastTest {
 
     @Test fun parsesWireChunk() {
         val data = byteArrayOf(1, 2, 3, 4, 5)
-        val payload = ByteBuffer.allocate(8 + 4 + data.size).order(ByteOrder.LITTLE_ENDIAN)
-            .putLong(1_234_567_890L)
+        // WireChunk payload: int32 sec, int32 usec, uint32 dataLen, data.
+        val payload = ByteBuffer.allocate(4 + 4 + 4 + data.size).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(1234)
+            .putInt(567_890)
             .putInt(data.size).put(data)
             .array()
         val chunk = SnapcastProtocol.parseWireChunk(payload)
         assertNotNull(chunk)
-        assertEquals(1_234_567_890L, chunk!!.timestamp)
+        assertEquals(1234L * 1_000_000L + 567_890L, chunk!!.timestamp)
         assertArrayEquals(data, chunk.data)
     }
 
@@ -185,5 +188,46 @@ class SnapcastTest {
         val sync = SnapcastClockSync()
         sync.record(t1 = 0, t2 = 0, t3 = 0, t4 = -5)
         assertTrue(!sync.hasSync())
+    }
+
+    // ─── Playback scheduling ──────────────────────────────────────────────────
+
+    @Test fun playAtAddsServerBuffer() {
+        assertEquals(1_500_000L, SnapcastSync.playAt(500_000L, bufferMs = 1000))
+        assertEquals(500_000L, SnapcastSync.playAt(500_000L, bufferMs = 0))
+    }
+
+    @Test fun ageIsZeroWhenExactlyOnTime() {
+        // Chunk captured at 1_000_000, buffer 1000ms -> play at 2_000_000.
+        val playAt = SnapcastSync.playAt(1_000_000L, bufferMs = 1000)
+        assertEquals(0L, SnapcastSync.age(serverNowMicros = 2_000_000L, playAtServerMicros = playAt, dacTimeMicros = 0))
+    }
+
+    @Test fun ageAccountsForOutputBufferDelay() {
+        val playAt = SnapcastSync.playAt(1_000_000L, bufferMs = 1000)
+        // 50ms of audio already queued in the output buffer means we are effectively 50ms late.
+        assertEquals(50_000L, SnapcastSync.age(2_000_000L, playAt, dacTimeMicros = 50_000))
+    }
+
+    @Test fun decidePlaysWaitsOrDrops() {
+        assertEquals(SnapcastSync.Decision.PLAY, SnapcastSync.decide(0))
+        assertEquals(SnapcastSync.Decision.PLAY, SnapcastSync.decide(50_000))
+        assertEquals(SnapcastSync.Decision.WAIT, SnapcastSync.decide(-100_000))
+        assertEquals(SnapcastSync.Decision.DROP, SnapcastSync.decide(500_000))
+    }
+
+    @Test fun waitMillisIsBounded() {
+        assertEquals(100L, SnapcastSync.waitMillis(-100_000))
+        assertEquals(1L, SnapcastSync.waitMillis(-100))
+        assertEquals(200L, SnapcastSync.waitMillis(-5_000_000))
+    }
+
+    @Test fun dacTimeFromBufferedFrames() {
+        // 48000 frames queued at 48kHz = 1 second.
+        assertEquals(1_000_000L, SnapcastSync.dacTimeMicros(framesWritten = 48_000, playbackHeadFrames = 0, sampleRate = 48_000))
+        // Nothing queued -> no delay.
+        assertEquals(0L, SnapcastSync.dacTimeMicros(framesWritten = 48_000, playbackHeadFrames = 48_000, sampleRate = 48_000))
+        // Head ahead of written (should not happen) clamps to zero.
+        assertEquals(0L, SnapcastSync.dacTimeMicros(framesWritten = 10, playbackHeadFrames = 99, sampleRate = 48_000))
     }
 }
