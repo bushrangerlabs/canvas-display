@@ -67,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var dlnaService: DlnaService? = null
     private var dlnaAdapter: AndroidDlnaAdapter? = null
     private var snapcastService: SnapcastService? = null
+    private var broadcastDeliveryClient: BroadcastDeliveryClient? = null
     private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var revertRunnable: Runnable? = null
 
@@ -330,7 +331,27 @@ class MainActivity : AppCompatActivity() {
         dlnaService = service
         // Binding the SSDP socket can block briefly; keep it off the UI thread.
         Thread { service.start() }.start()
+        startBroadcastDeliveries()
         startSnapcastClient()
+    }
+
+    private fun startBroadcastDeliveries() {
+        if (broadcastDeliveryClient != null || config.edgeVoiceToken.isBlank()) return
+        val adapter = dlnaAdapter ?: return
+        broadcastDeliveryClient = BroadcastDeliveryClient(this, config, identity.installationId, adapter) { alert, complete ->
+            runOnUiThread {
+                try {
+                    val title = alert.optString("title", "Alert")
+                    val message = alert.optString("message", "")
+                    status?.text = "$title\n$message"
+                    status?.visibility = View.VISIBLE
+                    val duration = alert.optLong("duration", 15).coerceAtLeast(1) * 1_000
+                    status?.postDelayed({ status?.visibility = View.GONE; complete(null) }, duration)
+                } catch (error: Throwable) {
+                    complete(error)
+                }
+            }
+        }.also { it.start() }
     }
 
     /**
@@ -385,6 +406,7 @@ class MainActivity : AppCompatActivity() {
                     config.wakeThreshold = voiceConfig.wakeThreshold
                     voiceConfig.edgeVoiceToken?.let { config.edgeVoiceToken = it }
                     runOnUiThread {
+                        startBroadcastDeliveries()
                         applySnapcastConfig(voiceConfig)
                         maybeStartVoicePipeline(voiceConfig)
                     }
@@ -608,6 +630,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        broadcastDeliveryClient?.stop()
+        broadcastDeliveryClient = null
         snapcastService?.stop()
         snapcastService = null
         dlnaService?.stop()

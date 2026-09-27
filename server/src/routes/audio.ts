@@ -46,6 +46,13 @@ let _mpvVolume = 75;
 let _intentionalStop = false;
 let _retryCount = 0;
 let _mpvGen = 0;
+let _playbackWaiter: {
+  gen: number;
+  started: boolean;
+  onStarted?: () => Promise<void> | void;
+  resolve: () => void;
+  reject: (error: Error) => void;
+} | null = null;
 const MAX_AUDIO_RETRIES = 5;
 const AUDIO_RETRY_DELAY_MS = 1500;
 
@@ -73,18 +80,28 @@ function killMpv(opts?: { intentional?: boolean }) {
     try { _mpv.kill('SIGTERM'); } catch { /* already dead */ }
     _mpv = null;
   }
+  if (opts?.intentional && _playbackWaiter) {
+    _playbackWaiter.reject(new Error('playback interrupted'));
+    _playbackWaiter = null;
+  }
   // Remove stale socket
   try { require('fs').unlinkSync(MPV_SOCK); } catch { /* doesn't exist */ }
 }
 
-function spawnMpv(url: string, volume: number) {
-  _mpvGen += 1;
+function spawnMpv(url: string, volume: number): number {
+  const nextGen = _mpvGen + 1;
+  if (_playbackWaiter && _playbackWaiter.gen !== nextGen) {
+    _playbackWaiter.reject(new Error('playback superseded'));
+    _playbackWaiter = null;
+  }
+  _mpvGen = nextGen;
   _mpvUrl = url;
   _mpvVolume = volume;
   _intentionalStop = false;
   _retryCount = 0;
   killMpv();
   startMpv(_mpvGen);
+  return _mpvGen;
 }
 
 function startMpv(gen: number) {
@@ -108,8 +125,20 @@ function startMpv(gen: number) {
 
   _mpv = mpv;
 
+  mpv.on('spawn', () => {
+    if (_playbackWaiter?.gen !== gen || _playbackWaiter.started) return;
+    _playbackWaiter.started = true;
+    void Promise.resolve(_playbackWaiter.onStarted?.()).catch(error => {
+      console.warn('[audio] playback start acknowledgement failed:', error instanceof Error ? error.message : error);
+    });
+  });
+
   mpv.on('error', (err: Error) => {
     console.error('[audio] mpv spawn error:', err.message);
+    if (_playbackWaiter?.gen === gen) {
+      _playbackWaiter.reject(err);
+      _playbackWaiter = null;
+    }
   });
 
   mpv.on('exit', (code) => {
@@ -121,6 +150,21 @@ function startMpv(gen: number) {
     console.log(`[audio] mpv exited (code=${code})${tail ? ' :: ' + tail : ''}`);
 
     if (_intentionalStop) return;
+
+    // Exit 0 is normal completion for finite clips. The previous implementation
+    // treated it as a crash and replayed announcements up to five times.
+    if (code === 0) {
+      _state.state = 'idle';
+      _state.url = '';
+      _state.title = '';
+      if (_playbackWaiter?.gen === gen) {
+        _playbackWaiter.resolve();
+        _playbackWaiter = null;
+      }
+      void releaseSink('mpv');
+      import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
+      return;
+    }
 
     // Unexpected exit (crash, network drop, stream reset): retry a few
     // times before giving up, so a transient hiccup doesn't kill playback.
@@ -139,6 +183,11 @@ function startMpv(gen: number) {
     _state.title = '';
     // Notify MQTT of state change (dynamic import avoids circular dep)
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
+    if (_playbackWaiter?.gen === gen) {
+      _playbackWaiter.reject(new Error(`mpv exited with code ${code}; retries exhausted`));
+      _playbackWaiter = null;
+    }
+    void releaseSink('mpv');
   });
 }
 
@@ -203,6 +252,24 @@ export async function playAudio(input: { url: string; title?: string; volume?: n
     muted: false,
   };
   return getAudioState();
+}
+
+/** Play a finite clip and resolve only after mpv exits successfully. */
+export async function playAudioToCompletion(
+  input: { url: string; title?: string; volume?: number },
+  onStarted?: () => Promise<void> | void,
+): Promise<void> {
+  await acquireSink('mpv');
+  const volume = Math.max(0, Math.min(100, input.volume ?? _state.volume));
+  setSystemVolume(volume);
+  const promise = new Promise<void>((resolve, reject) => {
+    // The generation is assigned synchronously by spawnMpv immediately below.
+    _playbackWaiter = { gen: _mpvGen + 1, started: false, onStarted, resolve, reject };
+  });
+  const gen = spawnMpv(input.url, volume);
+  if (_playbackWaiter) _playbackWaiter.gen = gen;
+  _state = { ..._state, state: 'playing', url: input.url, title: input.title ?? input.url, volume, muted: false };
+  await promise;
 }
 
 export async function pauseAudio(): Promise<AudioState> {

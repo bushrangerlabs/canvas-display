@@ -83,6 +83,7 @@ import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-drafts.js';
 import { advertiseCore } from './discovery.js';
 import { BroadcastStore, extensionForMime, type BroadcastClip } from './broadcast.js';
+import { BroadcastDeliveryService, discoverDlnaRenderers, type BroadcastKind, type BroadcastOutput } from './broadcast-delivery.js';
 import { CORE_VERSION } from './version.js';
 
 /**
@@ -1000,8 +1001,161 @@ async function main(): Promise<void> {
   // the voice-turn endpoint can use them; the fan-out itself is wired after the
   // gateway/MQTT services exist (below).
   const broadcastStore = new BroadcastStore();
+  const broadcastDelivery = new BroadcastDeliveryService(pool);
   const pendingBroadcasts = new Map<string, number>();
   let broadcastFanOutRef: ((clip: BroadcastClip) => Promise<{ edges: number; ha: number }>) | null = null;
+  let broadcastDispatchRef: ((eventId: string, title: string, mimeType: string) => Promise<unknown>) | null = null;
+
+  const inspectDlnaOutput = async (candidate: { usn: string; location: string; server?: string }) => {
+    const location = new URL(candidate.location);
+    const host = location.hostname.replace(/^\[|\]$/g, '');
+    const privateIpv4 = /^(?:10\.|127\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(host);
+    const allowedHost = privateIpv4 || host === 'localhost' || host.endsWith('.local');
+    if (!allowedHost || (location.protocol !== 'http:' && location.protocol !== 'https:')) return null;
+    const response = await fetch(location, { signal: AbortSignal.timeout(2_000) });
+    if (!response.ok) return null;
+    const declaredLength = Number(response.headers.get('content-length') ?? 0);
+    if (declaredLength > 256_000) return null;
+    const xml = (await response.text()).slice(0, 256_000);
+    const read = (tag: string) => xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i'))?.[1]
+      ?.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+    const services = [...xml.matchAll(/<service>([\s\S]*?)<\/service>/gi)];
+    const avTransport = services.find(match => /AVTransport:1/i.test(match[1]));
+    const controlPath = avTransport?.[1].match(/<controlURL>([\s\S]*?)<\/controlURL>/i)?.[1]?.trim();
+    if (!controlPath) return null;
+    return {
+      id: `dlna:${candidate.usn}`,
+      logicalId: `dlna:${candidate.usn}`,
+      routeType: 'dlna' as const,
+      routeKey: candidate.usn,
+      name: read('friendlyName') || candidate.usn,
+      metadata: {
+        usn: candidate.usn,
+        udn: read('UDN') ?? candidate.usn.split('::')[0],
+        location: candidate.location,
+        controlUrl: new URL(controlPath, location).toString(),
+        modelName: read('modelName'),
+        manufacturer: read('manufacturer'),
+        server: candidate.server,
+      },
+    };
+  };
+
+  const refreshBroadcastOutputs = async () => {
+    await broadcastDelivery.markRoutesOffline(['edge', 'ha', 'dlna']);
+    const devices = await pool.query(
+      `SELECT id,name,status,architecture FROM devices WHERE revoked_at IS NULL ORDER BY name`,
+    );
+    for (const device of devices.rows) {
+      await broadcastDelivery.upsertOutput({
+        id: `edge:${device.id}`,
+        logicalId: `edge:${device.id}`,
+        routeType: 'edge',
+        routeKey: String(device.id),
+        name: String(device.name || device.id),
+        online: gateway.isConnected(String(device.id)) || device.status === 'connected',
+        metadata: { architecture: device.architecture },
+        selectOnCreate: true,
+      });
+    }
+    if (ha) {
+      await ha.refreshEntities().catch(() => ha.getEntitySummaries());
+      const registry = await ha.refreshRegistries().catch(() => null);
+      const registryByEntity = new Map(registry?.entities.map(entry => [entry.entityId, entry]) ?? []);
+      for (const entity of ha.getEntitySummaries().filter(item => item.domain === 'media_player')) {
+        const registryEntry = registryByEntity.get(entity.entityId);
+        await broadcastDelivery.upsertOutput({
+          id: `ha:${entity.entityId}`,
+          routeType: 'ha',
+          routeKey: entity.entityId,
+          name: entity.friendlyName || entity.entityId,
+          online: !['unavailable', 'unknown'].includes(entity.state),
+          metadata: { state: entity.state, deviceId: registryEntry?.deviceId, platform: registryEntry?.platform },
+          selectOnCreate: false,
+        });
+      }
+    }
+    const discovered = await discoverDlnaRenderers();
+    const inspected = await Promise.allSettled(discovered.map(inspectDlnaOutput));
+    for (const result of inspected) {
+      if (result.status === 'fulfilled' && result.value) {
+        await broadcastDelivery.upsertOutput({ ...result.value, online: true, selectOnCreate: false });
+      }
+    }
+    return broadcastDelivery.listOutputs();
+  };
+
+  fastify.get('/api/admin/broadcast/outputs', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async () => ({ outputs: await broadcastDelivery.listOutputs() }));
+
+  fastify.post('/api/admin/broadcast/outputs/discover', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async () => ({ outputs: await refreshBroadcastOutputs() }));
+
+  fastify.post<{ Body: { location?: string } }>('/api/admin/broadcast/outputs/dlna', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request, reply) => {
+    const location = request.body?.location?.trim();
+    if (!location) return reply.code(400).send({ error: 'location is required' });
+    const candidate = await inspectDlnaOutput({ usn: `manual:${location}`, location }).catch(() => null);
+    if (!candidate) return reply.code(400).send({ error: 'location is not a reachable private-network DLNA MediaRenderer description' });
+    await broadcastDelivery.upsertOutput({ ...candidate, online: true, selectOnCreate: false });
+    return { outputs: await broadcastDelivery.listOutputs() };
+  });
+
+  fastify.put<{ Params: { id: string }; Body: { selected?: boolean; preferred?: boolean; logicalId?: string } }>(
+    '/api/admin/broadcast/outputs/:id',
+    { preHandler: requireAdmin({ roles: ['admin'], csrf: true }) },
+    async (request, reply) => {
+      const output = await broadcastDelivery.updateOutput(request.params.id, request.body ?? {});
+      if (!output) return reply.code(404).send({ error: 'broadcast_output_not_found' });
+      return { output };
+    },
+  );
+
+  fastify.get<{ Querystring: { limit?: string } }>('/api/admin/broadcast/events', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async request => ({ events: await broadcastDelivery.listEvents(Number(request.query.limit ?? 50)) }));
+
+  fastify.get<{ Params: { id: string } }>('/api/broadcast-events/:id/audio', async (request, reply) => {
+    const audio = await broadcastDelivery.getEventAudio(request.params.id);
+    if (!audio) return reply.code(404).send({ error: 'broadcast_audio_not_found' });
+    reply.header('Cache-Control', 'no-store');
+    reply.type(audio.mimeType);
+    return reply.send(audio.audio);
+  });
+
+  fastify.get<{ Querystring: { deviceId?: string; kinds?: string } }>('/api/edge/deliveries/next', async (request, reply) => {
+    const header = request.headers.authorization;
+    const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+    const expected = await resolveEdgeVoiceToken(presented);
+    if (!checkEdgeVoiceAuth(expected, presented)) return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+    const deviceId = request.query.deviceId?.trim();
+    if (!deviceId) return reply.code(400).send({ error: 'deviceId is required' });
+    const allowed = new Set<BroadcastKind>(['audio', 'tts', 'intercom', 'alert']);
+    const kinds = request.query.kinds?.split(',').filter((kind): kind is BroadcastKind => allowed.has(kind as BroadcastKind));
+    const delivery = await broadcastDelivery.claimEdge(deviceId, kinds);
+    return delivery ?? { empty: true };
+  });
+
+  fastify.post<{ Params: { id: string }; Body: { deviceId?: string; state?: string; error?: string } }>(
+    '/api/edge/deliveries/:id/ack',
+    async (request, reply) => {
+      const header = request.headers.authorization;
+      const presented = header?.startsWith('Bearer ') ? header.slice(7) : '';
+      const expected = await resolveEdgeVoiceToken(presented);
+      if (!checkEdgeVoiceAuth(expected, presented)) return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
+      const deviceId = request.body?.deviceId?.trim();
+      const state = request.body?.state;
+      if (!deviceId || (state !== 'started' && state !== 'completed' && state !== 'failed')) {
+        return reply.code(400).send({ error: 'deviceId and state started|completed|failed are required' });
+      }
+      const updated = await broadcastDelivery.acknowledge(request.params.id, deviceId, state, request.body?.error);
+      if (!updated) return reply.code(404).send({ error: 'delivery_not_found' });
+      return { ok: true };
+    },
+  );
 
   fastify.post('/api/edge/voice/turn', async (request, reply) => {
     const header = request.headers.authorization;
@@ -1199,20 +1353,22 @@ async function main(): Promise<void> {
   let flowEnqueueTts: ((text: string, deviceId?: string) => Promise<void>) | null = null;
   let flowBroadcastAlert: ((title: string, message: string, type?: string, deviceIds?: string[]) => void) | null = null;
   {
-    const pendingTts = new Map<string, { audioBase64?: string; text: string; timestamp: string }>();
-    const ALL_DEVICES = '__all__';
-
     // Expose TTS queue to flow executor
     flowEnqueueTts = async (text: string, deviceId?: string) => {
       const speech = intelligence.providers.tts;
-      const key = deviceId ?? ALL_DEVICES;
+      const clean = text.trim();
       if (speech) {
-        // Core has a TTS provider — synthesize and queue audio
-        const audio = await speech.synthesize(text.trim());
-        pendingTts.set(key, { audioBase64: audio.toString('base64'), text: text.trim(), timestamp: new Date().toISOString() });
+        const audio = await speech.synthesize(clean);
+        const queued = await broadcastDelivery.enqueue({
+          kind: 'tts', title: clean, payload: { text: clean }, audio, mimeType: 'audio/wav',
+          targetOutputIds: deviceId ? [`edge:${deviceId}`] : undefined,
+        });
+        await broadcastDispatchRef?.(queued.eventId, clean, 'audio/wav');
       } else {
-        // No Core TTS — queue text only; the sidecar will synthesize locally via Piper
-        pendingTts.set(key, { text: text.trim(), timestamp: new Date().toISOString() });
+        await broadcastDelivery.enqueue({
+          kind: 'tts', title: clean, payload: { text: clean },
+          targetOutputIds: deviceId ? [`edge:${deviceId}`] : undefined,
+        });
       }
     };
 
@@ -1234,14 +1390,15 @@ async function main(): Promise<void> {
           return reply.code(503).send({ error: 'TTS provider not configured' });
         }
         const audio = await speech.synthesize(text.trim());
-        const audioBase64 = audio.toString('base64');
         const timestamp = new Date().toISOString();
-        const targets = deviceIds?.length ? deviceIds : [ALL_DEVICES];
-        for (const id of targets) {
-          pendingTts.set(id, { audioBase64, text: text.trim(), timestamp });
-        }
-        console.log(`[core][tts-broadcast] queued "${text.trim().slice(0, 60)}" for ${targets.join(',')}`);
-        return reply.send({ ok: true, targets, timestamp });
+        const queued = await broadcastDelivery.enqueue({
+          kind: 'tts', title: text.trim(), payload: { text: text.trim(), timestamp },
+          audio, mimeType: 'audio/wav',
+          targetOutputIds: deviceIds?.length ? deviceIds.map(id => `edge:${id}`) : undefined,
+        });
+        await broadcastDispatchRef?.(queued.eventId, text.trim(), 'audio/wav');
+        console.log(`[core][tts-broadcast] queued "${text.trim().slice(0, 60)}" deliveries=${queued.deliveries}`);
+        return reply.send({ ok: true, eventId: queued.eventId, deliveries: queued.deliveries, timestamp });
       },
     );
 
@@ -1255,11 +1412,17 @@ async function main(): Promise<void> {
           return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
         }
         const deviceId = request.query.deviceId ?? 'unknown';
-        const entry = pendingTts.get(deviceId) ?? pendingTts.get(ALL_DEVICES);
-        if (!entry) return reply.send({ empty: true });
-        pendingTts.delete(deviceId);
-        if (pendingTts.get(ALL_DEVICES) === entry) pendingTts.delete(ALL_DEVICES);
-        return reply.send(entry);
+        const delivery = await broadcastDelivery.claimEdge(deviceId, ['tts']);
+        if (!delivery) return reply.send({ empty: true });
+        // Legacy pollers cannot acknowledge. Mark complete on hand-off; protocol
+        // v2 clients use /api/edge/deliveries and acknowledge actual playback.
+        await broadcastDelivery.acknowledge(delivery.deliveryId, deviceId, 'completed');
+        return reply.send({
+          deliveryId: delivery.deliveryId,
+          audioBase64: delivery.audioBase64,
+          text: String(delivery.payload.text ?? delivery.title),
+          timestamp: delivery.payload.timestamp,
+        });
       },
     );
   }
@@ -1361,15 +1524,16 @@ async function main(): Promise<void> {
   // Display devices poll GET /api/edge/alert/pending, display shows AnnouncementWidget alert.
   {
     type PendingAlert = { title: string; message: string; type: string; camera_entity?: string; timestamp: string };
-    const pendingAlerts = new Map<string, PendingAlert>();
-    const ALL_ALERT_DEVICES = '__all__';
 
     flowBroadcastAlert = (title, message, type = 'info', deviceIds) => {
       const timestamp = new Date().toISOString();
       const alert: PendingAlert = { title, message, type, timestamp };
-      const targets = deviceIds?.length ? deviceIds : [ALL_ALERT_DEVICES];
-      for (const id of targets) pendingAlerts.set(id, alert);
-      console.log(`[core][alert-broadcast] flow queued "${message.slice(0, 60)}" for ${targets.join(',')}`);
+      void broadcastDelivery.enqueue({
+        kind: 'alert', title, payload: alert,
+        targetOutputIds: deviceIds?.length ? deviceIds.map(id => `edge:${id}`) : undefined,
+      }).then(result => {
+        console.log(`[core][alert-broadcast] flow queued "${message.slice(0, 60)}" deliveries=${result.deliveries}`);
+      }).catch(error => console.warn('[core][alert-broadcast] flow queue failed:', (error as Error).message));
     };
 
     fastify.post<{ Body: { title?: string; message?: string; type?: string; camera_entity?: string; deviceIds?: string[] } }>(
@@ -1385,10 +1549,12 @@ async function main(): Promise<void> {
         if (!message) return reply.code(400).send({ error: 'message is required' });
         const timestamp = new Date().toISOString();
         const alert: PendingAlert = { title, message, type, camera_entity, timestamp };
-        const targets = deviceIds?.length ? deviceIds : [ALL_ALERT_DEVICES];
-        for (const id of targets) pendingAlerts.set(id, alert);
-        console.log(`[core][alert-broadcast] queued "${message.slice(0, 60)}" for ${targets.join(',')}`);
-        return reply.send({ ok: true, targets, timestamp });
+        const queued = await broadcastDelivery.enqueue({
+          kind: 'alert', title, payload: alert,
+          targetOutputIds: deviceIds?.length ? deviceIds.map(id => `edge:${id}`) : undefined,
+        });
+        console.log(`[core][alert-broadcast] queued "${message.slice(0, 60)}" deliveries=${queued.deliveries}`);
+        return reply.send({ ok: true, eventId: queued.eventId, deliveries: queued.deliveries, timestamp });
       },
     );
 
@@ -1402,11 +1568,10 @@ async function main(): Promise<void> {
           return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
         }
         const deviceId = request.query.deviceId ?? 'unknown';
-        const entry = pendingAlerts.get(deviceId) ?? pendingAlerts.get(ALL_ALERT_DEVICES);
-        if (!entry) return reply.send({ empty: true });
-        pendingAlerts.delete(deviceId);
-        if (pendingAlerts.get(ALL_ALERT_DEVICES) === entry) pendingAlerts.delete(ALL_ALERT_DEVICES);
-        return reply.send(entry);
+        const delivery = await broadcastDelivery.claimEdge(deviceId, ['alert']);
+        if (!delivery) return reply.send({ empty: true });
+        await broadcastDelivery.acknowledge(delivery.deliveryId, deviceId, 'completed');
+        return reply.send({ deliveryId: delivery.deliveryId, ...delivery.payload });
       },
     );
 
@@ -1436,7 +1601,9 @@ async function main(): Promise<void> {
         const message = `${friendlyName} — someone is at the door`;
         const timestamp = new Date().toISOString();
         const alert: PendingAlert = { title, message, type: 'warning', timestamp };
-        pendingAlerts.set(ALL_ALERT_DEVICES, alert);
+        void broadcastDelivery.enqueue({ kind: 'alert', title, payload: alert }).catch(error => {
+          console.warn('[core][doorbell] alert queue failed:', (error as Error).message);
+        });
         console.log(`[core][doorbell] Detected: ${entityId}, broadcasting alert`);
 
         // Also broadcast TTS
@@ -1464,10 +1631,6 @@ async function main(): Promise<void> {
   // --- Device-to-device Intercom -------------------------------------------
   // Any device (or admin) can broadcast audio to one or all display devices.
   {
-    type PendingIntercom = { audioBase64: string; from: string; timestamp: string };
-    const pendingIntercom = new Map<string, PendingIntercom>();
-    const ALL_INTERCOM = '__all__';
-
     fastify.post<{ Body: { audioBase64?: string; text?: string; from?: string; targetDeviceIds?: string[] } }>(
       '/api/edge/intercom/broadcast',
       async (request, reply) => {
@@ -1487,11 +1650,15 @@ async function main(): Promise<void> {
         }
         if (!audio) return reply.code(400).send({ error: 'audioBase64 or text required' });
         const timestamp = new Date().toISOString();
-        const entry: PendingIntercom = { audioBase64: audio, from, timestamp };
-        const targets = targetDeviceIds?.length ? targetDeviceIds : [ALL_INTERCOM];
-        for (const id of targets) pendingIntercom.set(id, entry);
-        console.log(`[core][intercom] queued audio from=${from} targets=${targets.join(',')}`);
-        return reply.send({ ok: true, targets, timestamp });
+        const buffer = Buffer.from(audio, 'base64');
+        const queued = await broadcastDelivery.enqueue({
+          kind: 'intercom', title: `Broadcast from ${from}`, payload: { from, timestamp },
+          audio: buffer, mimeType: 'audio/wav',
+          targetOutputIds: targetDeviceIds?.length ? targetDeviceIds.map(id => `edge:${id}`) : undefined,
+        });
+        await broadcastDispatchRef?.(queued.eventId, `Broadcast from ${from}`, 'audio/wav');
+        console.log(`[core][intercom] queued audio from=${from} deliveries=${queued.deliveries}`);
+        return reply.send({ ok: true, eventId: queued.eventId, deliveries: queued.deliveries, timestamp });
       },
     );
 
@@ -1505,11 +1672,15 @@ async function main(): Promise<void> {
           return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
         }
         const deviceId = request.query.deviceId ?? 'unknown';
-        const entry = pendingIntercom.get(deviceId) ?? pendingIntercom.get(ALL_INTERCOM);
-        if (!entry) return reply.send({ empty: true });
-        pendingIntercom.delete(deviceId);
-        if (pendingIntercom.get(ALL_INTERCOM) === entry) pendingIntercom.delete(ALL_INTERCOM);
-        return reply.send(entry);
+        const delivery = await broadcastDelivery.claimEdge(deviceId, ['intercom']);
+        if (!delivery) return reply.send({ empty: true });
+        await broadcastDelivery.acknowledge(delivery.deliveryId, deviceId, 'completed');
+        return reply.send({
+          deliveryId: delivery.deliveryId,
+          audioBase64: delivery.audioBase64,
+          from: delivery.payload.from,
+          timestamp: delivery.payload.timestamp,
+        });
       },
     );
   }
@@ -2002,52 +2173,120 @@ async function main(): Promise<void> {
   const mqttNavigation = new MqttNavigationService(pool, deliverPageToDevice, controlDeviceMedia);
   await mqttNavigation.start();
 
+  // Keep the output catalogue useful on first upgrade. Existing Canvas edges
+  // are selected on creation; HA and raw DLNA routes are discovered unchecked.
+  void refreshBroadcastOutputs().catch(error => {
+    console.warn('[core][broadcast] initial output discovery failed:', (error as Error).message);
+  });
+
   // --- Audio broadcast (record → store → fan-out) ---------------------------
   // A recorded clip is stored and served at a public URL, then fanned out to
   // every connected edge device and every HA media_player entity. Store-and-
   // forward by design — no SIP or WebRTC.
   const broadcastUrl = (clip: BroadcastClip): string =>
     `${config.publicUrl.replace(/\/$/, '')}/api/broadcast/${clip.id}.${extensionForMime(clip.mimeType)}`;
-  const broadcastFanOut = async (clip: BroadcastClip): Promise<{ edges: number; ha: number }> => {
-    const url = broadcastUrl(clip);
-    const deviceIds = gateway.connectedDeviceIds();
-    console.log(`[core][broadcast] fan-out gateway devices: ${JSON.stringify(deviceIds)}`);
-    const edgeResults = await Promise.allSettled(deviceIds.map(async (deviceId) => {
-      const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-      const architecture = String(archRow.rows[0]?.architecture ?? '').toLowerCase();
-      console.log(`[core][broadcast] -> ${deviceId} (arch=${architecture || 'unknown'})`);
-      if (architecture === 'android') {
-        await gateway.requestAction(deviceId, 'media.play', { source: 'direct_audio', url, title: clip.title }, 20_000);
-      } else {
-        await requestDeviceAction(deviceId, 'device_http', {
-          path: '/api/media/play',
-          http_method: 'POST',
-          body: { source: 'direct_audio', url, title: clip.title },
-        }, 20_000);
-      }
-      mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: clip.title, url });
-    }));
-    for (const [index, result] of edgeResults.entries()) {
-      if (result.status === 'rejected') {
-        console.warn(`[core][broadcast] edge ${deviceIds[index]} failed:`, result.reason instanceof Error ? result.reason.message : result.reason);
-      }
-    }
-    const edges = edgeResults.filter(result => result.status === 'fulfilled').length;
+  const escapeSoap = (value: string) => value
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  const playDlnaOutput = async (output: BroadcastOutput, url: string, title: string, mimeType: string) => {
+    const controlUrl = String(output.metadata.controlUrl ?? '');
+    if (!controlUrl) throw new Error('DLNA output has no AVTransport control URL');
+    const action = async (name: string, args: string) => {
+      const body = `<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:${name} xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">${args}</u:${name}></s:Body></s:Envelope>`;
+      const response = await fetch(controlUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'text/xml; charset="utf-8"', soapaction: `"urn:schemas-upnp-org:service:AVTransport:1#${name}"` },
+        body,
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) throw new Error(`DLNA ${name} returned HTTP ${response.status}`);
+    };
+    const metadata = `&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="broadcast" parentID="0" restricted="1"&gt;&lt;dc:title&gt;${escapeSoap(title)}&lt;/dc:title&gt;&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:${escapeSoap(mimeType)}:*"&gt;${escapeSoap(url)}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;`;
+    await action('SetAVTransportURI', `<InstanceID>0</InstanceID><CurrentURI>${escapeSoap(url)}</CurrentURI><CurrentURIMetaData>${metadata}</CurrentURIMetaData>`);
+    await action('Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
+  };
+
+  const dispatchBroadcastEvent = async (
+    eventId: string,
+    title: string,
+    mimeType: string,
+  ): Promise<{ edges: number; ha: number; dlna: number }> => {
+    const url = `${config.publicUrl.replace(/\/$/, '')}/api/broadcast-events/${eventId}/audio`;
+    const deliveries = await broadcastDelivery.pendingExternal(eventId);
+    let edges = 0;
     let haCount = 0;
-    if (ha) {
-      const players = ha.getEntities().filter(entity => entity.entityId.startsWith('media_player.'));
-      const haResults = await Promise.allSettled(players.map(player => ha.callService('media_player', 'play_media', {
-        entity_id: player.entityId,
-        media_content_id: url,
-        media_content_type: 'music',
-      })));
-      haCount = haResults.filter(result => result.status === 'fulfilled').length;
+    let dlnaCount = 0;
+    // Edge routes are consumed by the durable device poller. Keeping the row in
+    // Core until the player acknowledges completion avoids treating an HTTP or
+    // gateway handoff as successful playback.
+    const edgeRows = await pool.query(
+      `SELECT d.id AS delivery_id,o.route_key,o.metadata FROM broadcast_deliveries d
+       JOIN broadcast_outputs o ON o.id=d.output_id
+       WHERE d.event_id=$1 AND o.route_type='edge' AND d.state='pending'`, [eventId],
+    );
+    edges = edgeRows.rowCount ?? 0;
+    await Promise.allSettled(deliveries.map(async ({ deliveryId, output }) => {
+      try {
+        if (output.route_type === 'ha') {
+          if (!ha) throw new Error('Home Assistant is not configured');
+          await ha.callService('media_player', 'play_media', {
+            entity_id: output.route_key,
+            media_content_id: url,
+            media_content_type: mimeType,
+          });
+          haCount += 1;
+        } else if (output.route_type === 'dlna') {
+          await playDlnaOutput(output, url, title, mimeType);
+          dlnaCount += 1;
+        }
+        await broadcastDelivery.completeExternal(deliveryId, true);
+      } catch (error) {
+        await broadcastDelivery.completeExternal(deliveryId, false, (error as Error).message);
+      }
+    }));
+    return { edges, ha: haCount, dlna: dlnaCount };
+  };
+  broadcastDispatchRef = dispatchBroadcastEvent;
+
+  let externalDispatchRunning = false;
+  const retryExternalBroadcasts = async () => {
+    if (externalDispatchRunning) return;
+    externalDispatchRunning = true;
+    try {
+      await broadcastDelivery.expire();
+      const result = await pool.query(
+        `SELECT DISTINCT e.id,e.title,COALESCE(e.mime_type,'audio/wav') AS mime_type
+         FROM broadcast_events e
+         JOIN broadcast_deliveries d ON d.event_id=e.id
+         JOIN broadcast_outputs o ON o.id=d.output_id
+         WHERE e.expires_at > now() AND d.state IN ('pending','failed')
+           AND o.route_type IN ('ha','dlna')
+         ORDER BY e.id LIMIT 20`,
+      );
+      for (const row of result.rows) {
+        await dispatchBroadcastEvent(String(row.id), String(row.title ?? ''), String(row.mime_type));
+      }
+    } catch (error) {
+      console.warn('[core][broadcast] external retry failed:', (error as Error).message);
+    } finally {
+      externalDispatchRunning = false;
     }
-    return { edges, ha: haCount };
+  };
+  const externalDispatchTimer = setInterval(() => void retryExternalBroadcasts(), 10_000);
+  externalDispatchTimer.unref();
+  fastify.addHook('onClose', async () => clearInterval(externalDispatchTimer));
+
+  const broadcastFanOut = async (clip: BroadcastClip): Promise<{ edges: number; ha: number }> => {
+    const queued = await broadcastDelivery.enqueue({
+      kind: 'audio', title: clip.title, audio: clip.buffer, mimeType: clip.mimeType,
+    });
+    const result = await dispatchBroadcastEvent(queued.eventId, clip.title, clip.mimeType);
+    console.log(`[core][broadcast] durable event ${queued.eventId} targets=${queued.deliveries} edges=${result.edges} ha=${result.ha} dlna=${result.dlna}`);
+    return { edges: result.edges, ha: result.ha + result.dlna };
   };
   broadcastFanOutRef = broadcastFanOut;
 
-  fastify.post<{ Body: { audioBase64?: string; mimeType?: string; title?: string; from?: string } }>(
+  fastify.post<{ Body: { audioBase64?: string; mimeType?: string; title?: string; from?: string; targetOutputIds?: string[] } }>(
     '/api/edge/broadcast',
     async (request, reply) => {
       const header = request.headers.authorization;
@@ -2056,12 +2295,21 @@ async function main(): Promise<void> {
       if (!checkEdgeVoiceAuth(expected, presented)) {
         return reply.code(401).send({ error: 'invalid_edge_voice_credential' });
       }
-      const { audioBase64, mimeType, title, from } = request.body ?? {};
+      const { audioBase64, mimeType, title, from, targetOutputIds } = request.body ?? {};
       if (!audioBase64) return reply.code(400).send({ error: 'audioBase64 is required' });
       const buffer = Buffer.from(audioBase64, 'base64');
       if (buffer.length === 0) return reply.code(400).send({ error: 'empty audio' });
       const clip = broadcastStore.add(buffer, mimeType ?? 'audio/wav', title ?? `Broadcast from ${from ?? 'unknown'}`);
-      const result = await broadcastFanOut(clip);
+      const result = targetOutputIds?.length
+        ? await (async () => {
+            const queued = await broadcastDelivery.enqueue({
+              kind: 'audio', title: clip.title, audio: clip.buffer, mimeType: clip.mimeType,
+              targetOutputIds,
+            });
+            const dispatched = await dispatchBroadcastEvent(queued.eventId, clip.title, clip.mimeType);
+            return { edges: dispatched.edges, ha: dispatched.ha + dispatched.dlna, eventId: queued.eventId };
+          })()
+        : await broadcastFanOut(clip);
       console.log(`[core][broadcast] ${clip.id} (${buffer.length}B) -> edges=${result.edges} ha=${result.ha}`);
       return reply.send({ ok: true, id: clip.id, url: broadcastUrl(clip), ...result });
     },

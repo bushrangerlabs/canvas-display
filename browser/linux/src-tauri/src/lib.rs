@@ -1025,6 +1025,7 @@ pub fn run() {
                 .env("CANVAS_DATA_DIR", &data_dir_str)
                 .env("NATIVE_BINDING_DIR", &binaries_dir_str)
                 .env("STATIC_DIR", &static_dir_str)
+                .env("CANVAS_DEVICE_SERVICES_ENABLED", "false")
                 .env("PORT", "3100")
                 .env("HOST", "127.0.0.1")
                 .spawn()

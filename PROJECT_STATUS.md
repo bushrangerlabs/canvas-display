@@ -55,6 +55,42 @@ There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometr
 
 ## Work completed in this session
 
+### Durable broadcast, DLNA and Snapcast reliability (2026-09-27)
+
+The approved reliability-first broadcast plan is implemented and deployed across Core, web, the Linux Display sidecar/kiosk, and native Android. It has not been committed or pushed.
+
+- Core now persists broadcast output routes, events, per-output delivery state, attempts, leases and ten-minute expiry in PostgreSQL (`core/src/broadcast-delivery.ts`, `core/src/db.ts`). Edge deliveries require player `started`/`completed`/`failed` acknowledgements and reclaim expired claimed/started leases. HA and raw-DLNA routes retry failures until event expiry.
+- The admin Settings page has a Broadcast outputs checklist, discovery refresh, logical-output grouping, preferred-route selection, online state, and recent delivery results. Sources include Canvas edges, HA `media_player` entities and LAN DLNA renderers. Preferred routes suppress duplicate delivery to the same logical output.
+- The Linux sidecar replaces three process-local pollers with one durable delivery worker and SQLite receipt deduplication. Finite mpv clips now complete on exit code 0 instead of being replayed as failures. Snapcast retains desired state while suspended and resumes when local playback releases the sink.
+- `CANVAS_DEVICE_SERVICES_ENABLED=false` is set by the Tauri embedded sidecar, leaving DLNA, Snapcast arbitration and Core delivery polling to the canonical system sidecar. This removes the prior port-49500 startup race while retaining the embedded sidecar for kiosk-local APIs.
+- Native Android now polls the same durable delivery API, stores completed receipts, wraps raw PCM when needed, and acknowledges real `MediaPlayer` lifecycle callbacks. Broadcast/DLNA playback shares the existing sink arbiter, so Snapcast is suspended and resumed around announcements.
+- Android GENA event delivery now writes a raw HTTP `NOTIFY` request. `HttpURLConnection` on this device rejected the UPnP method before opening the connection.
+- Core-container SSDP discovery returned no renderers on the deployed bridged Docker network. The admin UI therefore also accepts a private-network DLNA device-description URL and validates/inspects it before saving the raw route. Automatic discovery remains available where multicast reaches Core.
+
+Validation completed so far:
+
+- `cd core && npm run build` — passed.
+- `cd core && npm test` — 473/477 passed; the same four pre-existing ASR/intelligence/intent-router failures remain.
+- `cd web && npm run build` — passed with existing chunk-size/dynamic-import warnings.
+- `cd server && npx tsc --noEmit` — passed.
+- `cd server && npm test` — 46/46 passed.
+- `cd browser/linux/src-tauri && cargo check` — passed with existing warnings.
+- Android cached Gradle 8.14.3 `:app:testDebugUnitTest :app:assembleDebug --offline` — passed; only existing deprecated window-flag warnings.
+- `git diff --check` — passed after the final source and generated-asset changes.
+
+Deployment and live acceptance:
+
+- Rebuilt and deployed Core/web to `192.168.1.108`; health returns `status: ok`, role `canvas-core`, version `0.3.1`. PostgreSQL contains the new output/event/delivery tables. The catalog found both Canvas edges and HA media players; only the two Canvas edge routes default to selected.
+- Built the sidecar natively on the Pi using the documented TypeScript → esbuild → `pkg --no-bytecode` path, then built the arm64 kiosk with `npx tauri build --no-bundle`. Backed up and replaced `/usr/bin/canvas-display-server`, `/usr/lib/Canvas Display/binaries/canvas-display-server`, and `/usr/bin/canvas-display-browser-linux`.
+- The first Pi delivery exposed a historical-schema compatibility issue: its SQLite migration cursor was already version 9, so migration 8 was skipped. `initDb()` now idempotently asserts the receipt table independently of the cursor. After rebuilding/redeploying both sidecar copies, the pending delivery was recovered and completed with one claimed attempt.
+- Installed the debug Android APK in place on tablet `A1064US260402203`, preserving enrollment, then relaunched it. Its activity is resumed and `http://192.168.1.41:49500/description.xml` advertises `Android Edge`.
+- A synthetic one-second WAV targeted only the two Canvas edge outputs. Android acknowledged started/completed in one attempt; the Pi recovered its initially pending row after the compatibility fix and then acknowledged started/completed in one attempt. Both final delivery rows are `completed` with no error.
+- Pi services are active: system sidecar, user kiosk and Snapcast. Exactly one process listens on DLNA port 49500 (system sidecar); the embedded sidecar logs `[device-services] disabled`. Snapcast was active after announcement completion. Pi and Android DLNA description endpoints both responded successfully.
+
+Not fully exercised: a real Music Assistant/DLNA controller subscription after the Android raw-NOTIFY fix, external HA/DLNA playback acknowledgement semantics (those protocols only confirm command acceptance here), and automatic SSDP discovery from the bridged Core container. The manual DLNA description-URL path covers adding raw renderers in this deployment.
+
+Next concrete step: review the uncommitted diff and commit/push only with explicit owner authorization. A short Music Assistant push to each Canvas renderer would close the remaining controller-level DLNA acceptance gap.
+
 ### Per-device default start page (2026-09-27)
 
 The Core-wide **Default pages** settings tab was removed from `web/src/pages/SettingsPage.tsx`. Each edge device now has a **Default start page** selector in the Info tab of `web/src/pages/DevicesPage.tsx`. It reads the existing per-device `device_page_state.default_page_id` through the page-library API and uses the existing assignment/unassignment routes, so selecting a page applies it immediately and persists it as that device's default.

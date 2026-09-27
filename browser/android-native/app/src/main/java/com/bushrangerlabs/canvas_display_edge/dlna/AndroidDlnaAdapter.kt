@@ -96,6 +96,18 @@ class AndroidDlnaAdapter(
 
     @Synchronized
     override fun playAudio(url: String, title: String?, volume: Int) {
+        playAudioObserved(url, title, volume, {}, {})
+    }
+
+    /** Play a finite announcement and report actual MediaPlayer lifecycle events. */
+    @Synchronized
+    fun playAudioObserved(
+        url: String,
+        title: String?,
+        volume: Int,
+        onStarted: () -> Unit,
+        onFinished: (Throwable?) -> Unit,
+    ) {
         AudioSinkArbiter.acquire(AudioSinkArbiter.Owner.MEDIA)
         releasePlayer()
         this.volume = volume.coerceIn(0, 100)
@@ -112,21 +124,28 @@ class AndroidDlnaAdapter(
             created.setOnPreparedListener { mp ->
                 mp.setVolume(effectiveVolume(), effectiveVolume())
                 mp.start()
+                onStarted()
             }
             created.setOnCompletionListener { mp ->
                 if (player === mp) player = null
                 mp.release()
                 AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
+                onFinished(null)
             }
-            created.setOnErrorListener { mp, _, _ ->
+            created.setOnErrorListener { mp, what, extra ->
                 if (player === mp) player = null
                 mp.release()
                 AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
+                onFinished(IllegalStateException("MediaPlayer error $what/$extra"))
                 true
             }
             created.prepareAsync()
             player = created
-        }.onFailure { DlnaLog.warn("dlna audio playback failed: ${it.message}") }
+        }.onFailure {
+            AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
+            DlnaLog.warn("dlna audio playback failed: ${it.message}")
+            onFinished(it)
+        }
     }
 
     @Synchronized

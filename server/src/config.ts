@@ -18,6 +18,9 @@ function resolveStaticDir(): string {
 }
 
 export const config = {
+  // Only one sidecar instance per device may own hardware/network services.
+  // The system sidecar leaves this enabled; the Tauri embedded sidecar opts out.
+  deviceServicesEnabled: (process.env.CANVAS_DEVICE_SERVICES_ENABLED ?? 'true').toLowerCase() !== 'false',
   port: parseInt(process.env.PORT ?? '3100'),
   host: process.env.HOST ?? '0.0.0.0',
   dbPath: process.env.DB_PATH ?? path.join(dataDir, 'canvas-ui.db'),

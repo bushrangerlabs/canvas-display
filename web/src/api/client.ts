@@ -156,6 +156,31 @@ export interface DevicesResponse {
   invitations: InvitationRecord[];
 }
 
+export interface BroadcastOutput {
+  id: string;
+  logical_id: string;
+  route_type: 'edge' | 'ha' | 'dlna';
+  route_key: string;
+  name: string;
+  selected: boolean;
+  preferred: boolean;
+  online: boolean;
+  metadata: Record<string, unknown>;
+  last_seen: string;
+}
+
+export interface BroadcastEventSummary {
+  id: string;
+  kind: string;
+  title: string;
+  created_at: string;
+  expires_at: string;
+  deliveries: number;
+  completed: number;
+  failed: number;
+  pending: number;
+}
+
 export interface InvitationCreateResponse {
   id: string;
   token: string;
@@ -675,6 +700,16 @@ export const coreApi = {
   settings: () => api.get<LegacySettings>('/api/settings'),
   updateSettings: (settings: Record<string, string>) =>
     api.put<{ updated: string[] }>('/api/settings', settings),
+  broadcastOutputs: () =>
+    api.get<{ outputs: BroadcastOutput[] }>('/api/admin/broadcast/outputs'),
+  discoverBroadcastOutputs: () =>
+    api.post<{ outputs: BroadcastOutput[] }>('/api/admin/broadcast/outputs/discover'),
+  addDlnaBroadcastOutput: (location: string) =>
+    api.post<{ outputs: BroadcastOutput[] }>('/api/admin/broadcast/outputs/dlna', { location }),
+  updateBroadcastOutput: (id: string, patch: { selected?: boolean; preferred?: boolean; logicalId?: string }) =>
+    api.put<{ output: BroadcastOutput }>(`/api/admin/broadcast/outputs/${encodeURIComponent(id)}`, patch),
+  broadcastEvents: (limit = 25) =>
+    api.get<{ events: BroadcastEventSummary[] }>(`/api/admin/broadcast/events?limit=${limit}`),
   testRequestRouting: (transcript: string) =>
     api.post<{ transcript: string; classification: RequestClassification }>('/api/admin/request-routing/test', { transcript }),
   mqttStatus: () => api.get<MqttStatus>('/api/settings/mqtt'),

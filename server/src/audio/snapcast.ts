@@ -18,9 +18,11 @@ export interface SnapcastStatus {
   service: string;
   running: boolean;
   lastError?: string;
+  desired?: boolean;
 }
 
 let lastError: string | undefined;
+let desired = false;
 
 function runSystemctl(action: 'start' | 'stop' | 'is-active'): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolve) => {
@@ -48,6 +50,11 @@ export async function isSnapclientRunning(): Promise<boolean> {
 }
 
 export async function startSnapclient(): Promise<SnapcastStatus> {
+  desired = true;
+  return startSnapclientInternal();
+}
+
+async function startSnapclientInternal(): Promise<SnapcastStatus> {
   if (!config.snapclientEnabled) {
     return { enabled: false, service: config.snapclientService, running: false };
   }
@@ -58,10 +65,15 @@ export async function startSnapclient(): Promise<SnapcastStatus> {
   } else {
     lastError = undefined;
   }
-  return { enabled: true, service: config.snapclientService, running: ok, lastError };
+  return { enabled: true, service: config.snapclientService, running: ok, lastError, desired };
 }
 
 export async function stopSnapclient(): Promise<SnapcastStatus> {
+  desired = false;
+  return suspendSnapclient();
+}
+
+export async function suspendSnapclient(): Promise<SnapcastStatus> {
   if (!config.snapclientEnabled) {
     return { enabled: false, service: config.snapclientService, running: false };
   }
@@ -72,7 +84,16 @@ export async function stopSnapclient(): Promise<SnapcastStatus> {
   } else {
     lastError = undefined;
   }
-  return { enabled: true, service: config.snapclientService, running: false, lastError };
+  return { enabled: true, service: config.snapclientService, running: false, lastError, desired };
+}
+
+export function adoptSnapclientRunning(): void { desired = true; }
+
+export function isSnapclientDesired(): boolean { return desired && config.snapclientEnabled; }
+
+export async function resumeSnapclientIfDesired(): Promise<SnapcastStatus | null> {
+  if (!desired || !config.snapclientEnabled) return null;
+  return startSnapclientInternal();
 }
 
 export async function getSnapcastStatus(): Promise<SnapcastStatus> {
@@ -80,5 +101,5 @@ export async function getSnapcastStatus(): Promise<SnapcastStatus> {
     return { enabled: false, service: config.snapclientService, running: false };
   }
   const running = await isSnapclientRunning();
-  return { enabled: true, service: config.snapclientService, running, lastError };
+  return { enabled: true, service: config.snapclientService, running, lastError, desired };
 }

@@ -27,7 +27,7 @@ import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate } from '../api/client';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate, type BroadcastOutput, type BroadcastEventSummary } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
@@ -63,6 +63,9 @@ export default function SettingsPage() {
   const [audio, setAudio] = useState<AudioState | null>(null);
   const [mqtt, setMqtt] = useState<MqttStatus | null>(null);
   const [coreBridge, setCoreBridge] = useState<{ url: string; tokenSet: boolean; source: string } | null>(null);
+  const [broadcastOutputs, setBroadcastOutputs] = useState<BroadcastOutput[]>([]);
+  const [broadcastEvents, setBroadcastEvents] = useState<BroadcastEventSummary[]>([]);
+  const [discoveringOutputs, setDiscoveringOutputs] = useState(false);
   const [bridgeTestResult, setBridgeTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [bridgeTesting, setBridgeTesting] = useState(false);
   const [showToken, setShowToken] = useState(false);
@@ -74,7 +77,7 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [s, p, st, a, mq, cb] = await Promise.all([
+      const [s, p, st, a, mq, cb, outputs, events] = await Promise.all([
         coreApi.settings().catch((e) => {
           if (e instanceof ApiError && e.status === 401) { setAuthRequired(true); return null; }
           throw e;
@@ -90,6 +93,8 @@ export default function SettingsPage() {
         coreApi.audioState().catch(() => null),
         coreApi.mqttStatus().catch(() => null),
         coreApi.coreBridgeStatus().catch(() => null),
+        coreApi.broadcastOutputs().then(result => result.outputs).catch(() => []),
+        coreApi.broadcastEvents().then(result => result.events).catch(() => []),
       ]);
       setSettings(s);
       setPrivacy(p);
@@ -97,6 +102,8 @@ export default function SettingsPage() {
       setAudio(a);
       setMqtt(mq);
       setCoreBridge(cb);
+      setBroadcastOutputs(outputs);
+      setBroadcastEvents(events);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -178,6 +185,31 @@ export default function SettingsPage() {
     } catch (e) { setError((e as Error).message); }
   }
 
+  async function discoverOutputs() {
+    setDiscoveringOutputs(true); setError(null);
+    try {
+      const result = await coreApi.discoverBroadcastOutputs();
+      setBroadcastOutputs(result.outputs);
+      setSaved(`Discovered ${result.outputs.length} broadcast routes.`);
+    } catch (e) { setError((e as Error).message); }
+    finally { setDiscoveringOutputs(false); }
+  }
+
+  async function updateOutput(id: string, patch: { selected?: boolean; preferred?: boolean; logicalId?: string }) {
+    setError(null);
+    try {
+      await coreApi.updateBroadcastOutput(id, patch);
+      setBroadcastOutputs((await coreApi.broadcastOutputs()).outputs);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function addDlnaOutput(location: string) {
+    setError(null);
+    const result = await coreApi.addDlnaBroadcastOutput(location);
+    setBroadcastOutputs(result.outputs);
+    setSaved('DLNA renderer added.');
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <PageHeader title="Settings" subtitle="Canvas Core configuration" onRefresh={load} loading={loading} />
@@ -194,6 +226,7 @@ export default function SettingsPage() {
             <Tabs value={activeTab} onChange={(_, value: string) => setActiveTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Settings sections">
               <Tab value="general" label="General" />
               <Tab value="integrations" label="Integrations" />
+              <Tab value="broadcasts" label="Broadcast outputs" />
               <Tab value="request-routing" label="Request routing" />
               <Tab value="privacy-storage" label="Privacy &amp; storage" />
               <Tab value="ai" label="AI providers" />
@@ -393,6 +426,17 @@ export default function SettingsPage() {
                 <RequestRoutingSection settings={settings} onChange={setSettings} onSave={saveSettings} />
               )}
 
+              {activeTab === 'broadcasts' && (
+                <BroadcastOutputsSection
+                  outputs={broadcastOutputs}
+                  events={broadcastEvents}
+                  discovering={discoveringOutputs}
+                  onDiscover={discoverOutputs}
+                  onUpdate={updateOutput}
+                  onAddDlna={addDlnaOutput}
+                />
+              )}
+
               {activeTab === 'privacy-storage' && <>
               {/* Privacy */}
               {privacy && (
@@ -587,6 +631,94 @@ function Row({ label, value }: { label: string; value: string }) {
     <Stack direction="row" spacing={1}>
       <Typography variant="caption" color="text.secondary" sx={{ minWidth: 180 }}>{label}</Typography>
       <Typography variant="body2">{value}</Typography>
+    </Stack>
+  );
+}
+
+function BroadcastOutputsSection({ outputs, events, discovering, onDiscover, onUpdate, onAddDlna }: {
+  outputs: BroadcastOutput[];
+  events: BroadcastEventSummary[];
+  discovering: boolean;
+  onDiscover: () => Promise<void>;
+  onUpdate: (id: string, patch: { selected?: boolean; preferred?: boolean; logicalId?: string }) => Promise<void>;
+  onAddDlna: (location: string) => Promise<void>;
+}) {
+  const [groups, setGroups] = useState<Record<string, string>>({});
+  const [dlnaLocation, setDlnaLocation] = useState('');
+  useEffect(() => {
+    setGroups(Object.fromEntries(outputs.map(output => [output.id, output.logical_id])));
+  }, [outputs]);
+  return (
+    <Stack spacing={3}>
+      <Paper sx={{ p: 2.5 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'center' }, mb: 1 }}>
+          <Box sx={{ flex: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Broadcast outputs</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Checked outputs receive untargeted announcements. Discovery finds Canvas edges, Home Assistant players, and LAN DLNA renderers.
+            </Typography>
+          </Box>
+          <Button size="small" variant="outlined" startIcon={discovering ? <CircularProgress size={14} /> : <RefreshIcon />}
+            disabled={discovering} onClick={() => void onDiscover()}>
+            Discover outputs
+          </Button>
+        </Stack>
+        <Divider sx={{ mb: 2 }} />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 2 }}>
+          <TextField fullWidth size="small" label="DLNA description URL"
+            placeholder="http://192.168.1.50:49500/description.xml" value={dlnaLocation}
+            onChange={event => setDlnaLocation(event.target.value)} />
+          <Button variant="outlined" disabled={!dlnaLocation.trim()} onClick={() => void onAddDlna(dlnaLocation.trim()).then(() => setDlnaLocation(''))}>
+            Add DLNA
+          </Button>
+        </Stack>
+        {outputs.length === 0 ? (
+          <Alert severity="info">No outputs have been discovered yet.</Alert>
+        ) : (
+          <TableContainer>
+            <Table size="small">
+              <TableHead><TableRow>
+                <TableCell padding="checkbox">Use</TableCell><TableCell>Output</TableCell><TableCell>Route</TableCell>
+                <TableCell>Logical group</TableCell><TableCell>Preferred</TableCell><TableCell>Status</TableCell>
+              </TableRow></TableHead>
+              <TableBody>{outputs.map(output => (
+                <TableRow key={output.id}>
+                  <TableCell padding="checkbox"><Switch size="small" checked={output.selected}
+                    onChange={event => void onUpdate(output.id, { selected: event.target.checked })} /></TableCell>
+                  <TableCell><Typography variant="body2">{output.name}</Typography><Typography variant="caption" color="text.secondary">{output.route_key}</Typography></TableCell>
+                  <TableCell><Chip size="small" label={output.route_type.toUpperCase()} variant="outlined" /></TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={0.5}>
+                      <TextField size="small" value={groups[output.id] ?? output.logical_id}
+                        onChange={event => setGroups(current => ({ ...current, [output.id]: event.target.value }))}
+                        sx={{ minWidth: 150 }} />
+                      <Button size="small" disabled={!groups[output.id] || groups[output.id] === output.logical_id}
+                        onClick={() => void onUpdate(output.id, { logicalId: groups[output.id] })}>Group</Button>
+                    </Stack>
+                  </TableCell>
+                  <TableCell><Switch size="small" checked={output.preferred}
+                    onChange={event => void onUpdate(output.id, { preferred: event.target.checked })} /></TableCell>
+                  <TableCell><Chip size="small" label={output.online ? 'online' : 'offline'} color={output.online ? 'success' : 'default'} variant="outlined" /></TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Paper>
+      <Paper sx={{ p: 2.5 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Recent deliveries</Typography>
+        <Divider sx={{ my: 2 }} />
+        {events.length === 0 ? <Typography variant="body2" color="text.secondary">No durable broadcasts recorded.</Typography> : (
+          <TableContainer><Table size="small">
+            <TableHead><TableRow><TableCell>Broadcast</TableCell><TableCell>Created</TableCell><TableCell>Complete</TableCell><TableCell>Pending</TableCell><TableCell>Failed</TableCell></TableRow></TableHead>
+            <TableBody>{events.map(event => <TableRow key={event.id}>
+              <TableCell><Typography variant="body2">{event.title || event.kind}</Typography><Typography variant="caption" color="text.secondary">{event.kind}</Typography></TableCell>
+              <TableCell>{new Date(event.created_at).toLocaleString()}</TableCell>
+              <TableCell>{event.completed}/{event.deliveries}</TableCell><TableCell>{event.pending}</TableCell><TableCell>{event.failed}</TableCell>
+            </TableRow>)}</TableBody>
+          </Table></TableContainer>
+        )}
+      </Paper>
     </Stack>
   );
 }

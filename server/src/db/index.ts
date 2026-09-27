@@ -26,6 +26,18 @@ export function initDb(): Database.Database {
 
   runMigrations(db);
 
+  // Some deployed sidecars have migration numbers from historical branches
+  // that are higher than this checkout. This additive table must therefore be
+  // asserted independently of the linear migration cursor.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS broadcast_delivery_receipts (
+      delivery_id TEXT PRIMARY KEY,
+      completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_broadcast_receipts_completed
+      ON broadcast_delivery_receipts(completed_at);
+  `);
+
   return db;
 }
 
@@ -270,6 +282,20 @@ const migrations: Array<{
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+      `);
+    },
+  },
+  {
+    version: 8,
+    name: 'durable broadcast delivery receipts',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE broadcast_delivery_receipts (
+          delivery_id TEXT PRIMARY KEY,
+          completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_broadcast_receipts_completed
+          ON broadcast_delivery_receipts(completed_at);
       `);
     },
   },

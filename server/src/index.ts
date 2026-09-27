@@ -29,8 +29,14 @@ import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { broadcast } from './ws/index';
 import { startDlna, stopDlna, videoWrapperUrl } from './dlna/index';
 import type { DlnaPlaybackAdapter } from './dlna/renderer';
-import { acquireSink, registerSinkReleaser } from './audio/arbiter';
-import { isSnapclientRunning, stopSnapclient } from './audio/snapcast';
+import { acquireSink, registerSinkReleaser, setSinkIdleListener } from './audio/arbiter';
+import {
+  adoptSnapclientRunning,
+  isSnapclientDesired,
+  isSnapclientRunning,
+  resumeSnapclientIfDesired,
+  suspendSnapclient,
+} from './audio/snapcast';
 import {
   getAudioState,
   pauseAudio,
@@ -47,9 +53,7 @@ import { randomUUID } from 'crypto';
 import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index';
 import { getCoreBridgeConfig, startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
 import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
-import { startTtsBroadcastPoller, stopTtsBroadcastPoller } from './voice/tts-broadcast-poller';
-import { startAlertBroadcastPoller, stopAlertBroadcastPoller } from './voice/alert-broadcast-poller';
-import { startIntercomPoller, stopIntercomPoller } from './voice/intercom-poller';
+import { startBroadcastDeliveryPoller, stopBroadcastDeliveryPoller } from './voice/broadcast-delivery-poller';
 
 function useDirectCoreVoice(): boolean {
   const { baseUrl, token } = getCoreBridgeConfig();
@@ -65,10 +69,17 @@ function useDirectCoreVoice(): boolean {
  */
 async function initAudioArbiter(): Promise<void> {
   registerSinkReleaser('mpv', async () => { await stopAudio(); });
-  registerSinkReleaser('snapcast', async () => { await stopSnapclient(); });
+  registerSinkReleaser('snapcast', async () => { await suspendSnapclient(); });
+  setSinkIdleListener(async () => {
+    if (!isSnapclientDesired()) return;
+    await acquireSink('snapcast');
+    const status = await resumeSnapclientIfDesired();
+    if (!status?.running) console.warn('[audio][snapcast] failed to resume after local playback');
+  });
   // The Snapcast client may already be running from before this sidecar start;
   // record it as the current owner so the first mpv play releases it.
   if (await isSnapclientRunning()) {
+    adoptSnapclientRunning();
     await acquireSink('snapcast');
   }
 }
@@ -251,26 +262,21 @@ async function main() {
       else await startVoiceServer();
     }
     // Start TTS broadcast poller if Core URL is configured (polls for server-pushed TTS)
-    startTtsBroadcastPoller();
-    // Start alert broadcast poller (polls Core for doorbell/admin alerts)
-    startAlertBroadcastPoller(config.port);
-    // Start intercom poller (polls Core for device-to-device audio messages)
-    startIntercomPoller();
-
-    // Arbitrate the single audio sink between mpv and the Snapcast client.
-    await initAudioArbiter();
-
-    // Expose the display as a UPnP/DLNA MediaRenderer so Home Assistant
-    // (dlna_dmr) and Music Assistant can push audio and video to it.
-    await startDlnaRenderer();
+    if (config.deviceServicesEnabled) {
+      startBroadcastDeliveryPoller(config.port);
+      await initAudioArbiter();
+      await startDlnaRenderer();
+    } else {
+      console.log('[device-services] disabled for this sidecar instance');
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 }
 
-process.on('SIGTERM', async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); stopAlertBroadcastPoller(); stopIntercomPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopTtsBroadcastPoller(); stopAlertBroadcastPoller(); stopIntercomPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

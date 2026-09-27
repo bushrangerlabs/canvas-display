@@ -17,6 +17,8 @@ type Releaser = () => Promise<void>;
 
 const releasers = new Map<AudioSinkOwner, Releaser>();
 let currentOwner: AudioSinkOwner = 'idle';
+let transition = 0;
+let idleListener: (() => Promise<void> | void) | null = null;
 
 /** Register how to release the sink when another owner takes over. */
 export function registerSinkReleaser(owner: AudioSinkOwner, release: Releaser): void {
@@ -27,35 +29,53 @@ export function getSinkOwner(): AudioSinkOwner {
   return currentOwner;
 }
 
+export function setSinkIdleListener(listener: (() => Promise<void> | void) | null): void {
+  idleListener = listener;
+}
+
 /**
  * Take ownership of the audio sink, releasing whichever subsystem held it
  * before. Releasing the incoming owner is skipped (it is about to play).
  */
 export async function acquireSink(owner: AudioSinkOwner): Promise<void> {
   const previous = currentOwner;
-  currentOwner = owner;
-  if (previous === owner || previous === 'idle') return;
+  if (previous === owner) return;
+  if (previous === 'idle') {
+    currentOwner = owner;
+    return;
+  }
+
+  const thisTransition = ++transition;
 
   const release = releasers.get(previous);
-  if (!release) return;
-  try {
-    await release();
-  } catch (err) {
-    console.warn(
-      `[audio][arbiter] failed to release sink from ${previous}:`,
-      err instanceof Error ? err.message : err,
-    );
+  if (release) {
+    try {
+      await release();
+    } catch (err) {
+      console.warn(
+        `[audio][arbiter] failed to release sink from ${previous}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
+  if (thisTransition === transition) currentOwner = owner;
 }
 
 /** Release the sink, but only if `owner` still holds it. */
 export async function releaseSink(owner: AudioSinkOwner): Promise<void> {
   if (currentOwner !== owner) return;
   currentOwner = 'idle';
+  const listener = idleListener;
+  if (listener) {
+    try { await listener(); }
+    catch (err) { console.warn('[audio][arbiter] idle listener failed:', err instanceof Error ? err.message : err); }
+  }
 }
 
 /** Test helper — reset the arbiter to a clean state. */
 export function resetArbiter(): void {
   releasers.clear();
   currentOwner = 'idle';
+  transition = 0;
+  idleListener = null;
 }

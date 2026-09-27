@@ -2,12 +2,10 @@ package com.bushrangerlabs.canvas_display_edge.dlna
 
 import java.io.BufferedOutputStream
 import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
-import java.net.URL
 import kotlin.concurrent.thread
 
 /**
@@ -199,25 +197,31 @@ class DlnaHttpServer(
 
     /** Send a GENA NOTIFY to a subscriber. Called by the renderer's event sender. */
     fun sendEvent(subscriber: DlnaSubscriber, body: String) {
-        val target = runCatching { URL(subscriber.callbackUrl) }.getOrNull() ?: return
+        val target = runCatching { URI(subscriber.callbackUrl) }.getOrNull() ?: return
+        if (!target.scheme.equals("http", ignoreCase = true) || target.host.isNullOrBlank()) return
         subscriber.seq += 1
         val payload = body.toByteArray()
         runCatching {
-            val connection = (target.openConnection() as HttpURLConnection).apply {
-                requestMethod = "NOTIFY"
-                connectTimeout = 5_000
-                readTimeout = 5_000
-                doOutput = true
-                setRequestProperty("CONTENT-TYPE", "text/xml; charset=\"utf-8\"")
-                setRequestProperty("NT", "upnp:event")
-                setRequestProperty("NTS", "upnp:propchange")
-                setRequestProperty("SID", subscriber.sid)
-                setRequestProperty("SEQ", subscriber.seq.toString())
-                setFixedLengthStreamingMode(payload.size)
+            val port = if (target.port > 0) target.port else 80
+            val requestPath = target.rawPath?.ifBlank { "/" }.orEmpty() +
+                target.rawQuery?.let { "?$it" }.orEmpty()
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(target.host, port), 5_000)
+                socket.soTimeout = 5_000
+                val headers = buildString {
+                    append("NOTIFY $requestPath HTTP/1.1\r\n")
+                    append("HOST: ${target.host}:$port\r\n")
+                    append("CONTENT-TYPE: text/xml; charset=\"utf-8\"\r\n")
+                    append("NT: upnp:event\r\nNTS: upnp:propchange\r\n")
+                    append("SID: ${subscriber.sid}\r\nSEQ: ${subscriber.seq}\r\n")
+                    append("CONTENT-LENGTH: ${payload.size}\r\nCONNECTION: close\r\n\r\n")
+                }.toByteArray()
+                socket.getOutputStream().use { output ->
+                    output.write(headers)
+                    output.write(payload)
+                    output.flush()
+                }
             }
-            connection.outputStream.use { it.write(payload) }
-            connection.responseCode
-            connection.disconnect()
         }.onFailure { DlnaLog.warn("gena notify failed: ${it.message}") }
     }
 

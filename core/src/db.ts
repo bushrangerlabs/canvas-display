@@ -609,6 +609,55 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_entity_aliases_alias_unique ON voice_entity_aliases (alias);
   `);
 
+  // Durable broadcast output catalogue and per-output delivery queue. Outputs
+  // are logical playback routes discovered from Canvas Edge, Home Assistant,
+  // or SSDP/DLNA. A broadcast event is immutable; each selected destination
+  // receives its own leased delivery row so one poller can never consume work
+  // intended for another device.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS broadcast_outputs (
+      id TEXT PRIMARY KEY,
+      logical_id TEXT NOT NULL,
+      route_type TEXT NOT NULL,
+      route_key TEXT NOT NULL,
+      name TEXT NOT NULL,
+      selected BOOLEAN NOT NULL DEFAULT false,
+      preferred BOOLEAN NOT NULL DEFAULT true,
+      online BOOLEAN NOT NULL DEFAULT false,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(route_type, route_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_broadcast_outputs_logical ON broadcast_outputs(logical_id);
+    CREATE TABLE IF NOT EXISTS broadcast_events (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      audio BYTEA,
+      mime_type TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL REFERENCES broadcast_events(id) ON DELETE CASCADE,
+      output_id TEXT NOT NULL REFERENCES broadcast_outputs(id) ON DELETE CASCADE,
+      state TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lease_until TIMESTAMPTZ,
+      last_error TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(event_id, output_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_broadcast_deliveries_claim
+      ON broadcast_deliveries(output_id, state, lease_until, updated_at);
+  `);
+
   // --- AI providers: multi-provider model registry (D-010 extension) ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ai_providers (
