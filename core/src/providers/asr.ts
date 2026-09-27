@@ -27,6 +27,18 @@ export interface TranscriptionProvider {
    * report confidence fall back to `transcribe`.
    */
   transcribeDetailed?(audio: Buffer, mimeType?: string): Promise<TranscriptionResult>;
+  /**
+   * List models installed on the ASR server (OpenAI-compatible `GET /v1/models`).
+   * Optional: providers without a model-listing API omit this.
+   */
+  listModels?(): Promise<string[]>;
+  /**
+   * Ask the ASR server to download/install a model. Optional: only providers
+   * whose server supports on-demand model downloads implement this.
+   */
+  downloadModel?(model: string): Promise<void>;
+  /** Switch the active model for subsequent transcriptions. */
+  setModel?(model?: string): void;
   healthCheck(): Promise<HealthStatus>;
 }
 
@@ -60,7 +72,7 @@ const DEFAULT_MODEL = 'Systran/faster-whisper-base.en';
 
 export class WhisperTranscription implements TranscriptionProvider {
   private readonly baseUrl: string;
-  private readonly model: string;
+  private model: string;
   private readonly language?: string;
   private readonly responseFormat: string;
   private readonly timeoutMs: number;
@@ -79,6 +91,11 @@ export class WhisperTranscription implements TranscriptionProvider {
 
   async transcribe(audio: Buffer, mimeType = 'audio/wav'): Promise<string> {
     return (await this.transcribeDetailed(audio, mimeType)).text;
+  }
+
+  /** Switch the active model for subsequent transcriptions. */
+  setModel(model?: string): void {
+    this.model = model ?? DEFAULT_MODEL;
   }
 
   /**
@@ -134,6 +151,51 @@ export class WhisperTranscription implements TranscriptionProvider {
       };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /** List models installed on the whisper/speaches server (`GET /v1/models`). */
+  async listModels(): Promise<string[]> {
+    const res = await this.fetchImpl(`${this.baseUrl}/v1/models`, { method: 'GET' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`ASR models ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as { data?: unknown; models?: unknown };
+    const rows = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
+    const ids: string[] = [];
+    for (const row of rows) {
+      if (typeof row === 'string' && row) ids.push(row);
+      else if (row && typeof row === 'object' && typeof (row as { id?: unknown }).id === 'string') {
+        ids.push((row as { id: string }).id);
+      }
+    }
+    return Array.from(new Set(ids)).sort();
+  }
+
+  /**
+   * Ask the server to download/install a model. speaches exposes this as
+   * `POST /v1/models/{model_id}`; some builds accept `POST /v1/models` with a
+   * `{ model }` body. We try the path form first and fall back to the body form.
+   */
+  async downloadModel(model: string): Promise<void> {
+    // Keep the `/` separators in HuggingFace-style ids (e.g. `Systran/faster-whisper-base.en`)
+    // while escaping any other reserved characters.
+    const encoded = model.split('/').map(encodeURIComponent).join('/');
+    const pathRes = await this.fetchImpl(`${this.baseUrl}/v1/models/${encoded}`, { method: 'POST' });
+    if (pathRes.ok) return;
+    if (pathRes.status !== 404 && pathRes.status !== 405) {
+      const text = await pathRes.text().catch(() => '');
+      throw new Error(`ASR model download ${pathRes.status}: ${text.slice(0, 200)}`);
+    }
+    const bodyRes = await this.fetchImpl(`${this.baseUrl}/v1/models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    });
+    if (!bodyRes.ok) {
+      const text = await bodyRes.text().catch(() => '');
+      throw new Error(`ASR model download ${bodyRes.status}: ${text.slice(0, 200)}`);
     }
   }
 

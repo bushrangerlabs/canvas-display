@@ -32,6 +32,27 @@ import type { Pool } from 'pg';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { makeRequireAdmin } from './auth.js';
+import type { CoreConfig } from './config.js';
+import {
+  clearMediaCaches,
+  fetchDabStations,
+  fetchDispatcharrChannels,
+  resolveDispatcharrChannel,
+  stepTargetIndex,
+  tuneDabStation,
+} from './media-sources.js';
+import {
+  clearMaTokenCache,
+  fetchMaPlayers,
+  fetchMaPlayer,
+  fetchMaPlaylists,
+  fetchMaRadios,
+  maControl,
+  maPlayMedia,
+  maSearch,
+  type MaConnection,
+  type MaControlAction,
+} from './music-assistant.js';
 
 /** The bound `requireAdmin` preHandler factory returned by `registerAuth`. */
 export type RequireAdmin = ReturnType<typeof makeRequireAdmin>;
@@ -74,6 +95,8 @@ export interface AudioState {
   url: string;
   volume: number; // 0–100
   muted: boolean;
+  /** Logical source of the current playback (e.g. 'dab', 'dispatcharr'). */
+  source?: string;
 }
 
 type ClientType = 'browser' | 'editor' | 'api';
@@ -99,6 +122,11 @@ interface ConnectedClient {
 const SETTING_DEFAULTS: Record<string, string> = {
   device_name: 'Canvas UI Device',
   server_port: '3100',
+  // Canvas Core bridge. In Core these describe Core itself: the LAN URL edge
+  // devices should use and the shared edge voice token. Empty values fall back
+  // to the Core env config (see coreBridgeEnvDefaults()).
+  canvas_core_url: '',
+  edge_voice_token: '',
   mqtt_enabled: '0',
   mqtt_broker_url: 'mqtt://localhost:1883',
   mqtt_username: '',
@@ -137,9 +165,27 @@ const SETTING_DEFAULTS: Record<string, string> = {
   request_routing_domain_display_navigation: '1',
   request_routing_domain_device_control: '1',
   routine_learning_mode: 'suggest',
+  // Media sources (DAB+/SDR radio, Dispatcharr IPTV, Music Assistant). Empty
+  // values fall back to the Core env config (see mediaSetting()).
+  sdr_radio_url: '',
+  sdr_radio_tuner: '',
+  sdr_radio_stream_url: '',
+  dispatcharr_url: '',
+  dispatcharr_api_key: '',
+  music_assistant_url: '',
+  music_assistant_token: '',
+  music_assistant_username: '',
+  music_assistant_password: '',
 };
 
-const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token']);
+const REDACTED_KEYS = new Set([
+  'mqtt_password',
+  'voice_ha_token',
+  'edge_voice_token',
+  'dispatcharr_api_key',
+  'music_assistant_token',
+  'music_assistant_password',
+]);
 const REDACTED_PLACEHOLDER = '••••••••';
 
 // ─── Audio state (in-memory; dispatch to device gateway) ─────────────────────
@@ -159,6 +205,12 @@ export function getAudioState(): AudioState {
   return { ...audioState };
 }
 
+/** Replace the audio state wholesale (used by the media-source routes). */
+export function setAudioState(next: AudioState): AudioState {
+  audioState = { ...next };
+  return getAudioState();
+}
+
 /** Direct state mutation (used by tests / future device-reported state). */
 export function setAudioStateField<K extends keyof AudioState>(key: K, value: AudioState[K]): void {
   audioState[key] = value;
@@ -167,6 +219,43 @@ export function setAudioStateField<K extends keyof AudioState>(key: K, value: Au
 /** Reset audio state to defaults (used by tests). */
 export function resetAudioState(): void {
   audioState = { ...DEFAULT_AUDIO_STATE };
+}
+
+/**
+ * Start playback of a resolved stream: update the shared audio state and tell
+ * the connected display clients to play it. When `deviceId` is given and the
+ * host wired `dispatchMediaToDevice`, the stream is dispatched to that one
+ * device instead (device-targeted widget playback). Returns the new state.
+ */
+function applyAudioPlayback(
+  input: { url: string; title: string; source?: string },
+  deviceId?: string,
+  dispatch?: LegacyRoutesOptions['dispatchMediaToDevice'],
+): AudioState {
+  audioState = {
+    ...audioState,
+    state: 'playing',
+    url: input.url,
+    title: input.title,
+    muted: false,
+    source: input.source,
+  };
+  if (deviceId && dispatch) {
+    // Fire-and-forget: the HTTP response should not wait on the device round-trip.
+    void dispatch(deviceId, input.url, input.title, input.source ?? 'direct_audio').catch((err) => {
+      console.warn(`[core][media] dispatch to device ${deviceId} failed:`, err instanceof Error ? err.message : err);
+    });
+  } else {
+    broadcast(
+      { type: 'command', action: 'audio_play', payload: { url: input.url, title: input.title, volume: audioState.volume } },
+      'browser',
+    );
+  }
+  return getAudioState();
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 // ─── WebSocket hub (browser/editor channel) ──────────────────────────────────
@@ -342,15 +431,109 @@ async function listPages(pool: Pool): Promise<PageRow[]> {
   }));
 }
 
-async function getAllSettings(pool: Pool): Promise<Record<string, string>> {
+async function getAllSettings(pool: Pool, config?: CoreConfig): Promise<Record<string, string>> {
   const res = await pool.query('SELECT key, value FROM settings');
   const stored: Record<string, string> = {};
   for (const row of res.rows) stored[row.key] = row.value;
-  const merged: Record<string, string> = { ...SETTING_DEFAULTS, ...stored };
+  const envDefaults = { ...mediaEnvDefaults(config), ...coreBridgeEnvDefaults(config) };
+  const merged: Record<string, string> = { ...SETTING_DEFAULTS, ...envDefaults, ...stored };
+  // An empty stored value falls back to the env-derived default so the UI shows
+  // the effective endpoint rather than a blank field.
+  for (const key of Object.keys(envDefaults)) {
+    if (!merged[key]) merged[key] = envDefaults[key];
+  }
   for (const key of REDACTED_KEYS) {
     if (merged[key]) merged[key] = REDACTED_PLACEHOLDER;
   }
   return merged;
+}
+
+/**
+ * Env-derived defaults for the media-source settings. These are the fallback when
+ * the corresponding DB setting is empty, so a fresh install works with the values
+ * already present in the Core container environment.
+ */
+function mediaEnvDefaults(config?: CoreConfig): Record<string, string> {
+  return {
+    sdr_radio_url: config?.sdrRadioUrl ?? '',
+    sdr_radio_tuner: config?.sdrRadioTuner ?? '',
+    sdr_radio_stream_url: config?.sdrRadioStreamUrl ?? '',
+    dispatcharr_url: config?.dispatcharrUrl ?? '',
+    dispatcharr_api_key: config?.dispatcharrApiKey ?? '',
+    music_assistant_url: config?.musicAssistantUrl ?? '',
+    music_assistant_token: config?.musicAssistantToken ?? '',
+    music_assistant_username: config?.musicAssistantUsername ?? '',
+    music_assistant_password: config?.musicAssistantPassword ?? '',
+  };
+}
+
+/**
+ * Env-derived defaults for the Canvas Core bridge settings. Core is the bridge
+ * endpoint itself, so the URL defaults to Core's public URL and the token to the
+ * env-configured edge voice token (which otherwise auto-provisions in the DB).
+ */
+function coreBridgeEnvDefaults(config?: CoreConfig): Record<string, string> {
+  return {
+    canvas_core_url: config?.publicUrl ?? '',
+    edge_voice_token: config?.edgeVoiceToken ?? '',
+  };
+}
+
+/**
+ * Read a media-source setting, falling back to the env-derived default.
+ *
+ * Exported so the voice media tools in `index.ts` resolve the same DB-backed
+ * endpoints the widgets and Settings UI use — otherwise a voice command would
+ * keep using the env default after the operator changed the URL in the UI.
+ */
+export async function mediaSetting(pool: Pool, config: CoreConfig | undefined, key: string): Promise<string> {
+  const stored = await getSetting(pool, key);
+  if (stored && stored.trim()) return stored.trim();
+  return mediaEnvDefaults(config)[key] ?? '';
+}
+
+/**
+ * Apply the widget's `search` (case-insensitive name substring) and `limit`
+ * query parameters to a station/channel list. Returns the filtered slice plus
+ * the unfiltered total so the UI can show how many items exist. This keeps the
+ * Dispatcharr lineup (tens of thousands of channels) from being shipped whole
+ * on every poll.
+ */
+function applyListQuery<T extends { name?: string }>(
+  items: T[],
+  search?: string,
+  limit?: string,
+): { items: T[]; total: number } {
+  const total = items.length;
+  const needle = (search ?? '').trim().toLowerCase();
+  let filtered = needle
+    ? items.filter((item) => String(item.name ?? '').toLowerCase().includes(needle))
+    : items;
+  const parsed = Number.parseInt(limit ?? '', 10);
+  if (Number.isFinite(parsed) && parsed > 0) filtered = filtered.slice(0, parsed);
+  return { items: filtered, total };
+}
+
+/**
+ * Resolve the Music Assistant connection from settings. Returns null when the
+ * URL is not configured, or throws when neither a token nor credentials are
+ * available.
+ */
+async function maConnection(
+  pool: Pool,
+  config: CoreConfig | undefined,
+): Promise<MaConnection | null> {
+  const base = await mediaSetting(pool, config, 'music_assistant_url');
+  if (!base) return null;
+  const token = await mediaSetting(pool, config, 'music_assistant_token');
+  const username = await mediaSetting(pool, config, 'music_assistant_username');
+  const password = await mediaSetting(pool, config, 'music_assistant_password');
+  if (!token && (!username || !password)) {
+    throw new Error(
+      'Music Assistant needs either an API token or a username and password — set them in Settings → Media.',
+    );
+  }
+  return { base, token: token || undefined, username: username || undefined, password: password || undefined };
 }
 
 async function setSetting(pool: Pool, key: string, value: string): Promise<void> {
@@ -383,6 +566,14 @@ export interface LegacyRoutesOptions {
   disconnectMqtt?: () => Promise<void>;
   settingsChanged?: (updatedKeys: string[]) => Promise<void>;
   connectedDeviceIds?: () => string[];
+  /** Core runtime config — supplies env-derived defaults for media-source settings. */
+  config?: CoreConfig;
+  /** Architecture-aware direct-audio dispatch to a specific device (Android →
+   * gateway media.play, Linux → device_http /api/media/play). Used by the
+   * device-targeted widget playback (deviceId in the play request). */
+  dispatchMediaToDevice?: (deviceId: string, url: string, title: string, source: string) => Promise<void>;
+  /** Dispatch a media control action to a specific device's local server. */
+  controlMediaOnDevice?: (deviceId: string, action: string, value?: number | boolean) => Promise<void>;
 }
 
 // Convenience wrapper: if requireAdmin is provided, return its preHandler; else
@@ -1054,7 +1245,7 @@ export async function registerLegacyRoutes(
   // ═══ Settings ════════════════════════════════════════════════════════════
 
   // GET /api/settings — all settings (passwords redacted)
-  fastify.get('/api/settings', async () => getAllSettings(pool));
+  fastify.get('/api/settings', async () => getAllSettings(pool, options.config));
 
   // PUT /api/settings — bulk update { key: value, ... }
   fastify.put<{ Body: Record<string, string> }>('/api/settings', {
@@ -1108,6 +1299,40 @@ export async function registerLegacyRoutes(
 
   // GET /api/settings/voice/microphones — empty list (Core doesn't probe ALSA)
   fastify.get('/api/settings/voice/microphones', async () => []);
+
+  // GET /api/settings/core-bridge — Canvas Core bridge status. Core is the bridge
+  // endpoint itself, so this reports the LAN URL edge devices should use and
+  // whether the shared edge voice token is provisioned (env or auto-provisioned).
+  fastify.get('/api/settings/core-bridge', async () => {
+    const dbUrl = (await getSetting(pool, 'canvas_core_url')) ?? '';
+    const dbToken = (await getSetting(pool, 'edge_voice_token')) ?? '';
+    const envUrl = options.config?.publicUrl ?? '';
+    const envToken = options.config?.edgeVoiceToken ?? '';
+    const url = dbUrl || envUrl;
+    const token = dbToken || envToken;
+    const source = dbUrl || dbToken ? 'db' : (envUrl || envToken ? 'env' : 'none');
+    return { url, tokenSet: Boolean(token), source };
+  });
+
+  // POST /api/settings/core-bridge/test — verify Core's own health endpoint.
+  //
+  // Core IS the bridge, so we probe the local listener rather than looping out
+  // through the public TLS proxy (whose self-signed CA the container doesn't
+  // trust). This confirms the Core process is healthy and serving the API.
+  fastify.post('/api/settings/core-bridge/test', async (_req, reply) => {
+    const dbUrl = (await getSetting(pool, 'canvas_core_url')) ?? '';
+    const url = dbUrl || options.config?.publicUrl || '';
+    const local = `http://127.0.0.1:${options.config?.port ?? 3100}/health`;
+    try {
+      const res = await fetch(local, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) { reply.code(502); return { ok: false, error: `Core returned ${res.status}` }; }
+      const body = await res.json() as Record<string, unknown>;
+      return { ok: true, url, status: body };
+    } catch (err) {
+      reply.code(502);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
 
   // ═══ Audio ═══════════════════════════════════════════════════════════════
 
@@ -1186,6 +1411,421 @@ export async function registerLegacyRoutes(
     audioState.muted = !!muted;
     broadcast({ type: 'command', action: 'audio_mute', payload: { muted: audioState.muted } }, 'browser');
     return getAudioState();
+  });
+
+  // ═══ Media sources (DAB+ / Dispatcharr) ══════════════════════════════════
+  //
+  // Backs the DAB+ and Dispatcharr editor widgets. Playback updates the shared
+  // audio state (above) and is dispatched to connected display clients, matching
+  // the /api/audio/* routes.
+
+  const stepMedia = async (source: string, direction: 1 | -1, deviceId?: string): Promise<AudioState> => {
+    if (source === 'dab') {
+      const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
+      if (!base) throw new Error('DAB+ radio is not configured');
+      const tuner = (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1';
+      const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_stream_url');
+      const stations = (await fetchDabStations(base))
+        .map((station) => ({ name: String(station.name ?? station.id ?? '').trim() }))
+        .filter((item) => item.name.length > 0);
+      const target = stepTargetIndex(stations, audioState.title, direction);
+      const title = await tuneDabStation(base, tuner, stations[target].name);
+      return applyAudioPlayback({ url: streamUrl, title, source: 'dab' }, deviceId, options.dispatchMediaToDevice);
+    }
+    if (source === 'dispatcharr') {
+      const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+      if (!base) throw new Error('Dispatcharr is not configured');
+      const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+      const channels = (await fetchDispatcharrChannels(base, apiKey || undefined))
+        .map((channel) => ({ name: String(channel.name ?? '').trim(), url: channel.url }))
+        .filter((item) => item.name.length > 0);
+      const target = stepTargetIndex(channels, audioState.title, direction);
+      const resolved = resolveDispatcharrChannel(channels, channels[target].name, channels[target].url);
+      return applyAudioPlayback(
+        { url: resolved.url, title: resolved.name, source: 'dispatcharr' },
+        deviceId,
+        options.dispatchMediaToDevice,
+      );
+    }
+    throw new Error('Unknown media source');
+  };
+
+  // GET /api/dab/stations?search=&limit= — the SDR lineup can be large, so the
+  // widget's filter and visible-item cap are applied server-side to keep the
+  // polled payload small.
+  fastify.get<{ Querystring: { search?: string; limit?: string } }>('/api/dab/stations', async (req, reply) => {
+    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
+    if (!base) {
+      return reply.code(503).send({ error: 'DAB+ radio is not configured — set the SDR radio URL in Settings → Media.' });
+    }
+    try {
+      const { items, total } = applyListQuery(await fetchDabStations(base), req.query?.search, req.query?.limit);
+      return { stations: items, total };
+    } catch (err) {
+      return reply.code(502).send({ error: `SDR radio unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // POST /api/dab/play { station, deviceId? } — deviceId targets one display
+  fastify.post<{ Body: { station?: string; deviceId?: string } }>('/api/dab/play', {
+    preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
+  }, async (req, reply) => {
+    const station = (req.body?.station ?? '').trim();
+    if (!station) return reply.code(400).send({ error: 'station is required' });
+    const deviceId = (req.body?.deviceId ?? '').trim();
+    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
+    if (!base) return reply.code(503).send({ error: 'DAB+ radio is not configured' });
+    const tuner = (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1';
+    const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_stream_url');
+    try {
+      const title = await tuneDabStation(base, tuner, station);
+      const state = applyAudioPlayback({ url: streamUrl, title, source: 'dab' }, deviceId, options.dispatchMediaToDevice);
+      return { success: true, station: title, url: streamUrl, state, ...(deviceId ? { deviceId } : {}) };
+    } catch (err) {
+      return reply.code(502).send({ error: `DAB+ tune failed: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/dispatcharr/channels?search=&limit= — the lineup can hold tens of
+  // thousands of channels (megabytes of JSON), so the widget's filter and
+  // visible-item cap are applied server-side.
+  fastify.get<{ Querystring: { search?: string; limit?: string } }>('/api/dispatcharr/channels', async (req, reply) => {
+    const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+    if (!base) {
+      return reply.code(503).send({ error: 'Dispatcharr is not configured — set the URL in Settings → Media.' });
+    }
+    const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+    try {
+      const { items, total } = applyListQuery(
+        await fetchDispatcharrChannels(base, apiKey || undefined),
+        req.query?.search,
+        req.query?.limit,
+      );
+      return { channels: items, total };
+    } catch (err) {
+      return reply.code(502).send({ error: `Dispatcharr unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // POST /api/dispatcharr/play { channel, url?, deviceId? } — deviceId targets one display
+  fastify.post<{ Body: { channel?: string; url?: string; deviceId?: string } }>('/api/dispatcharr/play', {
+    preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
+  }, async (req, reply) => {
+    const name = (req.body?.channel ?? '').trim();
+    const url = (req.body?.url ?? '').trim();
+    const deviceId = (req.body?.deviceId ?? '').trim();
+    if (!name && !url) return reply.code(400).send({ error: 'channel or url is required' });
+    try {
+      let resolved = { name, url };
+      if (!url) {
+        const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+        if (!base) return reply.code(503).send({ error: 'Dispatcharr is not configured' });
+        const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+        const channels = await fetchDispatcharrChannels(base, apiKey || undefined);
+        resolved = resolveDispatcharrChannel(channels, name, url);
+      }
+      const state = applyAudioPlayback(
+        { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr' },
+        deviceId,
+        options.dispatchMediaToDevice,
+      );
+      return { success: true, channel: resolved.name, url: resolved.url, state, ...(deviceId ? { deviceId } : {}) };
+    } catch (err) {
+      return reply.code(502).send({ error: `Dispatcharr play failed: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/media/state — device-wide audio state (widget polling)
+  fastify.get('/api/media/state', async () => ({ audio: getAudioState() }));
+
+  // POST /api/media/control { action, source?, deviceId?, level?, muted? }
+  fastify.post<{ Body: { action?: string; source?: string; deviceId?: string; level?: number; muted?: boolean } }>(
+    '/api/media/control',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      const action = (req.body?.action ?? '').trim();
+      const source = (req.body?.source ?? audioState.source ?? '').trim();
+      const deviceId = (req.body?.deviceId ?? '').trim();
+      // Transport commands on a specific device go to that device's local server
+      // (the same one the voice path uses), so only that display reacts.
+      const deviceControl = deviceId && options.controlMediaOnDevice ? options.controlMediaOnDevice : undefined;
+      try {
+        switch (action) {
+          case 'pause': {
+            if (audioState.state !== 'playing') return reply.code(409).send({ error: 'Not playing' });
+            audioState.state = 'paused';
+            if (deviceControl) {
+              void deviceControl(deviceId, 'pause').catch((err) => console.warn('[core][media] device pause failed:', err instanceof Error ? err.message : err));
+            } else {
+              broadcast({ type: 'command', action: 'audio_pause', payload: {} }, 'browser');
+            }
+            return getAudioState();
+          }
+          case 'resume': {
+            if (audioState.state !== 'paused') return reply.code(409).send({ error: 'Not paused' });
+            audioState.state = 'playing';
+            if (deviceControl) {
+              void deviceControl(deviceId, 'resume').catch((err) => console.warn('[core][media] device resume failed:', err instanceof Error ? err.message : err));
+            } else {
+              broadcast({ type: 'command', action: 'audio_resume', payload: {} }, 'browser');
+            }
+            return getAudioState();
+          }
+          case 'stop': {
+            audioState = { ...audioState, state: 'idle', url: '', title: '', source: undefined };
+            if (deviceControl) {
+              void deviceControl(deviceId, 'stop').catch((err) => console.warn('[core][media] device stop failed:', err instanceof Error ? err.message : err));
+            } else {
+              broadcast({ type: 'command', action: 'audio_stop', payload: {} }, 'browser');
+            }
+            return getAudioState();
+          }
+          case 'volume': {
+            const level = req.body?.level;
+            if (level === undefined || level === null) return reply.code(400).send({ error: 'level is required' });
+            const clamped = clampVolume(Number(level));
+            audioState.volume = clamped;
+            audioState.muted = false;
+            if (deviceControl) {
+              void deviceControl(deviceId, 'volume', clamped).catch((err) => console.warn('[core][media] device volume failed:', err instanceof Error ? err.message : err));
+            } else {
+              broadcast({ type: 'command', action: 'audio_volume', payload: { level: clamped } }, 'browser');
+            }
+            return getAudioState();
+          }
+          case 'mute': {
+            const muted = req.body?.muted;
+            if (muted === undefined) return reply.code(400).send({ error: 'muted is required' });
+            audioState.muted = !!muted;
+            if (deviceControl) {
+              void deviceControl(deviceId, 'mute', !!muted).catch((err) => console.warn('[core][media] device mute failed:', err instanceof Error ? err.message : err));
+            } else {
+              broadcast({ type: 'command', action: 'audio_mute', payload: { muted: audioState.muted } }, 'browser');
+            }
+            return getAudioState();
+          }
+          case 'next':
+          case 'previous':
+            return await stepMedia(source, action === 'next' ? 1 : -1, deviceId || undefined);
+          default:
+            return reply.code(400).send({ error: 'action must be one of pause, resume, stop, volume, mute, next, previous' });
+        }
+      } catch (err) {
+        return reply.code(502).send({ error: errorText(err) });
+      }
+    },
+  );
+
+  // ═══ Music Assistant ═══════════════════════════════════════════════════════
+  //
+  // Backs the Music Assistant widget family. MA exposes a plain HTTP command
+  // API (POST /api with a Bearer token), so Core talks to it directly — no HA
+  // dependency. Widgets target MA's own players, turning a Canvas display into
+  // a wall-panel remote for the whole-home music system.
+
+  // GET /api/ma/players — list Music Assistant players
+  fastify.get('/api/ma/players', async (_req, reply) => {
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return reply.code(503).send({ error: errorText(err) });
+    }
+    if (!conn) {
+      return reply.code(503).send({ error: 'Music Assistant is not configured — set the server URL in Settings → Integrations.' });
+    }
+    try {
+      return { players: await fetchMaPlayers(conn) };
+    } catch (err) {
+      return reply.code(502).send({ error: `Music Assistant unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/ma/state?playerId= — a single player's state (widget polling)
+  fastify.get<{ Querystring: { playerId?: string } }>('/api/ma/state', async (req, reply) => {
+    const playerId = (req.query?.playerId ?? '').trim();
+    if (!playerId) return reply.code(400).send({ error: 'playerId is required' });
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return reply.code(503).send({ error: errorText(err) });
+    }
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try {
+      const player = await fetchMaPlayer(conn, playerId);
+      if (!player) return reply.code(404).send({ error: `Player "${playerId}" not found` });
+      return { player };
+    } catch (err) {
+      return reply.code(502).send({ error: `Music Assistant unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/ma/radios?search= — radio stations (includes the DAB+ SDR provider)
+  fastify.get<{ Querystring: { search?: string } }>('/api/ma/radios', async (req, reply) => {
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return reply.code(503).send({ error: errorText(err) });
+    }
+    if (!conn) {
+      return reply.code(503).send({ error: 'Music Assistant is not configured — set the server URL in Settings → Integrations.' });
+    }
+    try {
+      return { radios: await fetchMaRadios(conn, req.query?.search ?? '') };
+    } catch (err) {
+      return reply.code(502).send({ error: `Music Assistant unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/ma/playlists — playlists
+  fastify.get('/api/ma/playlists', async (_req, reply) => {
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return reply.code(503).send({ error: errorText(err) });
+    }
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try {
+      return { playlists: await fetchMaPlaylists(conn) };
+    } catch (err) {
+      return reply.code(502).send({ error: `Music Assistant unavailable: ${errorText(err)}` });
+    }
+  });
+
+  // GET /api/ma/search?q=&limit= — search tracks/radios/playlists
+  fastify.get<{ Querystring: { q?: string; limit?: string } }>('/api/ma/search', async (req, reply) => {
+    const query = (req.query?.q ?? '').trim();
+    if (!query) return reply.code(400).send({ error: 'q is required' });
+    const limit = Math.min(50, Math.max(1, Number.parseInt(req.query?.limit ?? '20', 10) || 20));
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return reply.code(503).send({ error: errorText(err) });
+    }
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try {
+      return await maSearch(conn, query, limit);
+    } catch (err) {
+      return reply.code(502).send({ error: `Music Assistant search failed: ${errorText(err)}` });
+    }
+  });
+
+  // POST /api/ma/play { uri, playerId, option? } — play media on an MA player
+  fastify.post<{ Body: { uri?: string; playerId?: string; option?: string } }>(
+    '/api/ma/play',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      const uri = (req.body?.uri ?? '').trim();
+      const playerId = (req.body?.playerId ?? '').trim();
+      if (!uri) return reply.code(400).send({ error: 'uri is required' });
+      if (!playerId) return reply.code(400).send({ error: 'playerId is required' });
+      const option = ['replace', 'play', 'queue', 'add'].includes(req.body?.option ?? '')
+        ? String(req.body?.option)
+        : 'replace';
+      let conn: MaConnection | null;
+      try {
+        conn = await maConnection(pool, options.config);
+      } catch (err) {
+        return reply.code(503).send({ error: errorText(err) });
+      }
+      if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+      try {
+        await maPlayMedia(conn, playerId, uri, option);
+        return { success: true, uri, playerId, option };
+      } catch (err) {
+        return reply.code(502).send({ error: `Music Assistant play failed: ${errorText(err)}` });
+      }
+    },
+  );
+
+  // POST /api/ma/control { action, playerId, level?, muted? } — transport control
+  fastify.post<{ Body: { action?: string; playerId?: string; level?: number; muted?: boolean } }>(
+    '/api/ma/control',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      const action = (req.body?.action ?? '').trim();
+      const playerId = (req.body?.playerId ?? '').trim();
+      const allowed = ['play', 'pause', 'play_pause', 'stop', 'next', 'previous', 'volume', 'mute'];
+      if (!allowed.includes(action)) {
+        return reply.code(400).send({ error: `action must be one of ${allowed.join(', ')}` });
+      }
+      if (!playerId) return reply.code(400).send({ error: 'playerId is required' });
+      let conn: MaConnection | null;
+      try {
+        conn = await maConnection(pool, options.config);
+      } catch (err) {
+        return reply.code(503).send({ error: errorText(err) });
+      }
+      if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+      try {
+        const value = action === 'volume' ? req.body?.level : action === 'mute' ? req.body?.muted : undefined;
+        await maControl(conn, playerId, action as MaControlAction, value);
+        return { success: true, action, playerId };
+      } catch (err) {
+        return reply.code(502).send({ error: `Music Assistant control failed: ${errorText(err)}` });
+      }
+    },
+  );
+
+  // ═══ Media source connection tests ═══════════════════════════════════════
+  //
+  // Back the "Test connection" buttons in Settings → Media. Each returns a
+  // small { ok, detail?, error? } payload instead of throwing, so the UI can
+  // show a friendly result without treating a failed probe as an HTTP error.
+
+  // GET /api/dab/test — reach the SDR radio and count DAB+ stations
+  fastify.get('/api/dab/test', async () => {
+    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
+    if (!base) return { ok: false, error: 'SDR radio URL is not configured.' };
+    try {
+      const stations = await fetchDabStations(base);
+      return {
+        ok: true,
+        detail: `Reached the SDR radio — ${stations.length} DAB+ station${stations.length === 1 ? '' : 's'}.`,
+      };
+    } catch (err) {
+      return { ok: false, error: `SDR radio unavailable: ${errorText(err)}` };
+    }
+  });
+
+  // GET /api/dispatcharr/test — reach Dispatcharr and count channels
+  fastify.get('/api/dispatcharr/test', async () => {
+    const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+    if (!base) return { ok: false, error: 'Dispatcharr URL is not configured.' };
+    const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+    try {
+      const channels = await fetchDispatcharrChannels(base, apiKey || undefined);
+      return {
+        ok: true,
+        detail: `Reached Dispatcharr — ${channels.length} channel${channels.length === 1 ? '' : 's'}.`,
+      };
+    } catch (err) {
+      return { ok: false, error: `Dispatcharr unavailable: ${errorText(err)}` };
+    }
+  });
+
+  // GET /api/ma/test — log in to Music Assistant and count players
+  fastify.get('/api/ma/test', async () => {
+    let conn: MaConnection | null;
+    try {
+      conn = await maConnection(pool, options.config);
+    } catch (err) {
+      return { ok: false, error: errorText(err) };
+    }
+    if (!conn) return { ok: false, error: 'Music Assistant URL is not configured.' };
+    try {
+      const players = await fetchMaPlayers(conn);
+      return {
+        ok: true,
+        detail: `Connected to Music Assistant — ${players.length} player${players.length === 1 ? '' : 's'}.`,
+      };
+    } catch (err) {
+      return { ok: false, error: `Music Assistant unavailable: ${errorText(err)}` };
+    }
   });
 
   // ═══ Commands ════════════════════════════════════════════════════════════

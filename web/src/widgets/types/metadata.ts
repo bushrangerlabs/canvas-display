@@ -17,7 +17,8 @@ export type FieldType =
   | 'font'
   | 'file'
   | 'code-editor'
-  | 'entity-list';
+  | 'entity-list'
+  | 'checklist';
 
 export interface FieldOption {
   value: string | number;
@@ -38,6 +39,15 @@ export interface FieldMetadata {
 
   // Options for select type
   options?: FieldOption[];
+
+  // Dynamic options for 'checklist' (and 'select') — fetched from an endpoint.
+  // The response is expected to be an array at `optionsSourceKey`, or the whole
+  // body if `optionsSourceKey` is omitted. Each item is mapped via
+  // `optionValueKey` (default 'value') and `optionLabelKey` (default 'label').
+  optionsSource?: string;
+  optionsSourceKey?: string;
+  optionValueKey?: string;
+  optionLabelKey?: string;
 
   // Binding support
   binding?: boolean;

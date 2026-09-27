@@ -216,9 +216,12 @@ async function waitForPanelLoads(labels: string[], timeoutMs = 75_000): Promise<
   });
 }
 
-function resolvePanelUrl(panel: PagePanel, config: AppConfig, _deviceId: string): string {
+function resolvePanelUrl(panel: PagePanel, config: AppConfig, deviceId: string): string {
   if (panel.content_type === 'scene' && panel.scene_id) {
-    return `${config.serverUrl.replace(/\/$/, '')}/display/scenes/${encodeURIComponent(panel.scene_id)}`;
+    const base = `${config.serverUrl.replace(/\/$/, '')}/display/scenes/${encodeURIComponent(panel.scene_id)}`;
+    // Tell the scene which display it is running on so media widgets can
+    // target this device for playback instead of broadcasting to all displays.
+    return deviceId ? `${base}?deviceId=${encodeURIComponent(deviceId)}` : base;
   }
   if (panel.url) return panel.url;
   // view_id is a canvas-ui-hacs view slug — load via the kiosk panel

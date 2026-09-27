@@ -55,6 +55,64 @@ There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometr
 
 ## Work completed in this session
 
+### Media integration fixes: MA provider radios, MQTT source, list pagination (2026-09-28)
+
+Objective: make DAB+, Dispatcharr and Music Assistant work end-to-end with the widgets, voice and MQTT, and verify the new Settings → Media configuration the operator entered.
+
+Live verification against the deployed Core (`https://192.168.1.108:3100`, TLS proxy → `canvas-core-canvas-core-1`):
+
+- `GET /api/dab/test` → 117 DAB+ stations; `GET /api/dispatcharr/test` → 55,382 channels; `GET /api/ma/test` → 12 players. Settings → Media tab is present with per-source cards and working "Test connection" buttons.
+- Before this session `GET /api/ma/radios` returned only 2 stations (the ones in the MA library). The operator's `sdrradio` "SDR Radio (DAB+)" provider exposes 117 radios via `music/browse` but only 2 were in the library.
+
+Fixes (all deployed):
+
+1. **Music Assistant provider radios** (`core/src/music-assistant.ts`). `fetchMaRadios` now merges the library radios with every provider's radios browsed from `music/browse` (deduped by name, 15 s cache). Added `browseMa`, `clearMaRadioCache` (called from `settingsChanged` in `core/src/index.ts`). `maSearch` also merges provider radios, so the MA Search widget finds DAB+ stations that MA's own search does not index. Live result: `/api/ma/radios` 2 → 92; `?q=abc` search returns 9 provider radios.
+2. **MQTT media control** (`core/src/mqtt-navigation.ts`, `core/src/index.ts`). The HA `media_player/cmd` handler now accepts `previous` and resolves the device's actual source instead of hard-coding `youtube`; `DeviceMediaState` gained a `source` field, the published `source` attribute now carries the real source (previously it was the title), and every media state update in `index.ts` populates `source`.
+3. **Large-list pagination** (`core/src/legacy-routes.ts`, `web/src/widgets/widgets/media/mediaSource.ts`, `MediaSourceList.tsx`). `/api/dab/stations` and `/api/dispatcharr/channels` accept `search`/`limit` (new `applyListQuery` helper); the picker widgets pass their filter and `maxItems`. The Dispatcharr poll payload dropped from **9.6 MB to ~34 KB** by default and <1 KB when filtered.
+
+Validation: `core` `npm run type-check` clean; `npx tsx --test test/ma-routes.test.ts test/media-routes.test.ts` 47/47 pass; full `npm test` 531 pass / 4 fail (the pre-existing ASR/intelligence/intent-router failures, unrelated). `web` `npx tsc -b` clean and `npm run build` OK. Deployment: `core/dist` + `web/dist` copied into the running container (`/app/dist`, `/app/public`) and restarted; endpoints re-verified live.
+
+Resolved after this note:
+
+- **Transport/volume are now device-targeted.** Every DAB+/Dispatcharr transport and volume command (play/pause, stop, mute, volume, next/previous) goes through `/api/media/control` with the page's `deviceId` (injected by the kiosk on the scene URL), so a wall panel's controls no longer move every other display. Without a `deviceId` the route falls back to a broadcast, matching the old `/api/audio/*` behaviour. See `useMediaAudio` in `web/src/widgets/widgets/media/mediaSource.ts`.
+- **Dedicated search widgets added.** `DAB+ Search` and `Dispatcharr Search` (`MediaSearch.tsx` wrappers) use the server-side `search`/`limit` filtering, so the Dispatcharr list stays small even when searching.
+- The 4 pre-existing test failures remain and are unrelated to media work.
+
+### Granular DAB+ / Dispatcharr media widgets + next/previous (2026-09-28)
+
+The monolithic `DabRadioWidget` and `DispatcharrWidget` were kept, and a family of single-purpose widgets was added so layouts can be composed freely. Six widgets per source (twelve total), registered in `web/src/widgets/registry/widgetRegistry.ts` and `web/src/widgets/WidgetRenderer.tsx`:
+
+- `DAB+ Stations` / `Dispatcharr Channels` — scrollable picker list (optional header, filter, max items, optional next/previous).
+- `DAB+ Now Playing` / `Dispatcharr Now Playing` — title, state, artwork and source label.
+- `DAB+ Controls` / `Dispatcharr Controls` — transport buttons (play/pause, stop, mute, status text) with optional next/previous.
+- `DAB+ Volume Slider` / `Dispatcharr Volume Slider` — horizontal/vertical slider.
+- `DAB+ Volume Dial` / `Dispatcharr Volume Dial` — rotary dial.
+- `DAB+ Presets` / `Dispatcharr Presets` — grid of user-ticked presets.
+
+Shared logic lives in `web/src/widgets/widgets/media/` (`mediaSource.ts` polling/control hooks, `mediaMetadata.ts` metadata factories, and the shared `Media*` React components). A new `checklist` inspector field type was added (`web/src/widgets/types/metadata.ts`, rendered in `web/src/pages/EditorPage.tsx`) to drive the Presets widgets' multi-select options from the live station/channel lists.
+
+Next/previous is now resolved **server-side** for both sources: `stepRadio()` in `server/src/routes/radio.ts` walks the station/channel list and tunes the adjacent item, and `/api/media/control` (`server/src/routes/media.ts`) accepts `next`/`previous` for the `dab` and `dispatcharr` sources (falling back to the source that started the current playback). The MQTT media handler (`server/src/mqtt/index.ts`) gained the matching `previous` action. A short-TTL cache (10 s) was added to `fetchDabStations`/`fetchDispatcharrChannels` so polling and stepping do not re-fetch the full lineup each time.
+
+The `DAB+ Controls` / `Dispatcharr Controls` widgets call the server-side `next`/`previous` API via the new `step()` helper on `useMediaAudio` (`mediaSource.ts`), so they no longer poll the item list just to resolve a target. The picker widgets keep their in-list navigation since they already hold the list.
+
+Validation: web and server type-checks and the existing test suites pass.
+
+### Whisper ASR model selection + stronger model on GPU (2026-09-28)
+
+The Core settings UI (Settings → AI providers) exposes a per-provider model/voice selector for ASR (Whisper) and TTS (Piper) providers: it lists what the server reports, lets the operator set the active model, and downloads new Whisper models on demand (`GET/POST /api/admin/ai-providers/:id/models`, `PUT /api/admin/ai-providers/:id/model`). A curated "Recommended" row was added to the ASR panel (base / small / medium / distil-large-v3 / large-v3) so a stronger model can be picked in one click.
+
+Root cause of poor recognition on the live Core (`192.168.1.108`): the `local-asr` provider's active model had been set to `speaches-ai/Kokoro-82M-v1.0-ONNX-fp16` — a text-to-speech model, not a Whisper ASR model — so transcription requests were sent a TTS model id.
+
+Fixes applied on the Core host:
+
+- Downloaded `Systran/faster-whisper-large-v3`, `Systran/faster-distil-whisper-large-v3` and `Systran/faster-whisper-medium.en` into the `localcut-whisper` speaches container.
+- Switched `localcut-whisper` from the CPU-only image to `ghcr.io/speaches-ai/speaches:latest-cuda` with an NVIDIA GPU reservation (`/var/lib/casaos/apps/mystifying_tiger/docker-compose.yml`), `WHISPER__COMPUTE_TYPE=float16`, `WHISPER__INFERENCE_DEVICE=cuda`, `WHISPER__TTL=-1` (keep the model resident) and `cpu_shares` raised from 90 to 2048. A backup of the previous compose file is kept alongside it.
+- Set the `local-asr` active model to `Systran/faster-whisper-large-v3`.
+
+Verified: warm transcription of a ~4 s clip is ~0.7 s on GPU (was ~22 s on CPU with large-v3, ~1.4 s with base.en); a round-trip TTS→ASR test and a full Core `/api/edge/voice/turn` call both returned the correct transcript. `local-asr` health is `UP`. The web build with the new "Recommended" row was rebuilt and deployed to `192.168.1.108`.
+
+Note: the local dev Core on this workstation has no ASR provider rows and no Whisper service on `:10301`; it is not the instance the user's voice devices use.
+
 ### Removed hard-coded HA doorbell trigger (2026-09-27)
 
 Core contained a built-in `ha.onEntityChange` callback from release `v0.2.30` that treated doorbell-named binary sensors as a button press and directly created an alert plus TTS broadcast. The live entity `binary_sensor.doorbell_motion_3` has `device_class: motion`; ordinary motion therefore produced four false “Someone is at the door” broadcasts between 21:52 and 22:04 AEST. Durable delivery made the source visible but did not create the trigger.

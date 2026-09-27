@@ -97,12 +97,22 @@ export interface CoreConfig {
   searxngPublicUrl: string;
   /** Dispatcharr (IPTV) base URL. Its HDHomeRun lineup is used to resolve channels. */
   dispatcharrUrl: string;
+  /** Optional Dispatcharr API key (sent as an `Authorization: Api-Key …` header). */
+  dispatcharrApiKey?: string;
   /** SDR radio (DAB+/FM) REST API base URL. */
   sdrRadioUrl: string;
   /** SDR radio tuner id used for DAB+ playback. */
   sdrRadioTuner: string;
   /** Icecast stream URL for the SDR tuner (played on the edge device). */
   sdrRadioStreamUrl: string;
+  /** Music Assistant base URL (e.g. http://homeassistant.local:8095). */
+  musicAssistantUrl?: string;
+  /** Music Assistant long-lived access token. */
+  musicAssistantToken?: string;
+  /** Music Assistant username (builtin auth) — used to log in when no token is set. */
+  musicAssistantUsername?: string;
+  /** Music Assistant password (builtin auth). */
+  musicAssistantPassword?: string;
   /** Master switch: allow AI to use cloud models (off by default). */
   cloudAiEnabled: boolean;
   /** Provider id to use for cloud AI (coding/HA automations + chat last resort).
@@ -176,9 +186,14 @@ export function loadConfig(): CoreConfig {
     knowledgeDisplaySeconds: int('CANVAS_CORE_KNOWLEDGE_DISPLAY_SECONDS', 30),
     searxngPublicUrl: str('SEARXNG_PUBLIC_URL', 'http://192.168.1.108:8082'),
     dispatcharrUrl: str('DISPATCHARR_URL', 'http://theserver.localdomain:9191'),
+    dispatcharrApiKey: process.env.DISPATCHARR_API_KEY || undefined,
     sdrRadioUrl: str('SDR_RADIO_URL', 'http://192.168.1.108:8088'),
     sdrRadioTuner: str('SDR_RADIO_TUNER', 'tuner1'),
     sdrRadioStreamUrl: str('SDR_RADIO_STREAM_URL', 'http://192.168.1.108:8001/tuner1.mp3'),
+    musicAssistantUrl: process.env.MUSIC_ASSISTANT_URL || undefined,
+    musicAssistantToken: process.env.MUSIC_ASSISTANT_TOKEN || undefined,
+    musicAssistantUsername: process.env.MUSIC_ASSISTANT_USERNAME || undefined,
+    musicAssistantPassword: process.env.MUSIC_ASSISTANT_PASSWORD || undefined,
     cloudAiEnabled: process.env.CANVAS_CORE_CLOUD_AI_ENABLED === 'true',
     cloudAiProviderId: str('CANVAS_CORE_CLOUD_AI_PROVIDER', ''),
     publicUrl: str('CANVAS_CORE_PUBLIC_URL', 'https://192.168.1.108:3100'),

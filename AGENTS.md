@@ -121,6 +121,13 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
   5. `ssh spetchal@192.168.1.108 'cd /home/spetchal/canvas-core/core && docker compose up -d --build canvas-core'`
   * Core listens on `3101` (control plane); Postgres is external (`casaos`/`casaos`/`canvas_core`). Query it from the host with `docker exec canvas-core-canvas-core-1 node -e "...require('pg')..."` (there is no `psql` on the host).
 
+### ASR / TTS services on the Core host
+
+* Whisper ASR runs as the CasaOS app `localcut-whisper` (`ghcr.io/speaches-ai/speaches:latest-cuda`) on `192.168.1.108:10301`; its compose file is `/var/lib/casaos/apps/mystifying_tiger/docker-compose.yml` (root-owned — read/edit with `sudo`). It is GPU-backed (NVIDIA reservation, `WHISPER__COMPUTE_TYPE=float16`, `WHISPER__INFERENCE_DEVICE=cuda`, `WHISPER__TTL=-1`). Piper TTS runs as `piper-tts` on `:10200`.
+* Core's `local-asr` provider points at `http://host.docker.internal:10301`; `local-tts` at `host.docker.internal:10200`. Select the active Whisper model in the web UI (Settings → AI providers → the provider's **Whisper models** button) or via `PUT /api/admin/ai-providers/local-asr/model`. New models download on demand with `POST /api/admin/ai-providers/local-asr/models`.
+* The active model must be an ASR model (e.g. `Systran/faster-whisper-large-v3`), never a TTS model such as `speaches-ai/Kokoro-82M-v1.0-ONNX-fp16` — pointing ASR at a TTS model silently breaks transcription.
+* Admin API calls can bypass the session/CSRF flow with `Authorization: Bearer $CANVAS_CORE_AUTOMATION_TOKEN` (read it inside the container; never print it).
+
 ### Versioning — where versions live and how to bump
 
 There is no single source of truth; each component carries its own version. `release.sh` only bumps `config.yaml` + the Linux `tauri.conf.json` and must NOT be treated as a complete bump.

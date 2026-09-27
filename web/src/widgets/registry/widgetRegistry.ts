@@ -42,6 +42,28 @@ import { CountdownTimerWidgetMetadata } from '../widgets/CountdownTimerWidget';
 import { EnergyMonitorWidgetMetadata } from '../widgets/EnergyMonitorWidget';
 import { DabRadioWidgetMetadata } from '../widgets/DabRadioWidget';
 import { DispatcharrWidgetMetadata } from '../widgets/DispatcharrWidget';
+import { DabStationsWidgetMetadata } from '../widgets/DabStationsWidget';
+import { DabNowPlayingWidgetMetadata } from '../widgets/DabNowPlayingWidget';
+import { DabControlsWidgetMetadata } from '../widgets/DabControlsWidget';
+import { DabVolumeSliderWidgetMetadata } from '../widgets/DabVolumeSliderWidget';
+import { DabVolumeDialWidgetMetadata } from '../widgets/DabVolumeDialWidget';
+import { DabPresetsWidgetMetadata } from '../widgets/DabPresetsWidget';
+import { DabSearchWidgetMetadata } from '../widgets/DabSearchWidget';
+import { DispatcharrChannelsWidgetMetadata } from '../widgets/DispatcharrChannelsWidget';
+import { DispatcharrNowPlayingWidgetMetadata } from '../widgets/DispatcharrNowPlayingWidget';
+import { DispatcharrControlsWidgetMetadata } from '../widgets/DispatcharrControlsWidget';
+import { DispatcharrVolumeSliderWidgetMetadata } from '../widgets/DispatcharrVolumeSliderWidget';
+import { DispatcharrVolumeDialWidgetMetadata } from '../widgets/DispatcharrVolumeDialWidget';
+import { DispatcharrPresetsWidgetMetadata } from '../widgets/DispatcharrPresetsWidget';
+import { DispatcharrSearchWidgetMetadata } from '../widgets/DispatcharrSearchWidget';
+import { MaPlayersWidgetMetadata } from '../widgets/MaPlayersWidget';
+import { MaNowPlayingWidgetMetadata } from '../widgets/MaNowPlayingWidget';
+import { MaControlsWidgetMetadata } from '../widgets/MaControlsWidget';
+import { MaVolumeSliderWidgetMetadata } from '../widgets/MaVolumeSliderWidget';
+import { MaVolumeDialWidgetMetadata } from '../widgets/MaVolumeDialWidget';
+import { MaRadiosWidgetMetadata } from '../widgets/MaRadiosWidget';
+import { MaPlaylistsWidgetMetadata } from '../widgets/MaPlaylistsWidget';
+import { MaSearchWidgetMetadata } from '../widgets/MaSearchWidget';
 import { BroadcastWidgetMetadata } from '../widgets/BroadcastWidget';
 
 export interface WidgetRegistryEntry {
@@ -89,6 +111,28 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   energymonitor: EnergyMonitorWidgetMetadata,
   dabradio: DabRadioWidgetMetadata,
   dispatcharr: DispatcharrWidgetMetadata,
+  dabstations: DabStationsWidgetMetadata,
+  dabnowplaying: DabNowPlayingWidgetMetadata,
+  dabcontrols: DabControlsWidgetMetadata,
+  dabvolumeslider: DabVolumeSliderWidgetMetadata,
+  dabvolumedial: DabVolumeDialWidgetMetadata,
+  dabpresets: DabPresetsWidgetMetadata,
+  dabsearch: DabSearchWidgetMetadata,
+  dispatcharrchannels: DispatcharrChannelsWidgetMetadata,
+  dispatcharrnowplaying: DispatcharrNowPlayingWidgetMetadata,
+  dispatcharrcontrols: DispatcharrControlsWidgetMetadata,
+  dispatcharrvolumeslider: DispatcharrVolumeSliderWidgetMetadata,
+  dispatcharrvolumedial: DispatcharrVolumeDialWidgetMetadata,
+  dispatcharrpresets: DispatcharrPresetsWidgetMetadata,
+  dispatcharrsearch: DispatcharrSearchWidgetMetadata,
+  maplayers: MaPlayersWidgetMetadata,
+  manowplaying: MaNowPlayingWidgetMetadata,
+  macontrols: MaControlsWidgetMetadata,
+  mavolumeslider: MaVolumeSliderWidgetMetadata,
+  mavolumedial: MaVolumeDialWidgetMetadata,
+  maradios: MaRadiosWidgetMetadata,
+  maplaylists: MaPlaylistsWidgetMetadata,
+  masearch: MaSearchWidgetMetadata,
   broadcast: BroadcastWidgetMetadata,
 };
 

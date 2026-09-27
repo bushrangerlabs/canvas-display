@@ -9,6 +9,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Pool } from 'pg';
 import { AiProviderRegistry, type ProviderType, type ProviderKind, type ProviderConfig, type TaskType, type ProviderInfo } from './providers/registry.js';
 import { buildProviderInstance } from './providers/config-loader.js';
+import type { TranscriptionProvider } from './providers/asr.js';
+import type { SpeechProvider } from './providers/tts.js';
 import type { RequireAdminOptions } from './auth.js';
 
 /** Minimal requireAdmin signature matching what auth.ts returns. */
@@ -28,6 +30,57 @@ export interface AiAssignmentRow {
 }
 
 /**
+ * Persist a provider's config (upsert) without touching the registry instance.
+ * Used for in-place changes (active model/voice) that must not break the running
+ * pipeline's instance reference.
+ */
+async function persistProviderConfig(
+  pool: Pool,
+  id: string,
+  type: ProviderType,
+  kind: ProviderKind,
+  config: ProviderConfig,
+): Promise<void> {
+  await pool.query(
+    'INSERT INTO ai_providers (id, type, kind, config) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET type = EXCLUDED.type, kind = EXCLUDED.kind, config = EXCLUDED.config',
+    [id, type, kind, JSON.stringify(config)],
+  );
+}
+
+/**
+ * Persist a provider's config (upsert) and rebuild its registry instance,
+ * preserving any task assignments that pointed at it. Used when the provider's
+ * type/kind/base URL changes, which requires a fresh instance.
+ */
+async function persistAndRebuildProvider(
+  pool: Pool,
+  registry: AiProviderRegistry,
+  id: string,
+  type: ProviderType,
+  kind: ProviderKind,
+  config: ProviderConfig,
+): Promise<void> {
+  await pool.query(
+    'INSERT INTO ai_providers (id, type, kind, config) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET type = EXCLUDED.type, kind = EXCLUDED.kind, config = EXCLUDED.config',
+    [id, type, kind, JSON.stringify(config)],
+  );
+  const priorAssignments = registry.getAssignments();
+  registry.removeProvider(id);
+  const instance = buildProviderInstance(type, kind, config);
+  registry.addProvider(id, type, kind, config, instance);
+  // removeProvider clears assignments pointing at this id — restore them.
+  for (const [task, providerId] of Object.entries(priorAssignments)) {
+    if (providerId === id) {
+      try {
+        registry.assignTask(task as TaskType, id);
+      } catch {
+        // Capability may have changed (e.g. tools no longer supported) — skip.
+      }
+    }
+  }
+}
+
+/**
  * Loads all providers from the database and registers them in the registry.
  * Also loads task assignments.
  */
@@ -37,7 +90,22 @@ export async function syncRegistryFromDb(pool: Pool, registry: AiProviderRegistr
   for (const row of provRes.rows) {
     try {
       const instance = buildProviderInstance(row.type, row.kind, row.config);
+      // A provider with this id may already exist from the env-based bootstrap
+      // (simple/advanced mode). The DB row is authoritative — it holds any
+      // runtime edits (e.g. the selected model/voice) — so replace the env one.
+      const priorAssignments = registry.getAssignments();
+      registry.removeProvider(row.id);
       registry.addProvider(row.id, row.type, row.kind, row.config, instance);
+      // removeProvider clears assignments pointing at this id — restore them.
+      for (const [task, providerId] of Object.entries(priorAssignments)) {
+        if (providerId === row.id) {
+          try {
+            registry.assignTask(task as TaskType, row.id);
+          } catch {
+            // Capability changed (e.g. tools no longer supported) — skip.
+          }
+        }
+      }
     } catch (err) {
       console.error(`[core][ai-providers] failed to build provider '${row.id}':`, err instanceof Error ? err.message : err);
     }
@@ -105,12 +173,13 @@ export function registerAiProviderRoutes(
     }
     const config: ProviderConfig = body.config ?? {};
     try {
-      registry.removeProvider(id);
-      const instance = buildProviderInstance(body.type as ProviderType, body.kind as ProviderKind, config);
-      registry.addProvider(id, body.type as ProviderType, body.kind as ProviderKind, config, instance);
-      await pool.query(
-        'UPDATE ai_providers SET type = $1, kind = $2, config = $3 WHERE id = $4',
-        [body.type, body.kind, JSON.stringify(config), id],
+      await persistAndRebuildProvider(
+        pool,
+        registry,
+        id,
+        body.type as ProviderType,
+        body.kind as ProviderKind,
+        config,
       );
       return { ok: true, id };
     } catch (err) {
@@ -150,6 +219,129 @@ export function registerAiProviderRoutes(
         [body.task, body.providerId],
       );
       return { ok: true, task: body.task, providerId: body.providerId };
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/admin/ai-providers/:id/models — list selectable models (ASR) / voices (TTS)
+  fastify.get('/api/admin/ai-providers/:id/models', {
+    preHandler: requireAdmin({ roles: ['admin', 'viewer'], csrf: false }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const info = registry.getProviderInfo(id);
+    const instance = registry.getInstance(id);
+    if (!info || !instance) {
+      return reply.code(404).send({ error: `provider '${id}' not found` });
+    }
+
+    if (info.type === 'asr') {
+      const asr = instance as TranscriptionProvider;
+      let models: string[] = [];
+      let error: string | undefined;
+      try {
+        models = (await asr.listModels?.()) ?? [];
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+      const active = typeof info.config.model === 'string' ? info.config.model : null;
+      if (active && !models.includes(active)) models = [active, ...models];
+      return {
+        kind: info.kind,
+        models: Array.from(new Set(models)).sort(),
+        active,
+        canDownload: typeof asr.downloadModel === 'function',
+        error,
+      };
+    }
+
+    if (info.type === 'tts') {
+      const tts = instance as SpeechProvider;
+      const custom = Array.isArray(info.config.customVoices)
+        ? info.config.customVoices.filter((v): v is string => typeof v === 'string')
+        : [];
+      let voices: string[] = [];
+      let error: string | undefined;
+      try {
+        voices = (await tts.listVoices?.()) ?? [];
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+      const merged = Array.from(new Set([...voices, ...custom]));
+      const active = typeof info.config.voice === 'string' ? info.config.voice : null;
+      if (active && !merged.includes(active)) merged.push(active);
+      return { kind: info.kind, models: merged.sort(), active, canDownload: false, error };
+    }
+
+    return reply.code(400).send({ error: `provider '${id}' is type '${info.type}', not asr/tts` });
+  });
+
+  // POST /api/admin/ai-providers/:id/models — add a model (ASR download) / voice (TTS)
+  fastify.post('/api/admin/ai-providers/:id/models', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { model?: string } | undefined;
+    const model = (body?.model ?? '').trim();
+    if (!model) return reply.code(400).send({ error: 'model is required' });
+    const info = registry.getProviderInfo(id);
+    const instance = registry.getInstance(id);
+    if (!info || !instance) {
+      return reply.code(404).send({ error: `provider '${id}' not found` });
+    }
+
+    try {
+      if (info.type === 'asr') {
+        const asr = instance as TranscriptionProvider;
+        if (!asr.downloadModel) {
+          return reply.code(400).send({ error: `provider '${id}' does not support model downloads` });
+        }
+        await asr.downloadModel(model);
+        return { ok: true, model, downloaded: true };
+      }
+      if (info.type === 'tts') {
+        // Piper voices are installed in the container; "adding" one records a
+        // custom voice name so it appears in the selector.
+        const custom = Array.isArray(info.config.customVoices)
+          ? info.config.customVoices.filter((v): v is string => typeof v === 'string')
+          : [];
+        if (!custom.includes(model)) custom.push(model);
+        const config: ProviderConfig = { ...info.config, customVoices: custom };
+        registry.updateProviderConfig(id, config);
+        await persistProviderConfig(pool, id, info.type, info.kind, config);
+        return { ok: true, model, downloaded: false };
+      }
+      return reply.code(400).send({ error: `provider '${id}' is type '${info.type}', not asr/tts` });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // PUT /api/admin/ai-providers/:id/model — set the active model (ASR) / voice (TTS)
+  fastify.put('/api/admin/ai-providers/:id/model', {
+    preHandler: requireAdmin({ roles: ['admin'], csrf: true }),
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { model?: string } | undefined;
+    const model = (body?.model ?? '').trim();
+    const info = registry.getProviderInfo(id);
+    if (!info) return reply.code(404).send({ error: `provider '${id}' not found` });
+    if (info.type !== 'asr' && info.type !== 'tts') {
+      return reply.code(400).send({ error: `provider '${id}' is type '${info.type}', not asr/tts` });
+    }
+    const key = info.type === 'asr' ? 'model' : 'voice';
+    const config: ProviderConfig = { ...info.config };
+    if (model) config[key] = model;
+    else delete config[key];
+    try {
+      // Apply to the live instance so the running pipeline picks it up immediately,
+      // then persist so the choice survives a restart.
+      const instance = registry.getInstance(id);
+      if (info.type === 'asr') (instance as TranscriptionProvider | undefined)?.setModel?.(model || undefined);
+      else (instance as SpeechProvider | undefined)?.setVoice?.(model || undefined);
+      registry.updateProviderConfig(id, config);
+      await persistProviderConfig(pool, id, info.type, info.kind, config);
+      return { ok: true, model: model || null };
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }

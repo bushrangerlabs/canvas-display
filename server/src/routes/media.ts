@@ -28,8 +28,9 @@ import {
   YouTubeApiError,
   type YouTubeSafeSearch,
 } from '../services/youtube';
+import { stepRadio } from './radio';
 
-type MediaSourceType = 'music_assistant' | 'radio_browser' | 'direct_audio' | 'youtube';
+type MediaSourceType = 'music_assistant' | 'radio_browser' | 'direct_audio' | 'youtube' | 'dab' | 'dispatcharr';
 
 type MediaAction = 'play' | 'pause' | 'resume' | 'stop' | 'next' | 'previous' | 'volume' | 'mute';
 
@@ -2005,6 +2006,26 @@ export async function mediaRoutes(app: FastifyInstance) {
       if (action === 'pause') return { success: true, source, action, state: await pauseAudio() };
       if (action === 'resume') return { success: true, source, action, state: await resumeAudio() };
       if (action === 'stop') return { success: true, source, action, state: await stopAudio() };
+      if (action === 'next' || action === 'previous') {
+        // DAB+ / Dispatcharr playback is a direct stream, so next/previous is
+        // resolved server-side from the source's station/channel list. The
+        // source is taken from the request, falling back to the source that
+        // started the current playback.
+        const activeSource = getAudioState().source;
+        const radioSource =
+          source === 'dab' || source === 'dispatcharr'
+            ? source
+            : activeSource === 'dab' || activeSource === 'dispatcharr'
+              ? activeSource
+              : null;
+        if (!radioSource) {
+          return reply.code(409).send({
+            error: 'next/previous is only supported for DAB+ and Dispatcharr playback',
+          });
+        }
+        const state = await stepRadio(radioSource, action === 'next' ? 1 : -1);
+        return { success: true, source: radioSource, action, state };
+      }
       if (action === 'volume') {
         if (body.level === undefined || body.level === null) {
           return reply.code(400).send({ error: 'level is required for volume action' });

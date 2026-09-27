@@ -393,6 +393,15 @@ export interface AudioState {
   muted: boolean;
 }
 
+/** Result of a media-source connectivity probe (Settings → Media). */
+export interface MediaConnectionTest {
+  ok: boolean;
+  /** Human-readable success summary (e.g. "Reached Dispatcharr — 412 channels."). */
+  detail?: string;
+  /** Failure reason when `ok` is false. */
+  error?: string;
+}
+
 export type AiProviderType = 'llm' | 'asr' | 'tts';
 export type AiProviderKind =
   | 'openai' | 'openrouter' | 'anthropic' | 'gemini' | 'groq' | 'azure'
@@ -420,6 +429,17 @@ export interface AiTaskAssignment {
 export interface AiProvidersResponse {
   providers: AiProviderInfo[];
   assignments: Record<string, string>;
+}
+
+/** Selectable models (ASR) / voices (TTS) for a single provider. */
+export interface AiProviderModelsResponse {
+  kind: AiProviderKind;
+  models: string[];
+  active: string | null;
+  /** True when the provider can download/install a new model on demand. */
+  canDownload: boolean;
+  /** Set when the provider was reachable but listing failed. */
+  error?: string;
 }
 
 export interface McpServerInfo {
@@ -717,6 +737,9 @@ export const coreApi = {
   disconnectMqtt: () => api.post<{ ok: boolean }>('/api/settings/mqtt/disconnect'),
   coreBridgeStatus: () => api.get<{ url: string; tokenSet: boolean; source: string }>('/api/settings/core-bridge'),
   testCoreBridge: () => api.post<{ ok: boolean; status?: unknown; error?: string }>('/api/settings/core-bridge/test'),
+  testDabConnection: () => api.get<MediaConnectionTest>('/api/dab/test'),
+  testDispatcharrConnection: () => api.get<MediaConnectionTest>('/api/dispatcharr/test'),
+  testMusicAssistantConnection: () => api.get<MediaConnectionTest>('/api/ma/test'),
   restartVoice: () => api.post<{ ok: boolean; mode: string; status: string }>('/api/settings/voice/restart'),
   audioState: () => api.get<AudioState>('/api/audio/state'),
 
@@ -732,6 +755,14 @@ export const coreApi = {
     api.put<{ ok: boolean; id: string }>(`/api/admin/ai-providers/${id}`, { type, kind, config }),
   deleteAiProvider: (id: string) =>
     api.delete<{ ok: boolean }>('/api/admin/ai-providers/' + encodeURIComponent(id)),
+  aiProviderModels: (id: string) =>
+    api.get<AiProviderModelsResponse>(`/api/admin/ai-providers/${encodeURIComponent(id)}/models`),
+  addAiProviderModel: (id: string, model: string) =>
+    api.post<{ ok: boolean; model: string; downloaded: boolean }>(
+      `/api/admin/ai-providers/${encodeURIComponent(id)}/models`, { model }),
+  setAiProviderModel: (id: string, model: string) =>
+    api.put<{ ok: boolean; model: string | null }>(
+      `/api/admin/ai-providers/${encodeURIComponent(id)}/model`, { model }),
 
   voiceCommandTemplates: () => api.get<{ templates: VoiceCommandTemplate[]; index: Array<{ domain: string; commands: number; phrases: number; ambiguous: number }> }>('/api/admin/voice-command-templates'),
   saveVoiceCommandTemplate: (id: string, template: Omit<VoiceCommandTemplate, 'id'>) =>

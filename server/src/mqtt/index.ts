@@ -484,10 +484,10 @@ function handleCommandMessage(topic: string, payload: Buffer): void {
 
     case 'media': {
       // canvas_display/<device>/cmd/media
-      // { action: 'pause' | 'resume' | 'stop' | 'next', source?: 'youtube' }
+      // { action: 'pause' | 'resume' | 'stop' | 'next' | 'previous', source?: 'youtube' | 'dab' | 'dispatcharr' }
       const mediaAction = String(data.action ?? '');
-      if (!['pause', 'resume', 'stop', 'next'].includes(mediaAction)) {
-        console.warn('[mqtt] media cmd: action must be pause, resume, stop, or next');
+      if (!['pause', 'resume', 'stop', 'next', 'previous'].includes(mediaAction)) {
+        console.warn('[mqtt] media cmd: action must be pause, resume, stop, next, or previous');
         return;
       }
       import('http').then(({ default: http }) => {

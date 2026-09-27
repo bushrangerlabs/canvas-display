@@ -202,6 +202,54 @@ test('AiProviderRegistry: constructor accepts initial providers and assignments'
   assert.equal(registry.getProvider('intent_routing')?.id, 'local-llm');
 });
 
+test('AiProviderRegistry: getProviderInfo / getInstance return a single provider', () => {
+  const registry = new AiProviderRegistry();
+  const asr = new WhisperTranscription({
+    baseUrl: 'http://x',
+    model: 'small.en',
+    fetchImpl: mockFetch(() => jsonResponse({ text: 'x' })),
+  });
+  registry.addProvider('local-asr', 'asr', 'whisper', { model: 'small.en' }, asr);
+  registry.assignTask('asr', 'local-asr');
+
+  const info = registry.getProviderInfo('local-asr');
+  assert.equal(info?.id, 'local-asr');
+  assert.equal(info?.type, 'asr');
+  assert.equal(info?.kind, 'whisper');
+  assert.equal(info?.config.model, 'small.en');
+  assert.deepEqual(info?.assignedTasks, ['asr']);
+  assert.equal(registry.getInstance('local-asr'), asr);
+
+  assert.equal(registry.getProviderInfo('nope'), undefined);
+  assert.equal(registry.getInstance('nope'), undefined);
+});
+
+test('AiProviderRegistry: getProviderInfo reflects updated health', async () => {
+  const registry = new AiProviderRegistry();
+  registry.addProvider('ok-llm', 'llm', 'llama-cpp', {}, new OpenAiCompatibleLlm({
+    baseUrl: 'http://ok/v1',
+    fetchImpl: mockFetch(() => jsonResponse({ object: 'list' })),
+  }));
+  await registry.healthCheckAll();
+  assert.equal(registry.getProviderInfo('ok-llm')?.healthy, true);
+});
+
+test('AiProviderRegistry: updateProviderConfig updates config in place', () => {
+  const registry = new AiProviderRegistry();
+  const asr = new WhisperTranscription({
+    baseUrl: 'http://x',
+    model: 'small.en',
+    fetchImpl: mockFetch(() => jsonResponse({ text: 'x' })),
+  });
+  registry.addProvider('local-asr', 'asr', 'whisper', { model: 'small.en' }, asr);
+
+  assert.equal(registry.updateProviderConfig('local-asr', { model: 'base.en' }), true);
+  assert.equal(registry.getProviderInfo('local-asr')?.config.model, 'base.en');
+  // The instance reference is unchanged (the running pipeline keeps using it).
+  assert.equal(registry.getInstance('local-asr'), asr);
+  assert.equal(registry.updateProviderConfig('nope', {}), false);
+});
+
 test('AiProviderRegistry: taskTypeToProviderType maps correctly', () => {
   const m = AiProviderRegistry.taskTypeToProviderType;
   assert.equal(m('intent_routing'), 'llm');

@@ -23,11 +23,12 @@ import EditIcon from '@mui/icons-material/Edit';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import TuneIcon from '@mui/icons-material/Tune';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate, type BroadcastOutput, type BroadcastEventSummary } from '../api/client';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate, type BroadcastOutput, type BroadcastEventSummary, type MediaConnectionTest } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
@@ -44,6 +45,30 @@ const CORE_PROVIDER_FIELDS: { key: string; label: string; placeholder: string; e
   { key: 'whisper_url', label: 'Whisper (ASR) URL', placeholder: 'http://asr:8000', env: 'CANVAS_CORE_WHISPER_URL' },
   { key: 'piper_url', label: 'Piper (TTS) URL', placeholder: 'http://tts:5000', env: 'CANVAS_CORE_PIPER_URL' },
   { key: 'mcp_url', label: 'MCP server URL', placeholder: 'http://mcp:9000', env: 'CANVAS_CORE_MCP_URL' },
+];
+
+// Media-source endpoints (DAB+/SDR radio, Dispatcharr IPTV, Music Assistant).
+// Empty values fall back to the Core container's environment variables. Each
+// source gets its own card in the Media tab so it can be configured and tested
+// independently.
+interface MediaField { key: string; label: string; placeholder: string; secret?: boolean }
+
+const DAB_FIELDS: MediaField[] = [
+  { key: 'sdr_radio_url', label: 'SDR radio URL', placeholder: 'http://192.168.1.108:8088' },
+  { key: 'sdr_radio_tuner', label: 'SDR tuner id', placeholder: 'tuner1' },
+  { key: 'sdr_radio_stream_url', label: 'SDR stream URL (Icecast)', placeholder: 'http://192.168.1.108:8001/tuner1.mp3' },
+];
+
+const DISPATCHARR_FIELDS: MediaField[] = [
+  { key: 'dispatcharr_url', label: 'Dispatcharr URL', placeholder: 'http://theserver.localdomain:9191' },
+  { key: 'dispatcharr_api_key', label: 'Dispatcharr API key', placeholder: '••••••••', secret: true },
+];
+
+const MA_FIELDS: MediaField[] = [
+  { key: 'music_assistant_url', label: 'Music Assistant URL', placeholder: 'http://192.168.1.108:8095' },
+  { key: 'music_assistant_token', label: 'Music Assistant token (optional)', placeholder: '••••••••', secret: true },
+  { key: 'music_assistant_username', label: 'Music Assistant username', placeholder: 'admin' },
+  { key: 'music_assistant_password', label: 'Music Assistant password', placeholder: '••••••••', secret: true },
 ];
 
 const VOICE_CUE_PRESETS = [
@@ -121,6 +146,11 @@ export default function SettingsPage() {
       setSaved('Settings saved.');
       load();
     } catch (e) { setError((e as Error).message); }
+  }
+
+  async function saveMediaFields(fields: MediaField[]) {
+    if (!settings) return;
+    await saveSettings(Object.fromEntries(fields.map(f => [f.key, settings[f.key] ?? ''])));
   }
 
   async function saveCoreBridge() {
@@ -226,6 +256,7 @@ export default function SettingsPage() {
             <Tabs value={activeTab} onChange={(_, value: string) => setActiveTab(value)} variant="scrollable" scrollButtons="auto" aria-label="Settings sections">
               <Tab value="general" label="General" />
               <Tab value="integrations" label="Integrations" />
+              <Tab value="media" label="Media" />
               <Tab value="broadcasts" label="Broadcast outputs" />
               <Tab value="request-routing" label="Request routing" />
               <Tab value="privacy-storage" label="Privacy &amp; storage" />
@@ -420,6 +451,39 @@ export default function SettingsPage() {
                 )}
               </Paper>
 
+              </>}
+
+              {activeTab === 'media' && settings && <>
+              <Alert severity="info" sx={{ fontSize: 12, bgcolor: 'rgba(100,181,246,0.1)' }}>
+                Configure the DAB+ radio, Dispatcharr TV and Music Assistant endpoints used by the media widgets, voice commands and MQTT. Leave a field blank to fall back to the Core container's environment variable. Music Assistant needs either an API token or a username and password.
+              </Alert>
+              <MediaSourceCard
+                title="DAB+ radio (SDR)"
+                description="SDR REST API and Icecast stream used by the DAB+ widgets and voice station tuning."
+                fields={DAB_FIELDS}
+                settings={settings}
+                onChange={patch => setSettings({ ...settings, ...patch })}
+                onSave={() => saveMediaFields(DAB_FIELDS)}
+                onTest={coreApi.testDabConnection}
+              />
+              <MediaSourceCard
+                title="Dispatcharr (IPTV)"
+                description="HDHomeRun lineup used by the Dispatcharr TV widgets and voice channel tuning."
+                fields={DISPATCHARR_FIELDS}
+                settings={settings}
+                onChange={patch => setSettings({ ...settings, ...patch })}
+                onSave={() => saveMediaFields(DISPATCHARR_FIELDS)}
+                onTest={coreApi.testDispatcharrConnection}
+              />
+              <MediaSourceCard
+                title="Music Assistant"
+                description="Whole-home music server used by the Music Assistant widgets, voice playback and the DAB+ radio provider."
+                fields={MA_FIELDS}
+                settings={settings}
+                onChange={patch => setSettings({ ...settings, ...patch })}
+                onSave={() => saveMediaFields(MA_FIELDS)}
+                onTest={coreApi.testMusicAssistantConnection}
+              />
               </>}
 
               {activeTab === 'request-routing' && settings && (
@@ -635,6 +699,75 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * A single media-source card in the Media tab: its endpoint fields, a Save
+ * button and a Test connection button that probes the source through Core.
+ */
+function MediaSourceCard({ title, description, fields, settings, onChange, onSave, onTest }: {
+  title: string;
+  description: string;
+  fields: MediaField[];
+  settings: LegacySettings;
+  onChange: (patch: Record<string, string>) => void;
+  onSave: () => Promise<void>;
+  onTest: () => Promise<MediaConnectionTest>;
+}) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<MediaConnectionTest | null>(null);
+
+  async function runTest() {
+    setTesting(true); setResult(null);
+    try {
+      setResult(await onTest());
+    } catch (e) {
+      setResult({ ok: false, error: (e as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>{title}</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>{description}</Typography>
+      <Divider sx={{ mb: 2 }} />
+      <Stack spacing={2}>
+        {fields.map(f => (
+          <TextField
+            key={f.key}
+            label={f.label}
+            value={settings[f.key] ?? ''}
+            placeholder={f.placeholder}
+            onChange={e => onChange({ [f.key]: e.target.value })}
+            size="small" fullWidth
+            type={f.secret ? 'password' : 'text'}
+          />
+        ))}
+        {result && (
+          <Alert severity={result.ok ? 'success' : 'error'} sx={{ fontSize: 12 }}>
+            {result.ok ? `✓ ${result.detail ?? 'Connection OK'}` : `Connection failed: ${result.error ?? 'unknown error'}`}
+          </Alert>
+        )}
+        <Stack direction="row" spacing={1}>
+          <Button size="small" variant="contained" startIcon={<SaveIcon fontSize="small" />} onClick={onSave} sx={{ textTransform: 'none' }}>
+            Save
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={testing ? <CircularProgress size={12} /> : <WifiIcon fontSize="small" />}
+            onClick={runTest}
+            disabled={testing}
+            sx={{ textTransform: 'none' }}
+          >
+            Test connection
+          </Button>
+        </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
 function BroadcastOutputsSection({ outputs, events, discovering, onDiscover, onUpdate, onAddDlna }: {
   outputs: BroadcastOutput[];
   events: BroadcastEventSummary[];
@@ -824,6 +957,19 @@ const PROVIDER_KIND_LABELS: Record<string, string> = {
   whisper: 'Whisper', piper: 'Piper', coqui: 'Coqui TTS',
 };
 
+/**
+ * Curated Whisper models the ASR server can download on demand, ordered from
+ * fastest/least-accurate to slowest/most-accurate. Picking a stronger model here
+ * is the quickest way to improve recognition accuracy.
+ */
+const RECOMMENDED_ASR_MODELS: { id: string; name: string; note: string }[] = [
+  { id: 'Systran/faster-whisper-base.en', name: 'base.en', note: 'fastest, least accurate' },
+  { id: 'Systran/faster-whisper-small.en', name: 'small.en', note: 'fast' },
+  { id: 'Systran/faster-whisper-medium.en', name: 'medium.en', note: 'balanced' },
+  { id: 'Systran/faster-distil-whisper-large-v3', name: 'distil-large-v3', note: 'near-large accuracy, faster' },
+  { id: 'Systran/faster-whisper-large-v3', name: 'large-v3', note: 'most accurate' },
+];
+
 const AI_PROVIDER_HEALTH_INTERVAL_MS = 30_000;
 
 function CloudAiSection({ settings, onSave }: {
@@ -874,6 +1020,137 @@ function CloudAiSection({ settings, onSave }: {
   );
 }
 
+/**
+ * Model/voice selector for a single ASR (Whisper) or TTS (Piper) provider.
+ * Lists what the provider reports, lets the operator pick the active one, and
+ * add a new model (Whisper: downloaded on demand) or voice (Piper: recorded).
+ */
+function ProviderModelsPanel({ provider, onChanged }: {
+  provider: AiProviderInfo;
+  onChanged: () => void;
+}) {
+  const isAsr = provider.type === 'asr';
+  const noun = isAsr ? 'model' : 'voice';
+  const kindLabel = PROVIDER_KIND_LABELS[provider.kind] || provider.kind;
+  const [models, setModels] = useState<string[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+  const [canDownload, setCanDownload] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState('');
+  const [newModel, setNewModel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await coreApi.aiProviderModels(provider.id);
+      setModels(res.models);
+      setActive(res.active);
+      setCanDownload(res.canDownload);
+      setSelected(res.active ?? '');
+      if (res.error) setError(res.error);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setLoading(false); }
+  }, [provider.id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function applyModel() {
+    if (!selected) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await coreApi.setAiProviderModel(provider.id, selected);
+      setActive(selected);
+      setNotice(`Active ${noun} set to '${selected}'.`);
+      onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function addModel() {
+    const name = newModel.trim();
+    if (!name) return;
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const res = await coreApi.addAiProviderModel(provider.id, name);
+      setNotice(res.downloaded
+        ? `Downloading '${name}' — it will appear once the server finishes.`
+        : `Added '${name}'.`);
+      setNewModel('');
+      await load();
+      onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mb: 1.5, bgcolor: 'rgba(108,99,255,0.04)' }}>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        {kindLabel} {isAsr ? 'models' : 'voices'} — {provider.id}
+      </Typography>
+      {loading ? <CircularProgress size={18} /> : (
+        <Stack spacing={1.5}>
+          {error && <Typography variant="caption" color="error">{error}</Typography>}
+          {notice && <Alert severity="success" sx={{ py: 0 }} onClose={() => setNotice(null)}>{notice}</Alert>}
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" sx={{ minWidth: 280 }}>
+              <InputLabel>Active {noun}</InputLabel>
+              <Select label={`Active ${noun}`} value={selected} onChange={e => setSelected(e.target.value)}>
+                {models.length === 0 && <MenuItem value="" disabled><em>No {noun}s reported</em></MenuItem>}
+                {models.map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <Button size="small" variant="contained" disabled={busy || !selected || selected === active}
+              onClick={applyModel} sx={{ textTransform: 'none' }}>
+              Use
+            </Button>
+            <Button size="small" variant="outlined" disabled={loading} startIcon={<RefreshIcon fontSize="small" />}
+              onClick={() => void load()} sx={{ textTransform: 'none' }}>
+              Refresh
+            </Button>
+          </Stack>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+            <TextField size="small" label={`New ${noun}`} value={newModel}
+              onChange={e => setNewModel(e.target.value)}
+              placeholder={isAsr ? 'e.g. Systran/faster-whisper-small.en' : 'e.g. en_US-amy-medium'}
+              sx={{ minWidth: 280 }} />
+            <Button size="small" variant="outlined" disabled={busy || !newModel.trim()} onClick={addModel}
+              sx={{ textTransform: 'none' }}>
+              {isAsr && canDownload ? 'Download' : 'Add'}
+            </Button>
+          </Stack>
+          {isAsr && (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+                Recommended (stronger = more accurate):
+              </Typography>
+              {RECOMMENDED_ASR_MODELS.map(m => (
+                <Tooltip key={m.id} title={m.id}>
+                  <Chip
+                    size="small"
+                    label={`${m.name} — ${m.note}`}
+                    variant={newModel === m.id ? 'filled' : 'outlined'}
+                    color={models.includes(m.id) ? 'success' : 'default'}
+                    onClick={() => setNewModel(m.id)}
+                  />
+                </Tooltip>
+              ))}
+            </Stack>
+          )}
+          <Typography variant="caption" color="text.secondary">
+            {isAsr
+              ? 'Whisper models are downloaded on demand by the ASR server; large models can take a while.'
+              : 'Piper voices must already be installed in the TTS container — adding one records the name for selection.'}
+          </Typography>
+        </Stack>
+      )}
+    </Paper>
+  );
+}
+
 function AiProvidersSection() {
   const [providers, setProviders] = useState<AiProviderInfo[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
@@ -883,6 +1160,8 @@ function AiProvidersSection() {
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
   const healthCheckActive = useRef(false);
+  // Which provider's model/voice selector is expanded (provider id or null).
+  const [managingModels, setManagingModels] = useState<string | null>(null);
 
   // Add provider form state
   const [adding, setAdding] = useState(false);
@@ -1170,31 +1449,56 @@ function AiProvidersSection() {
           {/* Provider list */}
           <Typography variant="subtitle2" sx={{ mb: 1 }}>Configured Providers</Typography>
           <Stack spacing={1} sx={{ mb: 3 }}>
-            {providers.map(p => (
-              <Stack key={p.id} direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-                <Chip size="small" label={p.id} variant="outlined" sx={{ minWidth: 100, fontFamily: 'monospace', fontSize: 11 }} />
-                <Chip size="small" label={p.type.toUpperCase()} color="default" variant="outlined" sx={{ minWidth: 50, fontSize: 10 }} />
-                <Chip size="small" label={PROVIDER_KIND_LABELS[p.kind] || p.kind} sx={{ minWidth: 100 }} />
-                <Typography variant="caption" color="text.secondary" sx={{ flex: 1, fontSize: 11 }}>
-                  {p.config?.baseUrl ? p.config.baseUrl as string : ''}
-                  {p.config?.model ? ` / ${p.config.model}` : ''}
-                </Typography>
-                <Chip
-                  size="small"
-                  label={p.healthy ? 'UP' : 'DOWN'}
-                  color={p.healthy ? 'success' : 'error'}
-                  variant="outlined"
-                  title={p.detail || 'No health detail reported'}
-                  sx={{ minWidth: 50 }}
-                />
-                <IconButton size="small" onClick={() => handleEditProvider(p)} title="Edit provider">
-                  <EditIcon fontSize="small" />
-                </IconButton>
-                <IconButton size="small" color="error" onClick={() => handleDeleteProvider(p.id)} title="Delete provider">
-                  <DeleteForeverIcon fontSize="small" />
-                </IconButton>
-              </Stack>
-            ))}
+            {providers.map(p => {
+              const canManageModels = p.type === 'asr' || p.type === 'tts';
+              const activeModel = p.type === 'tts'
+                ? (p.config?.voice as string | undefined)
+                : (p.config?.model as string | undefined);
+              return (
+                <Box key={p.id}>
+                  <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+                    <Chip size="small" label={p.id} variant="outlined" sx={{ minWidth: 100, fontFamily: 'monospace', fontSize: 11 }} />
+                    <Chip size="small" label={p.type.toUpperCase()} color="default" variant="outlined" sx={{ minWidth: 50, fontSize: 10 }} />
+                    <Chip size="small" label={PROVIDER_KIND_LABELS[p.kind] || p.kind} sx={{ minWidth: 100 }} />
+                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1, fontSize: 11 }}>
+                      {p.config?.baseUrl ? p.config.baseUrl as string : ''}
+                      {activeModel ? ` / ${activeModel}` : ''}
+                    </Typography>
+                    <Chip
+                      size="small"
+                      label={p.healthy ? 'UP' : 'DOWN'}
+                      color={p.healthy ? 'success' : 'error'}
+                      variant="outlined"
+                      title={p.detail || 'No health detail reported'}
+                      sx={{ minWidth: 50 }}
+                    />
+                    {canManageModels && (
+                      <Button
+                        size="small"
+                        variant={managingModels === p.id ? 'contained' : 'outlined'}
+                        startIcon={<TuneIcon fontSize="small" />}
+                        onClick={() => setManagingModels(managingModels === p.id ? null : p.id)}
+                        title={p.type === 'asr' ? 'Select Whisper model' : 'Select Piper voice'}
+                        sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}
+                      >
+                        {p.type === 'asr' ? 'Whisper models' : 'Piper voices'}
+                      </Button>
+                    )}
+                    <IconButton size="small" onClick={() => handleEditProvider(p)} title="Edit provider">
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton size="small" color="error" onClick={() => handleDeleteProvider(p.id)} title="Delete provider">
+                      <DeleteForeverIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                  {canManageModels && managingModels === p.id && (
+                    <Box sx={{ mt: 1 }}>
+                      <ProviderModelsPanel provider={p} onChanged={load} />
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
             {providers.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>No AI providers configured. Add one above.</Typography>}
           </Stack>
 

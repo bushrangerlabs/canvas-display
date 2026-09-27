@@ -330,6 +330,40 @@ export class AiProviderRegistry {
     return { ...this.assignments };
   }
 
+  /** Returns the public info for a single provider id, or undefined if unknown. */
+  getProviderInfo(id: string): ProviderInfo | undefined {
+    const p = this.providers.get(id);
+    if (!p) return undefined;
+    return {
+      id: p.id,
+      type: p.type,
+      kind: p.kind,
+      config: p.config,
+      healthy: p.healthy,
+      healthDetail: p.healthDetail,
+      assignedTasks: (Object.keys(this.assignments) as TaskType[]).filter(
+        (t) => this.assignments[t] === p.id,
+      ),
+    };
+  }
+
+  /** Returns the constructed instance for a provider id, or undefined if unknown. */
+  getInstance(id: string): LlmProvider | TranscriptionProvider | SpeechProvider | undefined {
+    return this.providers.get(id)?.instance;
+  }
+
+  /**
+   * Update a provider's stored config in place, without rebuilding its instance.
+   * Used when the active model/voice changes so the running pipeline (which holds
+   * the same instance reference) picks up the change immediately.
+   */
+  updateProviderConfig(id: string, config: ProviderConfig): boolean {
+    const p = this.providers.get(id);
+    if (!p) return false;
+    p.config = config;
+    return true;
+  }
+
   /** Returns all configured providers with health status and assigned tasks. */
   listProviders(): ProviderInfo[] {
     return Array.from(this.providers.values()).map((p) => ({

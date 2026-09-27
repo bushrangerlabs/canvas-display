@@ -2348,6 +2348,7 @@ function FieldInput({ field, value, onChange }: { field: FieldMetadata; value: a
       );
     }
     case 'select':
+      if (field.optionsSource) return <DynamicSelectField field={field} val={val} onChange={onChange} />;
       return (
         <FormControl fullWidth size="small">
           <InputLabel>{field.label}</InputLabel>
@@ -2388,6 +2389,8 @@ function FieldInput({ field, value, onChange }: { field: FieldMetadata; value: a
       );
     case 'code-editor':
       return <CodeEditorField field={field} val={val} onChange={onChange} />;
+    case 'checklist':
+      return <ChecklistField field={field} val={val} onChange={onChange} />;
     case 'entity-list': {
       const list: string[] = Array.isArray(val) ? val : [];
       const addEntity = (id: string) => {
@@ -2444,6 +2447,176 @@ function FieldInput({ field, value, onChange }: { field: FieldMetadata; value: a
         />
       );
   }
+}
+
+/**
+ * Single-select field whose options load from `optionsSource` (used by the
+ * Music Assistant player picker). Falls back to the field's static options.
+ */
+function DynamicSelectField({ field, val, onChange }: { field: FieldMetadata; val: any; onChange: (v: any) => void }) {
+  const [options, setOptions] = useState<{ value: string; label: string }[]>(
+    (field.options ?? []).map(o => ({ value: String(o.value), label: o.label })),
+  );
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!field.optionsSource) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError('');
+    (async () => {
+      try {
+        const res = await fetch(field.optionsSource as string, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const arr = field.optionsSourceKey ? data?.[field.optionsSourceKey] : data;
+        if (!Array.isArray(arr)) throw new Error('Unexpected response');
+        const valueKey = field.optionValueKey ?? 'value';
+        const labelKey = field.optionLabelKey ?? 'label';
+        const mapped = arr
+          .map((item: any) => {
+            const value = item?.[valueKey] ?? item?.id ?? item?.name;
+            const label = item?.[labelKey] ?? item?.name ?? String(value ?? '');
+            return value === undefined || value === null ? null : { value: String(value), label: String(label) };
+          })
+          .filter((o): o is { value: string; label: string } => o !== null);
+        if (!cancelled) setOptions(mapped);
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [field.optionsSource, field.optionsSourceKey, field.optionValueKey, field.optionLabelKey]);
+
+  return (
+    <Box>
+      <FormControl fullWidth size="small">
+        <InputLabel>{field.label}</InputLabel>
+        <Select
+          label={field.label}
+          value={String(val ?? '')}
+          onChange={e => onChange(e.target.value)}
+          disabled={loading && options.length === 0}
+        >
+          {field.default !== undefined && (
+            <MenuItem value={String(field.default)}>
+              <em>{field.description || 'Default'}</em>
+            </MenuItem>
+          )}
+          {options.map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+        </Select>
+      </FormControl>
+      {loading && options.length === 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          Loading…
+        </Typography>
+      )}
+      {loadError && (
+        <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+          {loadError}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+/**
+ * Multi-checkbox field. Options are either declared statically on the field or
+ * loaded from `optionsSource` (used by the DAB+ / Dispatcharr preset widgets).
+ */
+function ChecklistField({ field, val, onChange }: { field: FieldMetadata; val: any; onChange: (v: any) => void }) {
+  const [options, setOptions] = useState<{ value: string; label: string }[]>(
+    (field.options ?? []).map(o => ({ value: String(o.value), label: o.label })),
+  );
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!field.optionsSource) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError('');
+    (async () => {
+      try {
+        const res = await fetch(field.optionsSource as string, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const arr = field.optionsSourceKey ? data?.[field.optionsSourceKey] : data;
+        if (!Array.isArray(arr)) throw new Error('Unexpected response');
+        const valueKey = field.optionValueKey ?? 'value';
+        const labelKey = field.optionLabelKey ?? 'label';
+        const mapped = arr
+          .map((item: any) => {
+            const value = item?.[valueKey] ?? item?.id ?? item?.name;
+            const label = item?.[labelKey] ?? item?.name ?? String(value ?? '');
+            return value === undefined || value === null ? null : { value: String(value), label: String(label) };
+          })
+          .filter((o): o is { value: string; label: string } => o !== null);
+        if (!cancelled) setOptions(mapped);
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [field.optionsSource, field.optionsSourceKey, field.optionValueKey, field.optionLabelKey]);
+
+  const selected: string[] = Array.isArray(val) ? val.map(String) : [];
+  const toggle = (value: string) => {
+    onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
+  };
+
+  return (
+    <Box>
+      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+        {field.label}
+      </Typography>
+      {field.description && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: 10 }}>
+          {field.description}
+        </Typography>
+      )}
+      {loading && (
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
+          <CircularProgress size={12} />
+          <Typography variant="caption" color="text.secondary">Loading…</Typography>
+        </Stack>
+      )}
+      {loadError && (
+        <Typography variant="caption" color="error" sx={{ display: 'block', mb: 0.5 }}>{loadError}</Typography>
+      )}
+      <Box sx={{ maxHeight: 220, overflowY: 'auto', border: 1, borderColor: 'divider', borderRadius: 1, p: 0.5 }}>
+        {options.length === 0 && !loading && (
+          <Typography variant="caption" color="text.secondary" sx={{ p: 0.5, display: 'block' }}>
+            No options available.
+          </Typography>
+        )}
+        {options.map(option => (
+          <FormControlLabel
+            key={option.value}
+            sx={{ display: 'flex', ml: 0, mr: 0 }}
+            control={
+              <Checkbox
+                size="small"
+                checked={selected.includes(option.value)}
+                onChange={() => toggle(option.value)}
+              />
+            }
+            label={<Typography variant="body2" sx={{ fontSize: 12 }}>{option.label}</Typography>}
+          />
+        ))}
+      </Box>
+      {selected.length > 0 && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {selected.length} selected
+        </Typography>
+      )}
+    </Box>
+  );
 }
 
 const FONT_OPTIONS = [

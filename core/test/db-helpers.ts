@@ -214,6 +214,17 @@ export function createTestDb(): { db: Db; pool: Pool } {
       value         TEXT NOT NULL DEFAULT '',
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id         TEXT PRIMARY KEY,
+      type       TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      config     JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS ai_task_assignments (
+      task        TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL
+    );
 
     -- Phase 8: authority migration tables
     CREATE TABLE IF NOT EXISTS authority_watermark (

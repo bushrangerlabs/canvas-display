@@ -30,6 +30,8 @@ export interface AudioState {
   volume:   number; // 0–100
   muted:    boolean;
   artwork?: string;
+  /** Logical source of the current playback (e.g. 'dab', 'dispatcharr'). */
+  source?:  string;
 }
 
 let _state: AudioState = {
@@ -157,6 +159,7 @@ function startMpv(gen: number) {
       _state.state = 'idle';
       _state.url = '';
       _state.title = '';
+      _state.source = undefined;
       if (_playbackWaiter?.gen === gen) {
         _playbackWaiter.resolve();
         _playbackWaiter = null;
@@ -181,6 +184,7 @@ function startMpv(gen: number) {
     _state.state = 'idle';
     _state.url   = '';
     _state.title = '';
+    _state.source = undefined;
     // Notify MQTT of state change (dynamic import avoids circular dep)
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
     if (_playbackWaiter?.gen === gen) {
@@ -236,7 +240,7 @@ function setSystemMute(muted: boolean): void {
   }
 }
 
-export async function playAudio(input: { url: string; title?: string; volume?: number }): Promise<AudioState> {
+export async function playAudio(input: { url: string; title?: string; volume?: number; source?: string }): Promise<AudioState> {
   // Local mpv playback takes the audio sink; this stops the Snapcast client if
   // it currently owns the output so the two never play over each other.
   await acquireSink('mpv');
@@ -250,6 +254,7 @@ export async function playAudio(input: { url: string; title?: string; volume?: n
     title: input.title ?? input.url,
     volume,
     muted: false,
+    source: input.source,
   };
   return getAudioState();
 }
@@ -291,6 +296,7 @@ export async function stopAudio(): Promise<AudioState> {
   _state.state = 'idle';
   _state.url = '';
   _state.title = '';
+  _state.source = undefined;
   await releaseSink('mpv');
   return getAudioState();
 }
@@ -344,6 +350,7 @@ export async function audioRoutes(app: FastifyInstance) {
     _state.title  = title ?? url;
     _state.volume = vol;
     _state.muted  = false;
+    _state.source = undefined;
 
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
     return getAudioState();
@@ -381,6 +388,7 @@ export async function audioRoutes(app: FastifyInstance) {
     _state.state = 'idle';
     _state.url   = '';
     _state.title = '';
+    _state.source = undefined;
     import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
     return getAudioState();
   });

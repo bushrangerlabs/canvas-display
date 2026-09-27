@@ -13,7 +13,7 @@ export interface MqttNavigationStatus {
 type DeliverPage = (page: PageRow, deviceId: string) => Promise<unknown>;
 type ControlMedia = (
   deviceId: string,
-  action: 'pause' | 'resume' | 'stop' | 'next',
+  action: 'pause' | 'resume' | 'stop' | 'next' | 'previous',
   source: string,
 ) => Promise<unknown>;
 
@@ -25,6 +25,8 @@ export interface DeviceMediaState {
   volume: number; // 0..1
   muted: boolean;
   artwork: string | null;
+  /** Logical source of the current playback (e.g. 'dab', 'dispatcharr', 'music_assistant', 'youtube'). */
+  source: string | null;
 }
 
 const DEFAULT_MEDIA_STATE: DeviceMediaState = {
@@ -34,6 +36,7 @@ const DEFAULT_MEDIA_STATE: DeviceMediaState = {
   volume: 0.8,
   muted: false,
   artwork: null,
+  source: null,
 };
 
 function parseJson(payload: Buffer): Record<string, unknown> {
@@ -215,7 +218,7 @@ export class MqttNavigationService {
       muted: state.muted,
       media_title: state.title,
       media_image_url: state.artwork,
-      source: state.title,
+      source: state.source,
     }, true);
   }
 
@@ -239,11 +242,15 @@ export class MqttNavigationService {
           }
         } catch { /* raw string command */ }
         const action = raw.toLowerCase();
-        if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
-          throw new Error('media_player action must be pause, resume, stop, or next');
+        if (!['pause', 'resume', 'stop', 'next', 'previous'].includes(action)) {
+          throw new Error('media_player action must be pause, resume, stop, next, or previous');
         }
         if (!this.controlMedia) throw new Error('media control is unavailable');
-        await this.controlMedia(deviceId, action as 'pause' | 'resume' | 'stop' | 'next', 'youtube');
+        // HA's media_player entity is source-agnostic: PAUSE/PLAY/STOP/NEXT carry
+        // no source, so reuse whatever the device is currently playing (falling
+        // back to YouTube for a device that has never reported a source).
+        const activeSource = this.mediaStates.get(deviceId)?.source ?? 'youtube';
+        await this.controlMedia(deviceId, action as 'pause' | 'resume' | 'stop' | 'next' | 'previous', activeSource);
         this.updateMediaState(deviceId, {
           state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
         });
@@ -253,14 +260,14 @@ export class MqttNavigationService {
       const body = parseJson(payload);
       if (parts[3] === 'commands' && parts[4] === 'media') {
         const action = typeof body.action === 'string' ? body.action : '';
-        if (!['pause', 'resume', 'stop', 'next'].includes(action)) {
-          throw new Error('media action must be pause, resume, stop, or next');
+        if (!['pause', 'resume', 'stop', 'next', 'previous'].includes(action)) {
+          throw new Error('media action must be pause, resume, stop, next, or previous');
         }
         const source = typeof body.source === 'string' ? body.source : 'youtube';
         if (!this.controlMedia) throw new Error('media control is unavailable');
         const result = await this.controlMedia(
           deviceId,
-          action as 'pause' | 'resume' | 'stop' | 'next',
+          action as 'pause' | 'resume' | 'stop' | 'next' | 'previous',
           source,
         );
         this.publish(`canvas/devices/${deviceId}/state/media`, {

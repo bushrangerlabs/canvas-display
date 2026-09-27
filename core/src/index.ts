@@ -69,7 +69,7 @@ import { ShadowModeRunner } from './shadow-mode.js';
 import { RolloutStrategy, InMemoryRolloutRepository, registerRolloutRoutes } from './rollout-strategy.js';
 import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
-import { registerLegacyRoutes, requestDeviceAction, sendCommand, getDeviceIp } from './legacy-routes.js';
+import { registerLegacyRoutes, requestDeviceAction, sendCommand, getDeviceIp, mediaSetting } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
@@ -78,6 +78,8 @@ import { registerLogRoutes } from './log-routes.js';
 import { registerAiLogRoutes } from './ai-log.js';
 import { resolveYouTubeWatchUrl, resolveYouTubeQueue, buildYouTubePlaylistUrl, resolveYouTubeStreams as resolveYouTubeStreamsFn, type YouTubeSearchOptions } from './youtube.js';
 import { policyFromSettings } from './request-routing.js';
+import { clearMediaCaches } from './media-sources.js';
+import { clearMaTokenCache, clearMaRadioCache } from './music-assistant.js';
 import { confirmationDigest, mcpCallRequiresConfirmation, normalizeToolArguments, resolveToolName, selectToolsForRequest } from './mcp-policy.js';
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-drafts.js';
@@ -2323,7 +2325,7 @@ async function main(): Promise<void> {
             body: { source, url, title },
           }, 20_000);
         }
-        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: title ?? url, url });
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: title ?? url, url, source });
         return { ok: true };
       } catch (error) {
         return reply.code(502).send({ error: error instanceof Error ? error.message : String(error) });
@@ -2349,7 +2351,7 @@ async function main(): Promise<void> {
             body: { source, action, level, muted, value },
           }, 10_000);
         }
-        if (action === 'stop') mqttNavigation.updateMediaState(deviceId, { state: 'idle', title: null, url: null });
+        if (action === 'stop') mqttNavigation.updateMediaState(deviceId, { state: 'idle', title: null, url: null, source: null });
         else if (action === 'pause') mqttNavigation.updateMediaState(deviceId, { state: 'paused' });
         else if (action === 'resume') mqttNavigation.updateMediaState(deviceId, { state: 'playing' });
         else if (action === 'volume' && typeof level === 'number') mqttNavigation.updateMediaState(deviceId, { volume: Math.max(0, Math.min(1, level)) });
@@ -2495,7 +2497,7 @@ async function main(): Promise<void> {
             media_id: query,
             media_type: 'track',
           });
-          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query });
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, source: 'music_assistant' });
           return {
             ok: true,
             message: `Playing "${query}" from Music Assistant.`,
@@ -2525,7 +2527,7 @@ async function main(): Promise<void> {
               body: { source: 'direct_audio', url: query, title: query },
             }, 20_000);
           }
-          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url: query });
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url: query, source: 'direct_audio' });
           return {
             ok: true,
             message: `Playing "${query}".`,
@@ -2590,7 +2592,7 @@ async function main(): Promise<void> {
           const result = await gateway.requestAction(
             deviceId, 'media.play', { source: 'youtube', query, url, playlist }, 20_000,
           );
-          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url });
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, url, source: 'youtube' });
           return {
             ok: true,
             message,
@@ -2637,7 +2639,7 @@ async function main(): Promise<void> {
         const selectionChoices = Array.isArray(deviceResult.choices) ? deviceResult.choices.length : 0;
         const spokenChoiceCount = selectionChoices || playlistLayout.length || 3;
         if (!selectionRequired) {
-          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query });
+          mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, source: 'youtube' });
         }
         return {
           ok: true,
@@ -2669,7 +2671,10 @@ async function main(): Promise<void> {
       const name = station.trim();
       if (!name) return { ok: false, message: 'A DAB+ station name is required.' };
       try {
-        const base = config.sdrRadioUrl.replace(/\/$/, '');
+        const base = (await mediaSetting(pool, config, 'sdr_radio_url')).replace(/\/$/, '');
+        if (!base) return { ok: false, message: 'DAB+ radio is not configured.' };
+        const tuner = (await mediaSetting(pool, config, 'sdr_radio_tuner')) || 'tuner1';
+        const streamUrl = await mediaSetting(pool, config, 'sdr_radio_stream_url');
         const res = await fetch(`${base}/api/stations`, { signal: AbortSignal.timeout(8000) });
         if (!res.ok) {
           return { ok: false, message: `SDR radio returned HTTP ${res.status}.` };
@@ -2683,7 +2688,7 @@ async function main(): Promise<void> {
         if (!match?.id) {
           return { ok: false, message: `I could not find the DAB+ station "${name}".` };
         }
-        const tune = await fetch(`${base}/api/tuners/${config.sdrRadioTuner}/play`, {
+        const tune = await fetch(`${base}/api/tuners/${encodeURIComponent(tuner)}/play`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ station: `dab:${match.id}` }),
@@ -2696,7 +2701,6 @@ async function main(): Promise<void> {
             message: `I could not tune to ${match.name ?? name}: ${detail || `HTTP ${tune.status}`}`,
           };
         }
-        const streamUrl = config.sdrRadioStreamUrl;
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
           await gateway.requestAction(
@@ -2709,7 +2713,7 @@ async function main(): Promise<void> {
             body: { source: 'direct_audio', url: streamUrl, title: match.name },
           }, 20_000);
         }
-        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.name ?? name, url: streamUrl });
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.name ?? name, url: streamUrl, source: 'dab' });
         return {
           ok: true,
           message: `Tuning to ${match.name ?? name} on digital radio.`,
@@ -2729,8 +2733,13 @@ async function main(): Promise<void> {
       const name = channel.trim();
       if (!name) return { ok: false, message: 'A channel name is required.' };
       try {
-        const base = config.dispatcharrUrl.replace(/\/$/, '');
-        const res = await fetch(`${base}/api/hdhr/lineup.json`, { signal: AbortSignal.timeout(8000) });
+        const base = (await mediaSetting(pool, config, 'dispatcharr_url')).replace(/\/$/, '');
+        if (!base) return { ok: false, message: 'Dispatcharr is not configured.' };
+        const apiKey = await mediaSetting(pool, config, 'dispatcharr_api_key');
+        const res = await fetch(`${base}/api/hdhr/lineup.json`, {
+          headers: apiKey ? { Authorization: `Api-Key ${apiKey}` } : undefined,
+          signal: AbortSignal.timeout(8000),
+        });
         if (!res.ok) {
           return { ok: false, message: `Dispatcharr lineup returned HTTP ${res.status}.` };
         }
@@ -2753,7 +2762,7 @@ async function main(): Promise<void> {
             body: { source: 'direct_audio', url: match.URL, title: match.GuideName },
           }, 20_000);
         }
-        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.GuideName ?? name, url: match.URL });
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.GuideName ?? name, url: match.URL, source: 'dispatcharr' });
         return {
           ok: true,
           message: `Tuning to ${match.GuideName ?? name}.`,
@@ -2872,6 +2881,7 @@ async function main(): Promise<void> {
           }[action];
           mqttNavigation.updateMediaState(deviceId, {
             state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
+            source: action === 'stop' ? null : source,
           });
           return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, result } };
         }
@@ -2887,6 +2897,7 @@ async function main(): Promise<void> {
         }[action];
         mqttNavigation.updateMediaState(deviceId, {
           state: action === 'pause' ? 'paused' : action === 'stop' ? 'idle' : 'playing',
+          source: action === 'stop' ? null : source,
         });
         return {
           ok: true,
@@ -3321,7 +3332,33 @@ async function main(): Promise<void> {
   await registerLegacyRoutes(fastify, {
     pool,
     requireAdmin,
+    config,
     onDisplayPage: deliverPageToDevice,
+    // Device-targeted widget playback: same architecture-aware dispatch the
+    // voice path uses (Android → gateway media.play, Linux → device_http).
+    dispatchMediaToDevice: async (deviceId, url, title, source) => {
+      const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+      if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+        await gateway.requestAction(deviceId, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+      } else {
+        await requestDeviceAction(deviceId, 'device_http', {
+          path: '/api/media/play',
+          http_method: 'POST',
+          body: { source: 'direct_audio', url, title },
+        }, 20_000);
+      }
+      mqttNavigation.updateMediaState(deviceId, { state: 'playing', title, url, source });
+    },
+    controlMediaOnDevice: async (deviceId, action, value) => {
+      const body: Record<string, unknown> = { action };
+      if (action === 'volume' && typeof value === 'number') body.level = value;
+      if (action === 'mute' && typeof value === 'boolean') body.muted = value;
+      await requestDeviceAction(deviceId, 'device_http', {
+        path: '/api/media/control',
+        http_method: 'POST',
+        body,
+      }, 20_000);
+    },
     getMqttStatus: () => ({ ...mqttNavigation.getStatus() }),
     reconnectMqtt: async () => ({ ...await mqttNavigation.start() }),
     disconnectMqtt: () => mqttNavigation.stop(),
@@ -3329,6 +3366,13 @@ async function main(): Promise<void> {
       if (updatedKeys.some(key => key.startsWith('mqtt_'))) await mqttNavigation.start();
       if (updatedKeys.some(key => key.startsWith('cloud_ai_'))) await refreshCloudPolicy();
       if (updatedKeys.some(key => key.startsWith('request_routing_'))) await reloadRequestRoutingPolicy();
+      // Media-source endpoints are read live; drop the cached station/channel
+      // lists so a changed URL or API key takes effect on the next request.
+      if (updatedKeys.some(key => key.startsWith('sdr_radio_') || key.startsWith('dispatcharr_') || key.startsWith('music_assistant_'))) {
+        clearMediaCaches();
+        clearMaTokenCache();
+        clearMaRadioCache();
+      }
       const voiceCueKeys = [
         'voice_wake_ack_enabled', 'voice_wake_ack_sound',
         'voice_good_intent_enabled', 'voice_good_intent_sound',

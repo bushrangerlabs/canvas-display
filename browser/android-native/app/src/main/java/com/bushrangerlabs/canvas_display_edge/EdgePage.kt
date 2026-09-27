@@ -31,7 +31,7 @@ data class EdgePage(
     val source: JSONObject,
 ) {
     companion object {
-        fun fromScene(scene: JSONObject, coreUrl: String): EdgePage {
+        fun fromScene(scene: JSONObject, coreUrl: String, deviceId: String = ""): EdgePage {
             val page = scene.optJSONObject("page")
                 ?: throw IllegalArgumentException("scene has no page")
             val panelsJson = page.optJSONArray("panels")
@@ -45,7 +45,13 @@ data class EdgePage(
                         "scene" -> panel.stringValue("url").ifBlank {
                             panel.stringValue("scene_url").ifBlank {
                                 panel.stringValue("scene_id").let { sceneId ->
-                                    if (sceneId.isBlank()) "" else "${coreUrl.trimEnd('/')}/display/scenes/${encodePathSegment(sceneId)}"
+                                    if (sceneId.isBlank()) "" else {
+                                        val base = "${coreUrl.trimEnd('/')}/display/scenes/${encodePathSegment(sceneId)}"
+                                        // Tell the scene which display it runs on so media
+                                        // widgets target this device for playback.
+                                        if (deviceId.isBlank()) base
+                                        else "$base?deviceId=${encodePathSegment(deviceId)}"
+                                    }
                                 }
                             }
                         }

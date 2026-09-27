@@ -465,7 +465,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderScene(scene: org.json.JSONObject, complete: (Boolean, String?) -> Unit) {
-        val page = runCatching { EdgePage.fromScene(scene, config.coreUrl) }
+        val page = runCatching { EdgePage.fromScene(scene, config.coreUrl, identity.installationId) }
             .getOrElse { error ->
                 runOnUiThread { statusText("page rejected: ${error.message}") }
                 complete(false, error.message)
