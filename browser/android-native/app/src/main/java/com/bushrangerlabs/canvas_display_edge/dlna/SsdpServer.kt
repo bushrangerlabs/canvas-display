@@ -168,7 +168,7 @@ class SsdpServer(
             }
             val payload = lines.joinToString("\r\n").toByteArray()
             runCatching { sock.send(DatagramPacket(payload, payload.size, group, SSDP_PORT)) }
-                .onFailure { DlnaLog.warn("ssdp announce failed: ${it.message}") }
+                .onFailure { DlnaLog.warn("ssdp announce failed: ${it.javaClass.simpleName}: ${it.message}") }
         }
     }
 

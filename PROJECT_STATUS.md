@@ -589,6 +589,41 @@ There is **no Snapcast client on Android**. Unlike the DLNA renderer (pure Kotli
 
 Option 1 is closer to the proven Linux path; option 2 avoids shipping native code. Either way the `AudioSinkArbiter` added this session is already in place to hand the sink between Snapcast and local playback.
 
+### Android Snapcast client — IMPLEMENTED (2026-09-28, this session)
+
+Option 2 was chosen and built: a **Kotlin Snapcast client** (`.../snapcast/`). The protocol was reverse-engineered from the live server rather than guessed — see `scripts/snapcast-probe.py` and the notes below.
+
+| File | Responsibility |
+|---|---|
+| `SnapJson.kt` | Dependency-free flat-JSON reader/writer (keeps the package JVM-testable; `org.json` is an Android stub in unit tests) |
+| `SnapcastProtocol.kt` | Wire codec (26-byte header + payload), Hello/Time/ClientInfo encoders, CodecHeader/WireChunk parsers, `SnapcastClockSync` (NTP-style offset estimation) |
+| `SnapcastClient.kt` | TCP connection, handshake, 1 Hz `Time` sync, chunk dispatch, reconnect with backoff |
+| `SnapcastPlayer.kt` | FLAC via platform `MediaCodec` (csd-0 = the server's FLAC header) → `AudioTrack`; `pcm` streams written straight to `AudioTrack` |
+| `SnapcastService.kt` | Lifecycle + `AudioSinkArbiter` integration |
+
+**Protocol facts (verified against snapserver 0.34.0 with `tcpdump`):**
+
+- Every message is a **26-byte little-endian header** — `uint16 type, uint16 id, uint16 refersTo, int32 sent.sec, int32 sent.usec, int32 received.sec, int32 received.usec, uint32 size` — followed by `size` payload bytes. (Not a length-prefixed JSON blob.)
+- `Hello` (type 5) uses **capitalised** field names: `MAC`, `HostName`, `Version`, `ClientName`, `OS`, `Arch`, `Instance`, `ID`, `SnapStreamProtocolVersion` (2).
+- `ServerSettings` (3) is `{bufferMs, latency, muted, volume}`; the stream list is not included.
+- `CodecHeader` (1) is binary: `uint32 codecLen` + codec + `uint32 dataLen` + data. For FLAC the data is a **complete FLAC stream header** (`fLaC` + STREAMINFO + …), which is exactly what `MediaCodec` wants as `csd-0`.
+- `WireChunk` (2) is `uint64 timestamp` (server clock, µs) + `uint32 dataLen` + data.
+- `Time` (4) payload is just the client's `latency` (8 bytes); the sync clocks ride in the header's `sent`/`received` fields.
+- The bundled MA snapserver uses **flac @ 48000:16:2** (`/etc/snapserver.conf` leaves `codec` commented, and the default is flac).
+
+**Verified on the tablet (192.168.1.41):**
+
+- Client connects, handshake completes, `codec: flac (1362 byte header)`.
+- With a 440 Hz tone written into the snapserver's `/tmp/snapfifo`, the tablet received `WireChunk`s and `dumpsys media.audio_flinger` showed the app's `AudioTrack` **active at 48000 Hz stereo with 4.18 M frames written** — i.e. FLAC decode → PCM → speaker works end-to-end.
+- **Arbiter handover works**: a DLNA audio push logged `snapcast: releasing the audio sink` and stopped the client.
+- `cd browser/android-native && <gradle> :app:testDebugUnitTest` → **46 tests pass** (15 new Snapcast + 24 DLNA + 7 existing).
+
+**Known gaps:**
+
+- Playback is **not drift-corrected**: chunks are written to `AudioTrack` as they arrive rather than scheduled against the server clock, so this is not yet sample-accurate multi-room sync. `SnapcastClockSync` already estimates the offset (and `SnapcastClient` keeps it fresh) — the scheduling step is the remaining work.
+- Snapcast does **not** automatically resume after a DLNA push releases the sink; it must be restarted (a "resume background music after an announcement" behaviour would be a small follow-up).
+- The Snapcast host defaults to the Core host (`EdgeConfig.resolvedSnapcastHost`); `snapcastEnabled`/`snapcastHost`/`snapcastPort` are configurable but have no UI yet.
+
 ### Android DLNA notes / gotchas
 
 - Android only delivers multicast to an app holding a `WifiManager.MulticastLock` — `DlnaService` acquires one (`CHANGE_WIFI_MULTICAST_STATE` + `ACCESS_WIFI_STATE` added to the manifest).

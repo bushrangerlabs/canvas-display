@@ -25,6 +25,7 @@ import androidx.core.content.ContextCompat
 import com.bushrangerlabs.canvas_display_edge.dlna.AndroidDlnaAdapter
 import com.bushrangerlabs.canvas_display_edge.dlna.DlnaHttpServer
 import com.bushrangerlabs.canvas_display_edge.dlna.DlnaService
+import com.bushrangerlabs.canvas_display_edge.snapcast.SnapcastService
 import com.bushrangerlabs.canvas_display_edge.voice.VoicePipeline
 import com.bushrangerlabs.canvas_display_edge.voice.VoiceConfig
 import java.util.concurrent.CountDownLatch
@@ -65,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var directAudioPlayer: MediaPlayer? = null
     private var dlnaService: DlnaService? = null
     private var dlnaAdapter: AndroidDlnaAdapter? = null
+    private var snapcastService: SnapcastService? = null
     private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var revertRunnable: Runnable? = null
 
@@ -288,6 +290,7 @@ class MainActivity : AppCompatActivity() {
      * floating WebView with the renderer's own `/video` wrapper page.
      */
     private fun startDlnaRenderer() {
+        if (dlnaService != null) return
         val adapter = AndroidDlnaAdapter(
             context = this,
             onPlayVideo = { url, title ->
@@ -308,6 +311,26 @@ class MainActivity : AppCompatActivity() {
         )
         dlnaService = service
         // Binding the SSDP socket can block briefly; keep it off the UI thread.
+        Thread { service.start() }.start()
+        startSnapcastClient()
+    }
+
+    /**
+     * Join the Snapcast server bundled with Music Assistant for multi-room
+     * synchronised audio. The host defaults to the Core host (MA runs there).
+     * The audio arbiter stops this client whenever local playback takes the sink.
+     */
+    private fun startSnapcastClient() {
+        if (!config.snapcastEnabled) return
+        if (snapcastService != null) return
+        val host = config.resolvedSnapcastHost ?: return
+        val service = SnapcastService(
+            host = host,
+            port = config.snapcastPort,
+            clientId = identity.installationId,
+            clientName = config.deviceName,
+        )
+        snapcastService = service
         Thread { service.start() }.start()
     }
 
@@ -545,6 +568,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        snapcastService?.stop()
+        snapcastService = null
         dlnaService?.stop()
         dlnaService = null
         dlnaAdapter = null

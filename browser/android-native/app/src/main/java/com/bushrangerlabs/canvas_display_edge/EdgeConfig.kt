@@ -53,4 +53,25 @@ class EdgeConfig(context: Context) {
     // Core can provide scene URLs directly; HA credentials are optional for a
     // Core-native Edge and must not block zero-configuration startup.
     val configured: Boolean get() = coreUrl.isNotBlank()
+
+    // ── Snapcast (multi-room synchronised audio) ───────────────────────────────
+    // The snapserver bundled with Music Assistant runs on the Core host, so the
+    // default host is derived from the Core URL when none is set explicitly.
+    var snapcastHost: String
+        get() = prefs.getString("snapcast_host", "") ?: ""
+        set(value) = prefs.edit().putString("snapcast_host", value.trim()).apply()
+
+    var snapcastPort: Int
+        get() = prefs.getInt("snapcast_port", 1704)
+        set(value) = prefs.edit().putInt("snapcast_port", value).apply()
+
+    var snapcastEnabled: Boolean
+        get() = prefs.getBoolean("snapcast_enabled", true)
+        set(value) = prefs.edit().putBoolean("snapcast_enabled", value).apply()
+
+    /** Host to connect the Snapcast client to, or null when it cannot be resolved. */
+    val resolvedSnapcastHost: String?
+        get() = snapcastHost.ifBlank {
+            coreUrl.removePrefix("https://").removePrefix("http://").substringBefore('/').substringBefore(':')
+        }.takeIf { it.isNotBlank() }
 }
