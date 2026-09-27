@@ -97,8 +97,12 @@ async fn set_kiosk_visible(
 /// Returns the main kiosk window's monitor bounds in Tauri logical pixels. Panel
 /// windows use the same logical coordinate space, avoiding CSS screen metrics
 /// drifting from the compositor's real output geometry.
+///
+/// Takes `tauri::Window` (not `WebviewWindow`): on this kiosk build the main
+/// window's `is_webview_window()` is false, so a `WebviewWindow` parameter fails
+/// to inject and the frontend silently falls back to CSS screen metrics.
 #[tauri::command]
-fn display_geometry(window: tauri::WebviewWindow) -> Result<DisplayGeometry, String> {
+fn display_geometry(window: tauri::Window) -> Result<DisplayGeometry, String> {
     let monitor = window
         .current_monitor()
         .map_err(|error| error.to_string())?
@@ -197,6 +201,16 @@ async fn navigate_webview(app: AppHandle, label: String, url: String) -> Result<
     .map_err(|e| e.to_string())
 }
 
+/// Whether a webview with the given label currently exists.
+///
+/// The frontend cannot use `WebviewWindow.getByLabel` for this: panel and
+/// floating webviews are *child* webviews, so they are absent from Tauri's
+/// WebviewWindow registry and `getByLabel`/`getAll` both return nothing.
+#[tauri::command]
+fn webview_exists(app: AppHandle, label: String) -> bool {
+    app.get_webview(&label).is_some()
+}
+
 /// Close a child webview or top-level WebviewWindow by label.
 /// Must run on the GTK main thread on Linux.
 #[tauri::command]
@@ -249,6 +263,10 @@ async fn close_panel_webviews(app: AppHandle) -> Result<(), String> {
     // that starts creating panels after this point belongs to a newer page.
     PANEL_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let app_handle = app.clone();
+    // Wait for the main thread to actually finish closing. Without this the
+    // caller can immediately request a new batch whose panels race the close
+    // and fail with "a webview with label `panel-…` already exists".
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
     app.run_on_main_thread(move || {
         for (label, webview) in app_handle.webviews() {
             if label.starts_with("panel-") {
@@ -257,8 +275,12 @@ async fn close_panel_webviews(app: AppHandle) -> Result<(), String> {
                 }
             }
         }
+        let _ = tx.send(());
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    // Bounded wait so a stalled main thread can never hang the command.
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+    Ok(())
 }
 
 /// Execute one fixed YouTube control in an existing player WebviewWindow.
@@ -338,6 +360,16 @@ async fn control_youtube_webview(
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+/// Write a message from the frontend into the kiosk log file.
+///
+/// The controller WebView's `console.*` output is not captured anywhere, so
+/// frontend failures (e.g. a rejected Tauri invoke) are otherwise invisible.
+/// This gives the frontend a way to surface diagnostics to `/tmp/canvas-ui-kiosk.log`.
+#[tauri::command]
+fn client_log(message: String) {
+    klog(&format!("[client] {}", message));
 }
 
 /// Read the Edge device identity from the Agent's IPC socket.
@@ -638,7 +670,7 @@ fn place_webview_in_fixed(
 // the one-shot and the batched commands share identical behaviour.
 fn create_one_panel(
     app: &AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     spec: &PanelSpec,
 ) -> Result<(), String> {
     let parsed_url = spec.url.parse::<tauri::Url>().map_err(|e| e.to_string())?;
@@ -711,7 +743,7 @@ fn create_one_panel(
             "[create_one_panel] adding child '{}' at {},{} {}x{}",
             label, x, y, width, height
         ));
-        match window.as_ref().window().add_child(
+        match window.add_child(
             builder,
             tauri::LogicalPosition::new(x, y),
             tauri::LogicalSize::new(width, height),
@@ -793,7 +825,7 @@ fn create_one_panel(
 #[tauri::command]
 fn create_panel_webview(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     label: String,
     url: String,
     x: i32,
@@ -805,6 +837,11 @@ fn create_panel_webview(
     ingress_session: Option<String>,
     init_script: Option<String>,
 ) -> Result<(), String> {
+    klog(&format!(
+        "[create_panel_webview] label='{}' from window '{}'",
+        label,
+        window.label()
+    ));
     let spec = PanelSpec {
         label,
         url,
@@ -827,9 +864,14 @@ fn create_panel_webview(
 #[tauri::command]
 fn create_panel_webviews(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     panels: Vec<PanelSpec>,
 ) -> Result<(), String> {
+    klog(&format!(
+        "[create_panel_webviews] {} panel(s) from window '{}'",
+        panels.len(),
+        window.label()
+    ));
     // Capture the generation at call time; if close_panel_webviews runs while
     // this batch is still creating panels (a newer page load arrived), the
     // batch aborts instead of stacking stale panels over the newer page.
@@ -935,11 +977,13 @@ pub fn run() {
             set_brightness,
             keep_screen_on,
             app_version,
+            client_log,
             display_geometry,
             get_device_identity,
             edge_ipc,
             core_control_config,
             navigate_webview,
+            webview_exists,
             close_webview,
             set_webview_visibility,
             close_panel_webviews,

@@ -18,7 +18,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Typography } from '@mui/material';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { listen } from '@tauri-apps/api/event';
 import { nanoid } from 'nanoid';
 import { clearConfig, saveDeviceId, type AppConfig } from '../store/config';
@@ -173,12 +172,9 @@ function buildHAKioskScript(params: {
 }
 async function closeAllPanelWindows() {
   await invoke('close_panel_webviews').catch(() => {});
-  const all = await WebviewWindow.getAll();
-  await Promise.all(
-    all
-      .filter(w => w.label.startsWith('panel-') || w.label === 'floating')
-      .map(w => w.close().catch(() => {}))
-  );
+  // `WebviewWindow.getAll()` returns nothing for child webviews, so the floating
+  // overlay has to be closed explicitly by label.
+  await invoke('close_webview', { label: 'floating' }).catch(() => {});
 }
 
 interface PanelLoadResult {
@@ -298,6 +294,13 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   const panelLabelsRef   = useRef<string[]>([]);
   const panelTimersRef   = useRef<ReturnType<typeof setTimeout>[]>([]);
   const tapTimestamps    = useRef<number[]>([]);
+  // Tracks the floating overlay across the async gap between requesting its
+  // creation and the child webview actually existing (Rust creates it on a
+  // spawned thread, so `webview_exists` can still report false right after).
+  const floatingOpenRef  = useRef(false);
+  // Serialises page loads so concurrent `load_page` pushes cannot race each
+  // other's close/create and collide on a panel label.
+  const panelOpRef       = useRef<Promise<void>>(Promise.resolve());
 
   function handleCornerTap() {
     const now = Date.now();
@@ -416,10 +419,11 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   // Panels are created strictly in sequence: each panel's window must fully build
   // before the next is requested, otherwise WebKit's NetworkProcess is overwhelmed
   // on kiosk hardware and the later panels fail to appear.
-  const openPanelWindows = useCallback(async (panels: PagePanel[], floating: FloatingConfig | null) => {
+  const applyPanelWindows = useCallback(async (panels: PagePanel[], floating: FloatingConfig | null) => {
     panelTimersRef.current.forEach(t => clearTimeout(t));
     panelTimersRef.current = [];
     await closeAllPanelWindows();
+    floatingOpenRef.current = false;
     panelLabelsRef.current = [];
     const { width: sw, height: sh } = await getDisplayGeometry();
 
@@ -472,6 +476,17 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
     }
   }, [config, deviceId]);
 
+  // Serialise page loads. The offline cached-page restore and the server's
+  // `load_page` push can both fire at startup; running them concurrently makes
+  // one batch's close race the other's create, which fails with
+  // "a webview with label `panel-…` already exists" and leaves a stale panel.
+  const openPanelWindows = useCallback(async (panels: PagePanel[], floating: FloatingConfig | null) => {
+    const run = () => applyPanelWindows(panels, floating);
+    const next = panelOpRef.current.then(run, run);
+    panelOpRef.current = next.then(() => undefined, () => undefined);
+    return next;
+  }, [applyPanelWindows]);
+
   // Offline boot: restore the last fully received page definition immediately.
   // A subsequent Core load_page command replaces it and refreshes the cache.
   useEffect(() => {
@@ -490,30 +505,45 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   }, [openPanelWindows]);
 
   const openFloatingUrl = useCallback(async (url: string, fullscreen = false) => {
-    const existing = await WebviewWindow.getByLabel('floating');
-    if (existing) {
-      if (fullscreen) {
-        await existing.close().catch(() => {});
-      } else {
-        await invoke('navigate_webview', { label: 'floating', url }).catch(console.error);
-        await existing.show().catch(() => {});
-        return;
+    try {
+      // Child webviews are invisible to `WebviewWindow.getByLabel` (they are not
+      // in Tauri's WebviewWindow registry), so ask Rust instead. The ref covers
+      // the window between requesting creation and the webview actually existing.
+      const exists = floatingOpenRef.current || await invoke<boolean>('webview_exists', { label: 'floating' });
+      if (exists) {
+        if (fullscreen) {
+          await invoke('close_webview', { label: 'floating' }).catch(() => {});
+          floatingOpenRef.current = false;
+        } else {
+          await invoke('navigate_webview', { label: 'floating', url }).catch(console.error);
+          await invoke('set_webview_visibility', { label: 'floating', visible: true }).catch(() => {});
+          return;
+        }
       }
+      const fc = loadedPage?.floating_config;
+      const { width: sw, height: sh } = await getDisplayGeometry();
+      // Use the batched command: the singular `create_panel_webview` rejects with
+      // "current webview is not a WebviewWindow" from the controller webview.
+      await invoke('create_panel_webviews', {
+        panels: [{
+          label:         'floating',
+          url,
+          x:             fullscreen ? 0 : pct(fc?.x ?? 10, sw),
+          y:             fullscreen ? 0 : pct(fc?.y ?? 10, sh),
+          width:         fullscreen ? sw : pct(fc?.w ?? 80, sw),
+          height:        fullscreen ? sh : pct(fc?.h ?? 80, sh),
+          visible:       true,
+          ingressSession: null,
+          initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+        }],
+      });
+      floatingOpenRef.current = true;
+      panelLabelsRef.current = [...panelLabelsRef.current.filter(l => l !== 'floating'), 'floating'];
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      invoke('client_log', { message: `[floating] open failed: ${message}` }).catch(() => {});
+      console.error('[floating] openFloatingUrl failed:', e);
     }
-    const fc = loadedPage?.floating_config;
-    const { width: sw, height: sh } = await getDisplayGeometry();
-    await invoke('create_panel_webview', {
-      label:         'floating',
-      url,
-      x:             fullscreen ? 0 : pct(fc?.x ?? 10, sw),
-      y:             fullscreen ? 0 : pct(fc?.y ?? 10, sh),
-      width:         fullscreen ? sw : pct(fc?.w ?? 80, sw),
-      height:        fullscreen ? sh : pct(fc?.h ?? 80, sh),
-      title:         'Floating',
-      visible:       true,
-      ingressSession: null,
-      initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-    }).catch(e => console.error('[floating] create_panel_webview error:', e));
   }, [config.haToken, config.haUrl, loadedPage]);
 
   // ── WS command handler ───────────────────────────────────────────────────
@@ -642,23 +672,26 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
         const canvas_view_id = cmd.canvas_view_id as string | undefined;
         const url = `${config.haUrl}/canvas-ui-static/kiosk.html${canvas_view_id ? '#' + canvas_view_id : ''}`;
         const label = 'panel-fallback';
-        const existing = await WebviewWindow.getByLabel(label);
-        if (existing) {
+        const exists = await invoke<boolean>('webview_exists', { label });
+        if (exists) {
           await invoke('navigate_webview', { label, url }).catch(console.error);
         } else {
           const { width: sw, height: sh } = await getDisplayGeometry();
-          await invoke('create_panel_webview', {
-            label,
-            url,
-            x:             0,
-            y:             0,
-            width:         sw,
-            height:        sh,
-            title:         'Canvas Display',
-            visible:       true,
-            ingressSession: null,
-            initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-          }).catch(e => console.error('[load_view] create_panel_webview error:', e));
+          // Use the batched command: the singular `create_panel_webview` rejects
+          // with "current webview is not a WebviewWindow" from the controller webview.
+          await invoke('create_panel_webviews', {
+            panels: [{
+              label,
+              url,
+              x:             0,
+              y:             0,
+              width:         sw,
+              height:        sh,
+              visible:       true,
+              ingressSession: null,
+              initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+            }],
+          }).catch(e => console.error('[load_view] create_panel_webviews error:', e));
           panelLabelsRef.current = [label];
         }
         break;
@@ -765,7 +798,8 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       }
 
       case 'hide_floating':
-        WebviewWindow.getByLabel('floating').then(w => w?.hide().catch(() => {}));
+        floatingOpenRef.current = false;
+        invoke('set_webview_visibility', { label: 'floating', visible: false }).catch(() => {});
         break;
 
       case 'screen_off':
@@ -819,21 +853,24 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
   useEffect(() => {
     if (appState !== 'ready' || !deviceId || loadedPage) return;
     const label = 'panel-fallback';
-    WebviewWindow.getByLabel(label).then(async existing => {
-      if (existing) return;
+    invoke<boolean>('webview_exists', { label }).then(async exists => {
+      if (exists) return;
       const { width: sw, height: sh } = await getDisplayGeometry();
-      invoke('create_panel_webview', {
-        label,
-        url:           `${config.haUrl}/canvas-ui-static/kiosk.html`,
-        x:             0,
-        y:             0,
-        width:         sw,
-        height:        sh,
-        title:         'Canvas Display',
-        visible:       true,
-        ingressSession: null,
-        initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
-      }).catch(e => console.error('[fallback] create_panel_webview error:', e));
+      // Use the batched command: the singular `create_panel_webview` rejects
+      // with "current webview is not a WebviewWindow" from the controller webview.
+      invoke('create_panel_webviews', {
+        panels: [{
+          label,
+          url:           `${config.haUrl}/canvas-ui-static/kiosk.html`,
+          x:             0,
+          y:             0,
+          width:         sw,
+          height:        sh,
+          visible:       true,
+          ingressSession: null,
+          initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+        }],
+      }).catch(e => console.error('[fallback] create_panel_webviews error:', e));
       panelLabelsRef.current = [label];
     });
   }, [appState, deviceId, loadedPage, config.serverUrl]);

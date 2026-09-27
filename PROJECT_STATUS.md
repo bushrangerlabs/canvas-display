@@ -490,13 +490,14 @@ The display has one audio output; mpv (voice TTS / radio / DLNA pushes) and the 
 
 ### Not yet done (next steps)
 
-1. **Deploy the sidecar to the Pi** — build the arm64 sidecar on the Pi (see `AGENTS.md` → Build & deployment) and install to `/usr/bin/canvas-display-server`, then restart **both** `canvas-display-browser.service` and `canvas-display-server.service` (the nftables `3100→8099` redirect means updating only one is not enough).
-2. **Remove the `gmediarender` prototype** on the Pi (`canvas-dlna-renderer.service`, port 49494) — it is audio-only and is superseded by this renderer. Also remove the manually-added HA `dlna_dmr` entry for it.
-3. **Acceptance on the Pi**: confirm HA `dlna_dmr` auto-discovers the new renderer (no manual entry), push an audio track (mpv) and a video (kiosk floating WebView), and confirm album art + title reach the UI.
-4. **Snapcast arbiter acceptance**: with `canvas-snapclient.service` running, start a DLNA push and confirm snapclient stops; then start snapclient and confirm mpv stops.
+1. **Deploy the sidecar to the Pi** — done this session (see below).
+2. **Remove the `gmediarender` prototype** — done this session (`canvas-dlna-renderer.service` stopped + disabled). The manually-added HA `dlna_dmr` entry for it still needs removing in HA.
+3. **Acceptance on the Pi**: DLNA discovery/description/SOAP, audio push (mpv) and video push (floating overlay) are all verified. Still to do: confirm HA `dlna_dmr` **auto-discovers** the new renderer (no manual entry) and that album art + title reach the UI.
+4. **Snapcast arbiter acceptance**: verified in one direction (a DLNA audio push stops snapclient). Still to check: starting snapclient stops mpv.
 5. **Android parity**: the native Android app has no DLNA renderer or Snapcast client yet. Snapclient is buildable for Android (the `badaix/snapdroid` project bundles native ARM/X86 clients); a Kotlin DLNA renderer would mirror this design.
 6. **Core ↔ Music Assistant direct API** and **Core `/api/tts` `/api/stt` `/api/conversation`** endpoints (so Core/edges are standalone and HA can use them as a TTS/STT device) remain from the previous session's plan.
 7. **Deploy the HA `canvas_display` component in Core mode** (needs HA config access) — unchanged from the previous session.
+8. **Two page sources race**: the sidecar pushes its own `server_settings.active_page_id` on hello while the Core pushes the device's `device_page_assignments` page. Whichever arrives last wins, so the displayed page is non-deterministic after a kiosk restart. On the Pi the sidecar's value is a stale test page (`480sjZmvtg` → `https://example.com`). Worth making the Core authoritative (e.g. stop the sidecar pushing a page when a Core control channel is configured).
 
 ### Pi deployment + acceptance (2026-09-27/28)
 
@@ -513,17 +514,34 @@ Deployed to the Pi (`192.168.1.216`) this session:
 - The kiosk is connected to the **system** sidecar as a `browser` client (`Hello from browser (pi5-living-room)`), so `broadcast(..., 'browser')` reaches it. Note both sidecars run the same binary and both try to bind 49500; the system service wins (it starts first at boot) and the kiosk-spawned one logs `EADDRINUSE` and continues without DLNA. This ordering dependency is fragile — see the follow-up below.
 - **DLNA video push is classified and routed correctly**: a `.mp4` push reports `isVideo:true` and `PLAYING` and is dispatched to the kiosk `show_floating` path.
 
-### BLOCKER FOUND: the kiosk's `show_floating` overlay does not open (pre-existing)
+### FIXED: the kiosk's `show_floating` overlay never opened
 
-While verifying the DLNA video path I found that the kiosk **never opens the floating overlay**. Verified with live screenshots (`grim` confirmed working by stopping/starting the kiosk and seeing the frame change):
+While verifying the DLNA video path I found that the kiosk **never opened the floating overlay** — this broke YouTube fullscreen playback, knowledge-card overlays, **and** the new DLNA video routing. It is now fixed and verified on the Pi.
 
-- `POST /api/media/open {url}` → `show_floating` → **no visual change**, and the Rust log shows **no** `[create_one_panel] … 'floating'` / `[navigate_webview] label=floating` entry.
-- `POST /api/media/play {source:'youtube', …}` (the path the previous session recorded as verified) → **no visual change** either.
-- Control commands that *do* work on the same connection: `reload` (WS disconnect/reconnect observed), `navigate_panel` (`[navigate_webview]` logged), `load_page` (panels created).
+**Root cause.** `browser/linux/src-tauri/src/lib.rs` documents (in the `set_kiosk_visible` doc comment) that on this kiosk build the main window's `is_webview_window()` is **false**. Tauri's `CommandArg` impl for `tauri::WebviewWindow` rejects in that case with `current webview is not a WebviewWindow`, so **every** command taking a `WebviewWindow` parameter failed from the controller webview:
 
-So the failure is specific to `openFloatingUrl` (`browser/linux/src/screens/KioskScreen.tsx`), which every floating-overlay feature shares: **YouTube fullscreen playback, knowledge-card overlays, and the new DLNA video routing**. The most likely cause is the first unguarded call in `openFloatingUrl`, `WebviewWindow.getByLabel('floating')` (a Tauri v2 API that may be missing a capability/permission in the deployed build); `getDisplayGeometry()` already has a try/catch fallback so it is not the culprit. **This is not caused by the DLNA work** — the DLNA renderer routes video correctly; the kiosk side is what fails.
+- `create_panel_webview` (used by `openFloatingUrl`, the fallback, and `load_view`)
+- `display_geometry` (silently swallowed by its try/catch fallback, so panel geometry quietly fell back to CSS screen metrics)
 
-**Next action:** reproduce with the kiosk WebView devtools/console visible (or add a temporary log line at the top of `openFloatingUrl`) to capture the thrown error, then fix and rebuild the kiosk. Until then, DLNA **audio** is functional end-to-end and DLNA **video** is not.
+A second, independent defect: panel/floating webviews are **child** webviews, so they are absent from Tauri's WebviewWindow registry. `WebviewWindow.getByLabel('floating')` therefore always returned `null` and `WebviewWindow.getAll()` always returned `[]`, so the code always took the "create" branch (hitting `a webview with label \`floating\` already exists`) and `closeAllPanelWindows()` never actually closed anything.
+
+**Fixes:**
+
+- `lib.rs`: `create_one_panel`, `create_panel_webview`, `create_panel_webviews` and `display_geometry` now take `tauri::Window` (which always injects) instead of `tauri::WebviewWindow`; `create_one_panel` calls `window.add_child(...)` directly.
+- `lib.rs`: new `webview_exists(label)` command (`app.get_webview(label).is_some()`) — the only reliable way to test for a child webview.
+- `lib.rs`: new `client_log(message)` command so frontend failures reach `/tmp/canvas-ui-kiosk.log` (the controller WebView's `console.*` is not captured anywhere).
+- `lib.rs`: `close_panel_webviews` now waits for the main thread to finish closing (bounded 5 s) so a following create cannot race the close.
+- `KioskScreen.tsx`: `openFloatingUrl`, `hide_floating`, the fallback effect and `load_view` use `webview_exists` / `close_webview` / `set_webview_visibility` / `navigate_webview` instead of `WebviewWindow`; the `WebviewWindow` import is gone. A `floatingOpenRef` covers the gap between requesting creation and the webview existing.
+- `KioskScreen.tsx`: `openPanelWindows` is serialised through a promise chain (`panelOpRef`) so the offline cached-page restore and the server's `load_page` push cannot race each other's close/create.
+
+**Verified on the Pi** (live screenshots via `grim`, which was confirmed live by stopping/starting the kiosk):
+
+- `POST /api/media/open {url}` → the overlay opens and plays the video; a second push **navigates** the existing overlay (no duplicate); `revert_after_ms` hides it and the page returns.
+- `POST /api/media/play {source:'youtube'}` → the YouTube player overlay opens (the test video itself was "unavailable" — not embeddable — but the player chrome rendered).
+- **DLNA video push works end-to-end**: `SetAVTransportURI` + `Play` → the renderer broadcasts `show_floating` with its `/video` wrapper URL → the overlay opens and plays.
+- Two page switches in a row produce **0** `already exists` / `BUILD FAILED` log entries (was 1 per switch).
+
+**Build gotcha (cost real time):** the kiosk must be built with the **Tauri CLI** (`npx tauri build --no-bundle`), not raw `cargo build --release`. A raw cargo build compiles with `--cfg dev`, producing a binary that expects the Vite dev server (`Could not connect to React: Connection refused` on screen).
 
 ### Operational notes learned this session
 
