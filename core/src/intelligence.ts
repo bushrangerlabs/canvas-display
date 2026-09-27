@@ -19,7 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import type { CoreConfig } from './config.js';
 import { OpenAiCompatibleLlm, DegradedLlm, parseContentAsToolCalls, type LlmProvider } from './providers/llm.js';
-import { WhisperTranscription, type TranscriptionProvider } from './providers/asr.js';
+import { WhisperTranscription, type TranscriptionProvider, type TranscriptionResult } from './providers/asr.js';
 import { PiperSpeech, type SpeechProvider } from './providers/tts.js';
 import { HttpJsonRpcMcpClient, type McpClient } from './providers/mcp.js';
 import { MultiMcpManager, parseMcpServerConfigs } from './providers/multi-mcp.js';
@@ -260,6 +260,56 @@ export interface PrivacyRepository {
   purgeAll(): Promise<{ purgedTranscripts: number; purgedAudio: number }>;
   storeTranscript(text: string): Promise<void>;
   storeAudio(size: number): Promise<void>;
+}
+
+/**
+ * Whisper hallucinates fluent sentences from non-speech audio (ambient noise, TV
+ * bleed, music). These are the signals that distinguish a real utterance from a
+ * hallucination, using Whisper's own defaults for "no speech" detection.
+ *
+ * Returns a reason string when the transcript should NOT be acted on, else null.
+ */
+export function unreliableTranscriptReason(result: TranscriptionResult): string | null {
+  const text = result.text.trim();
+  if (!text) return null; // empty is handled separately as a no-intent turn
+  if (result.noSpeechProb !== null && result.noSpeechProb > 0.6) {
+    return `no_speech_prob=${result.noSpeechProb.toFixed(2)}`;
+  }
+  if (result.avgLogProb !== null && result.avgLogProb < -1.0) {
+    return `avg_logprob=${result.avgLogProb.toFixed(2)}`;
+  }
+  // Known Whisper boilerplate that appears on silence/noise.
+  const boilerplate = [
+    /^(?:thank you|thanks) for watching/i,
+    /please (?:like|subscribe)/i,
+    /subtitles? by/i,
+    /amara\.org/i,
+    /^\s*(?:you know|i mean|well,|so,)\s/i,
+  ];
+  if (boilerplate.some(pattern => pattern.test(text))) {
+    return 'hallucination_pattern';
+  }
+  return null;
+}
+
+/**
+ * Ambient audio (TV dialogue, music, conversation) can produce a long, rambling
+ * transcript that the LLM then invents an intent for. Real commands are short and
+ * command-shaped, so treat long LLM-classified utterances as no-intent instead of
+ * acting on them (which otherwise plays random media).
+ *
+ * Returns a reason string when the transcript should NOT be acted on, else null.
+ */
+export function ambientTranscriptReason(transcript: string): string | null {
+  const text = transcript.trim();
+  if (!text) return null;
+  const words = text.split(/\s+/).filter(Boolean).length;
+  if (words > 18) return `too_long=${words}_words`;
+  // Conversational filler is a strong hallucination / overheard-speech signal.
+  if (words > 8 && /^(?:you know|i mean|well,|so,|and then|he |she |they |it was)\b/i.test(text)) {
+    return 'conversational_filler';
+  }
+  return null;
 }
 
 export function createIntelligence(
@@ -997,10 +1047,16 @@ export function createIntelligence(
     // 2) ASR
     const asrStartedAt = performance.now();
     let transcript: string;
+    let asrConfidence: TranscriptionResult | null = null;
     if (input.transcript && input.transcript.length > 0) {
       transcript = input.transcript;
     } else if (input.audio && asr) {
-      transcript = await asr.transcribe(input.audio, 'audio/wav');
+      if (asr.transcribeDetailed) {
+        asrConfidence = await asr.transcribeDetailed(input.audio, 'audio/wav');
+        transcript = asrConfidence.text;
+      } else {
+        transcript = await asr.transcribe(input.audio, 'audio/wav');
+      }
     } else if (input.audio && !asr) {
       throw new Error('ASR not configured but no transcript provided');
     } else {
@@ -1008,6 +1064,39 @@ export function createIntelligence(
     }
 
     const asrMs = performance.now() - asrStartedAt;
+
+    // Reject hallucinated transcripts before they can be routed to an action.
+    // Whisper invents fluent sentences from ambient noise / TV bleed; acting on
+    // them plays random media. Treat them as a no-intent turn instead.
+    if (asrConfidence) {
+      const unreliable = unreliableTranscriptReason(asrConfidence);
+      if (unreliable) {
+        console.warn(
+          `[intel][asr] Discarding unreliable transcript (${unreliable}): "${transcript.slice(0, 80)}"`,
+        );
+        audioFocus.releaseFocus('voice');
+        return {
+          transcript: '',
+          reply: '',
+          degraded: usingDegraded,
+          intent: {
+            intent: 'unknown',
+            confidence: 0,
+            entities: [],
+            tool_calls: [],
+            clarification_needed: false,
+            response: '',
+          },
+          timings: {
+            asrMs: Math.round(asrMs),
+            routingMs: 0,
+            planningMs: 0,
+            ttsMs: 0,
+            totalMs: Math.round(performance.now() - pipelineStartedAt),
+          },
+        };
+      }
+    }
 
     // 3) Privacy
     const { displayTranscript, redactedCount } = await applyTranscriptPrivacy(transcript);
@@ -1021,6 +1110,32 @@ export function createIntelligence(
     const intent = await intentRouter.route(transcript);
     const routingMs = performance.now() - routingStartedAt;
     console.log(`[intel][intent] Resolved intent=${intent.intent} source=${intent.source} confidence=${intent.confidence}`);
+
+    // Only act on an LLM-classified request when it is short and command-shaped.
+    // A deterministic match is always trusted; a long LLM-classified utterance is
+    // usually overheard speech (TV) that the model invented an intent for.
+    if (intent.source === 'llm') {
+      const ambient = ambientTranscriptReason(transcript);
+      if (ambient) {
+        console.warn(
+          `[intel][voice-route] Ignoring ambient transcript (${ambient}): "${transcript.slice(0, 80)}"`,
+        );
+        audioFocus.releaseFocus('voice');
+        return {
+          transcript: '',
+          reply: '',
+          degraded: usingDegraded,
+          intent,
+          timings: {
+            asrMs: Math.round(asrMs),
+            routingMs: Math.round(routingMs),
+            planningMs: 0,
+            ttsMs: 0,
+            totalMs: Math.round(performance.now() - pipelineStartedAt),
+          },
+        };
+      }
+    }
 
     // Empty ASR output is a no-intent turn. Do not ask the LLM to answer an
     // empty prompt or synthesize a long response the Edge will discard.

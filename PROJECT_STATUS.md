@@ -416,6 +416,17 @@ The LLM request classifier's free-form `source` was used verbatim, so "play bohe
 
 While adding the `CANVAS_CORE_PUBLIC_URL` passthrough I overwrote the remote `core/docker-compose.yml` with the repo's version, which requires `CANVAS_CORE_TLS_DIR` (not set on the host). The authoritative remote compose is `/home/spetchal/canvas-core/docker-compose.yml` (build context `.`, TLS dir hardcoded to `/home/spetchal/canvas-core-tls-private-20260926/generation-1`). Both `/home/spetchal/canvas-core/docker-compose.yml` and `/home/spetchal/canvas-core/core/docker-compose.yml` were rewritten with the hardcoded TLS paths + the `PUBLIC_URL` passthrough and now validate. **Note:** the `core/` compose reads `core/.env`; the parent compose reads the (empty) parent `.env` — the `core/` one is the one that carries the real env.
 
+### Ambient-noise / false-wake fix
+
+The Pi kiosk log showed the wake word firing on ambient/TV audio (score 0.988) and the resulting capture being transcribed into a fluent but meaningless sentence (*"You know, he and some of his workers are stopping me from his clean ball game…"*), which the LLM then classified as `media_play` and acted on — random YouTube playback. Two layers added in Core:
+
+1. **ASR confidence gate** (`core/src/providers/asr.ts` + `intelligence.ts`): the ASR provider now requests `verbose_json` and returns Whisper's `no_speech_prob` / `avg_logprob` / `duration`. Transcripts with `no_speech_prob > 0.6` or `avg_logprob < -1.0` (Whisper's own no-speech defaults), or matching known hallucination boilerplate, are discarded as a no-intent turn.
+2. **Command-shape gate** (`ambientTranscriptReason` in `intelligence.ts`): only act on an **LLM-classified** request when it is short and command-shaped. A transcript over 18 words, or over 8 words starting with conversational filler (`you know`, `i mean`, `well,`, `he `, `she `, `they `…), is treated as overheard speech and ignored. Deterministic matches are always trusted.
+
+Verified: the observed hallucination is now discarded (`Ignoring ambient transcript (too_long=25_words)`), while "turn on the kitchen lights" and "play some jazz" still act normally. Synthetic noise/tone/babble/melody clips all produce empty transcripts. The sidecar plays the existing no-intent cue on a discarded turn.
+
+Note: the wake word itself scored 0.988, so a threshold change would not help — the guard is at the command level. Thresholds are constants in `intelligence.ts` and easy to tune.
+
 ### Deployments this session
 
 - **`local-llm` provider fixed**: the remote `.env` pointed `CANVAS_CORE_LLM_BASE_URL` at a dead `:8092`; repointed to the running local router (`router-qwen3-1.7b` on `:8081`). Core now reports every provider UP (`local-llm`, `local-asr`, `local-tts`, `mcp 8/8`, `ha 2107 entities`). Backup: `.env.bak-20260927`.

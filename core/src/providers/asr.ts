@@ -21,7 +21,24 @@ import type { FetchImpl } from './llm.js';
 export interface TranscriptionProvider {
   /** Transcribe audio bytes; returns the transcript text. */
   transcribe(audio: Buffer, mimeType?: string): Promise<string>;
+  /**
+   * Transcribe with Whisper's confidence signals, used to reject hallucinations
+   * on non-speech audio (ambient noise, TV bleed). Optional: providers that cannot
+   * report confidence fall back to `transcribe`.
+   */
+  transcribeDetailed?(audio: Buffer, mimeType?: string): Promise<TranscriptionResult>;
   healthCheck(): Promise<HealthStatus>;
+}
+
+/** Transcript plus the signals Whisper reports for it. */
+export interface TranscriptionResult {
+  text: string;
+  /** Whisper's probability that the segment contains no speech (0..1). */
+  noSpeechProb: number | null;
+  /** Mean log-probability of the decoded tokens (higher is more confident). */
+  avgLogProb: number | null;
+  /** Audio duration in seconds, when reported. */
+  durationSec: number | null;
 }
 
 export interface WhisperTranscriptionOptions {
@@ -61,6 +78,15 @@ export class WhisperTranscription implements TranscriptionProvider {
   }
 
   async transcribe(audio: Buffer, mimeType = 'audio/wav'): Promise<string> {
+    return (await this.transcribeDetailed(audio, mimeType)).text;
+  }
+
+  /**
+   * Transcribe with `verbose_json` so Whisper's `no_speech_prob` / `avg_logprob`
+   * are available. These are the signals that distinguish a real utterance from
+   * a hallucinated sentence produced from ambient noise.
+   */
+  async transcribeDetailed(audio: Buffer, mimeType = 'audio/wav'): Promise<TranscriptionResult> {
     const form = new FormData();
     // Node 20 global FormData accepts a Blob with a filename + type.
     form.append(
@@ -69,7 +95,7 @@ export class WhisperTranscription implements TranscriptionProvider {
       'audio.wav',
     );
     form.append('model', this.model);
-    form.append('response_format', this.responseFormat);
+    form.append('response_format', 'verbose_json');
     if (this.language) form.append('language', this.language);
 
     const controller = new AbortController();
@@ -83,11 +109,29 @@ export class WhisperTranscription implements TranscriptionProvider {
         const text = await res.text().catch(() => '');
         throw new Error(`ASR ${res.status}: ${text.slice(0, 200)}`);
       }
-      const data = (await res.json()) as { text?: string };
+      const data = (await res.json()) as {
+        text?: string;
+        duration?: number;
+        segments?: Array<{ no_speech_prob?: number; avg_logprob?: number }>;
+      };
       if (typeof data.text !== 'string') {
         throw new Error('ASR response missing "text"');
       }
-      return data.text;
+      const segments = Array.isArray(data.segments) ? data.segments : [];
+      const noSpeech = segments
+        .map(segment => segment.no_speech_prob)
+        .filter((value): value is number => typeof value === 'number');
+      const logProbs = segments
+        .map(segment => segment.avg_logprob)
+        .filter((value): value is number => typeof value === 'number');
+      return {
+        text: data.text,
+        // The worst segment decides: one clearly non-speech segment is enough to
+        // distrust the whole transcript.
+        noSpeechProb: noSpeech.length > 0 ? Math.max(...noSpeech) : null,
+        avgLogProb: logProbs.length > 0 ? logProbs.reduce((a, b) => a + b, 0) / logProbs.length : null,
+        durationSec: typeof data.duration === 'number' ? data.duration : null,
+      };
     } finally {
       clearTimeout(timer);
     }
