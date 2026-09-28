@@ -1,3 +1,6 @@
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
 /**
  * DAB+ (SDR radio) and Dispatcharr (IPTV) media sources.
  *
@@ -201,6 +204,23 @@ export function resolveDispatcharrChannel(
     streamUrl = match.url;
   }
   return { name: name || streamUrl, url: streamUrl };
+}
+
+/** Prepare a Dispatcharr live stream for a standalone TV receiver. */
+export async function externalDispatcharrPlaybackUrl(
+  value: string,
+  resolveHost: (hostname: string) => Promise<string> = async hostname => (await lookup(hostname, { family: 4 })).address,
+): Promise<string> {
+  const url = new URL(value);
+  // Chromecast's Default Media Receiver rejects Dispatcharr's continuous
+  // MPEG-TS response but plays its fragmented MP4 output.
+  url.searchParams.set('output_format', 'fmp4');
+  // Cast receivers normally cannot resolve private DNS search suffixes even
+  // when Core can. Preserve public hostnames and resolve only LAN-only names.
+  if (!isIP(url.hostname) && (url.hostname.endsWith('.localdomain') || url.hostname.endsWith('.local'))) {
+    url.hostname = await resolveHost(url.hostname);
+  }
+  return url.toString();
 }
 
 /**

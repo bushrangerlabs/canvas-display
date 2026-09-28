@@ -38,6 +38,7 @@ import {
   clearMediaCaches,
   fetchDabStations,
   fetchDispatcharrChannels,
+  externalDispatcharrPlaybackUrl,
   resolveDispatcharrChannel,
   stepTargetIndex,
   tuneDabStation,
@@ -1668,8 +1669,11 @@ export async function registerLegacyRoutes(
         .filter((item) => item.name.length > 0);
       const index = stepTargetIndex(channels, audioState.title, direction);
       const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
+      const playbackUrl = target && target.kind !== 'canvas'
+        ? await externalDispatcharrPlaybackUrl(resolved.url)
+        : resolved.url;
       return await applyAudioPlayback(
-        { url: resolved.url, title: resolved.name, source: 'dispatcharr', mediaKind: 'video' },
+        { url: playbackUrl, title: resolved.name, source: 'dispatcharr', mediaKind: 'video' },
         target,
         options.dispatchMediaToTarget,
       );
@@ -2003,12 +2007,15 @@ export async function registerLegacyRoutes(
         const channels = await fetchDispatcharrChannels(base, apiKey || undefined);
         resolved = resolveDispatcharrChannel(channels, name, url);
       }
+      const playbackUrl = target && target.kind !== 'canvas'
+        ? await externalDispatcharrPlaybackUrl(resolved.url)
+        : resolved.url;
       const state = await applyAudioPlayback(
-        { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr', mediaKind: 'video' },
+        { url: playbackUrl, title: resolved.name || resolved.url, source: 'dispatcharr', mediaKind: 'video' },
         target,
         options.dispatchMediaToTarget,
       );
-      return { success: true, channel: resolved.name, url: resolved.url, state, ...(target ? { target } : {}) };
+      return { success: true, channel: resolved.name, url: playbackUrl, state, ...(target ? { target } : {}) };
     } catch (err) {
       return reply.code(err instanceof PlaybackDestinationUnavailableError ? 503 : 502).send({ error: `Dispatcharr play failed: ${errorText(err)}` });
     }

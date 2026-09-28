@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { createTestDb } from './db-helpers.js';
 import { registerLegacyRoutes, getAudioState, resetAudioState, type LegacyRoutesOptions } from '../src/legacy-routes.js';
-import { clearMediaCaches, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
+import { clearMediaCaches, externalDispatcharrPlaybackUrl, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
 import type { CoreConfig } from '../src/config.js';
 
 function makeConfig(overrides: Partial<CoreConfig> = {}): CoreConfig {
@@ -455,18 +455,24 @@ test('targeted Dispatcharr playback is dispatched as video', async () => {
     dispatchMediaToTarget: async (_target, input) => { dispatched.push(input); },
   });
   await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-controller', 'Controller', 'android')");
+  const configured = await fastify.inject({
+    method: 'POST',
+    url: '/api/media/routing/device-controller/select',
+    payload: { mediaType: 'dispatcharr', target: { kind: 'media_player', id: 'ha:media_player.test_tv' } },
+  });
+  assert.equal(configured.statusCode, 200, configured.body);
   const res = await fastify.inject({
     method: 'POST',
     url: '/api/dispatcharr/play',
     payload: {
       channel: 'Direct TV',
-      url: 'http://stream/live.ts',
-      deviceId: 'device-controller',
+      url: 'http://stream.example.test/live.ts',
+      controllerDeviceId: 'device-controller',
     },
   });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(dispatched, [{
-    url: 'http://stream/live.ts',
+    url: 'http://stream.example.test/live.ts?output_format=fmp4',
     title: 'Direct TV',
     source: 'dispatcharr',
     artwork: undefined,
@@ -491,6 +497,30 @@ test('POST /api/dispatcharr/play accepts an explicit URL without the lineup', as
   } finally {
     restore();
   }
+});
+
+test('external Dispatcharr playback requests fMP4 and resolves a LAN-only hostname', async () => {
+  const result = await externalDispatcharrPlaybackUrl(
+    'http://theserver.localdomain:9191/proxy/ts/stream/channel?output_profile=1',
+    async hostname => {
+      assert.equal(hostname, 'theserver.localdomain');
+      return '192.168.1.108';
+    },
+  );
+  const url = new URL(result);
+  assert.equal(url.hostname, '192.168.1.108');
+  assert.equal(url.searchParams.get('output_profile'), '1');
+  assert.equal(url.searchParams.get('output_format'), 'fmp4');
+});
+
+test('external Dispatcharr playback preserves a public hostname', async () => {
+  let resolved = false;
+  const result = await externalDispatcharrPlaybackUrl('https://tv.example.test/live', async () => {
+    resolved = true;
+    return '192.0.2.1';
+  });
+  assert.equal(new URL(result).hostname, 'tv.example.test');
+  assert.equal(resolved, false);
 });
 
 // ─── Connection tests (Settings → Media) ─────────────────────────────────────

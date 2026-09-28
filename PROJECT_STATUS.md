@@ -997,3 +997,17 @@ Validation and deployment:
 - Live reversible acceptance selected `ha:media_player.bedroom_tv` temporarily for the Pi controller and played `AU: ABC news`. Core returned HTTP 200 with the requested HA target. After five seconds the HA entity reported Chromecast `Default Media Receiver`, the Dispatcharr stream URL and `media_content_type: video`. The test then sent stop and cleared the temporary route; Core media state and the TV returned to idle.
 
 Operational note: the catalogue currently contains three distinct entities all named `Bedroom TV` (a Chromecast receiver, an Android TV control entity and a Music Assistant queue entity). The working video target in this acceptance was `ha:media_player.bedroom_tv`; an owner-facing integration/entity discriminator would make the selector less ambiguous.
+
+Follow-up after the TV showed only the Cast logo:
+
+- The corrected media type launched Chromecast's Default Media Receiver, but HA immediately reported it idle at position 0. The Dispatcharr lineup URL returned a healthy continuous MPEG-TS stream (`video/mp2t`), and replacing `theserver.localdomain` with its LAN IP did not change the failure. This isolated the remaining problem to the container/receiver combination rather than Core dispatch or DNS alone.
+- The installed Dispatcharr supports `output_format=fmp4`. A live test of the same channel using fragmented MP4 changed Bedroom TV to `playing` and its position advanced continuously. Core now automatically requests fMP4 for non-Canvas Dispatcharr targets. It also resolves only LAN-only `.local`/`.localdomain` stream hostnames to IPv4 because Cast receivers do not inherit Core's private DNS search setup; public hostnames remain unchanged. Existing `output_profile` parameters are preserved.
+- DLNA video metadata now uses `video/mp4`, matching the stream Core supplies to external renderers.
+- Regression coverage checks the external-target route, fMP4 parameter, retained output profile, private hostname resolution and preservation of public hostnames.
+
+Validation and deployment:
+
+- `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 41/41 tests.
+- `cd core && npm run build` — PASS.
+- Synced only `core/dist/`, rebuilt and restarted only `canvas-core`.
+- Production-path acceptance selected the Chromecast entity temporarily and called `/api/dispatcharr/play` with only `channel: AU: ABC news` (no manually modified URL). Core returned HTTP 200. Seven seconds later HA reported `playing`, Default Media Receiver, `media_content_type: video`, and advancing position/duration. The URL reported by HA used host `192.168.1.108`, retained `output_profile=1`, and added `output_format=fmp4`. Playback was intentionally left running for owner visual confirmation.

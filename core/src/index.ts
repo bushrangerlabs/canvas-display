@@ -3391,7 +3391,7 @@ async function main(): Promise<void> {
       if (target.kind === 'dlna') {
         const output = await broadcastDelivery.getOutput(target.id);
         if (!output) throw new Error(`DLNA destination ${target.id} is not in the output catalogue`);
-        await playDlnaOutput(output, url, title, mediaKind === 'video' ? 'video/mpeg' : 'audio/mpeg');
+        await playDlnaOutput(output, url, title, mediaKind === 'video' ? 'video/mp4' : 'audio/mpeg');
         return;
       }
       if (target.kind === 'media_player') {
