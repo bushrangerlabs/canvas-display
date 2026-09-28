@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private var status: TextView? = null
     private lateinit var rendererContainer: FrameLayout
     private lateinit var renderer: MultiPanelRenderer
+    private var nativeVideoPlayer: NativeVideoPlayer? = null
     private lateinit var pageStore: EdgePageStore
     private var lastPage: EdgePage? = null
     private var directAudioPlayer: MediaPlayer? = null
@@ -233,10 +234,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRenderer() {
+        nativeVideoPlayer?.release()
+        nativeVideoPlayer = null
         val root = FrameLayout(this)
         rendererContainer = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(rendererContainer, FrameLayout.LayoutParams(-1, -1))
         renderer = MultiPanelRenderer(rendererContainer) { clearRevertTimer() }
+        nativeVideoPlayer = NativeVideoPlayer(rendererContainer)
         startDlnaRenderer()
         pageStore = EdgePageStore(this)
         status = TextView(this).apply {
@@ -283,13 +287,16 @@ class MainActivity : AppCompatActivity() {
                     { text -> runOnUiThread { statusText(text) }; if (text == "online") refreshVoiceConfigAndMaybeStart() },
                     { refreshVoiceConfigAndMaybeStart() },
                     { url, source, title ->
-                        if (source == "direct_audio") {
-                            runOnUiThread { playDirectAudio(url, title) }
-                            true
-                        } else {
-                            runOnUiThread { renderer.showFloating(url, fullscreen = true) }
-                            true
+                        when (playbackRoute(source)) {
+                            MediaPlaybackRoute.DIRECT_AUDIO -> runOnUiThread { playDirectAudio(url, title) }
+                            MediaPlaybackRoute.NATIVE_VIDEO -> runOnUiThread {
+                                if (directAudioActive) controlDirectAudio("stop", null)
+                                renderer.hideFloating()
+                                nativeVideoPlayer?.play(url, title)
+                            }
+                            MediaPlaybackRoute.WEB -> runOnUiThread { renderer.showFloating(url, fullscreen = true) }
                         }
+                        true
                     },
                     { action, value -> controlMedia(action, value) },
                     { url, ms -> runOnUiThread { openSearchPage(url, ms) } },
@@ -522,7 +529,11 @@ class MainActivity : AppCompatActivity() {
         val completed = CountDownLatch(1)
         var applied = false
         runOnUiThread {
-            applied = if (directAudioActive) controlDirectAudio(action, value) else renderer.controlMedia(action, value)
+            applied = when {
+                nativeVideoPlayer?.active == true -> nativeVideoPlayer?.control(action, value) == true
+                directAudioActive -> controlDirectAudio(action, value)
+                else -> renderer.controlMedia(action, value)
+            }
             completed.countDown()
         }
         return completed.await(2, TimeUnit.SECONDS) && applied
@@ -716,6 +727,8 @@ class MainActivity : AppCompatActivity() {
         dlnaService?.stop()
         dlnaService = null
         dlnaAdapter = null
+        nativeVideoPlayer?.release()
+        nativeVideoPlayer = null
         if (::renderer.isInitialized) renderer.destroyAll()
         voicePipeline?.stop()
         voicePipeline = null

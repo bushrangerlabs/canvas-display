@@ -1018,3 +1018,26 @@ Audio follow-up:
 - Core now queries Dispatcharr's authenticated `/api/core/outputprofiles/` catalogue, selects an active profile whose name or ffmpeg parameters specify AAC, caches that catalogue briefly, and overrides only external TV/DLNA playback with that profile. This avoids assuming a fixed profile ID and leaves Canvas-edge playback unchanged.
 - `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 42/42 tests. `cd core && npm run build` — PASS. The tests cover ignoring the AC3 profile, selecting AAC and placing the selected profile on the external URL.
 - Synced only `core/dist/`, rebuilt and restarted only `canvas-core`. The normal production request now selects output profile 2 and fMP4 automatically. HA reports Bedroom TV `playing` with advancing position/duration, while a live `ffprobe` of the selected output confirms AAC, 48 kHz, stereo. Playback was left running for owner audio confirmation.
+
+## Android native Dispatcharr video playback (2026-09-29)
+
+Objective: replace the Android edge's WebView-based Dispatcharr playback with a self-contained native video path and verify it on the physical tablet.
+
+Implemented and deployed (owner-authorized):
+
+- Android now routes `dispatcharr` media to a persistent Media3 ExoPlayer/PlayerView overlay; direct audio still uses MediaPlayer and other web media still uses the floating WebView. The video owner participates in `AudioSinkArbiter`, so acquiring video releases Snapcast and stopping video permits the configured idle handler to resume it.
+- Play, stop, volume and mute operate on the native player. Live pause stops network loading; resume reopens the current channel at its live edge. A rolling-window read-position error also reloads at live.
+- Core gives Android an AAC/fMP4 Dispatcharr variant through a validated HTTPS relay (`/api/dispatcharr/stream/:uuid`). This avoids Android cleartext-policy failures without weakening TLS or accepting arbitrary proxy URLs. The relay's 15-second limit applies only while opening the upstream; continuous playback is not timed out, and client disconnect aborts the Dispatcharr request.
+- Corrected live `CANVAS_CORE_PUBLIC_URL` from the HTTP control port to `https://192.168.1.108:3100`, then recreated Core. No credentials were printed or stored here.
+- Installed the final debug APK in place on tablet `A1064US260402203`, preserving its enrollment. Synced only `core/dist/` to the Core host and rebuilt/recreated only `canvas-core` from the canonical parent Compose project.
+
+Validation:
+
+- `cd core && npx tsx --test test/media-routes.test.ts && npm run build` — PASS, 44/44 tests and TypeScript build.
+- `cd browser/android-native && <cached Gradle 8.14.3> --offline :app:testDebugUnitTest :app:assembleDebug` — PASS, including three media-routing JVM tests.
+- `adb install -r app/build/outputs/apk/debug/app-debug.apk` — PASS.
+- Strict TLS health with the Android-bundled public CA: `curl --cacert browser/android-native/app/src/main/res/raw/canvas_core_ca.pem -fsS https://192.168.1.108:3100/health` — PASS (`status: ok`).
+- Live production path on Android Edge: play `AU: ABC news`, wait, pause for 3.5 seconds, resume, wait 10 seconds — all three Core calls returned HTTP 200. Logcat progressed from Media3 buffering (`state=2`) to ready (`state=3`) after resume. `/tmp/canvas-android-native-video-final.png` shows the live ABC News frame. Android audio diagnostics show the app's active 48 kHz stereo `AudioTrack`, increasing frames written and non-silent signal power.
+- The first live iteration exposed indefinite buffering: Core's timeout covered the continuous body and pause retained the upstream. The final relay/player lifecycle changes above fixed it. The player also retries up to twice when a live fMP4 open remains buffering for eight seconds or lands between fragments. A fresh play after installing this final build recovered automatically and `/tmp/canvas-android-native-video-autoretry-final.png` shows live video.
+
+Current live state: ABC News was left playing on the Android tablet for owner confirmation. Linux and television binaries were not changed by this Android-native player work.

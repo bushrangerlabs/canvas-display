@@ -489,6 +489,38 @@ test('targeted Dispatcharr playback is dispatched as video', async () => {
   }
 });
 
+test('Android Dispatcharr playback receives a resolvable AAC fMP4 variant', async () => {
+  clearMediaCaches();
+  const urls: string[] = [];
+  const { fastify, pool } = await buildServer(makeConfig({ publicUrl: 'https://core.test:3100' }), {
+    dispatchMediaToTarget: async (_target, input) => { urls.push(input.url); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-android', 'Tablet', 'android')");
+  const restore = stubFetch((url) => url.includes('/api/core/outputprofiles/')
+    ? jsonResponse([{ id: 2, name: 'Web Player (AAC Audio)', parameters: '-c:a aac', is_active: true }])
+    : jsonResponse({}));
+  try {
+    const res = await fastify.inject({
+      method: 'POST', url: '/api/dispatcharr/play',
+      payload: {
+        channel: 'Direct TV',
+        url: 'http://192.168.1.108:9191/proxy/ts/stream/f2e14388-7336-4110-bd1b-b01305d329a2?output_profile=1',
+        deviceId: 'device-android',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(urls[0], 'https://core.test:3100/api/dispatcharr/stream/f2e14388-7336-4110-bd1b-b01305d329a2?output_profile=2&output_format=fmp4');
+  } finally {
+    restore();
+  }
+});
+
+test('Dispatcharr relay rejects a non-UUID stream id', async () => {
+  const { fastify } = await buildServer();
+  const res = await fastify.inject({ method: 'GET', url: '/api/dispatcharr/stream/not-a-channel' });
+  assert.equal(res.statusCode, 400);
+});
+
 test('POST /api/dispatcharr/play accepts an explicit URL without the lineup', async () => {
   resetAudioState();
   const { fastify } = await buildServer();

@@ -248,6 +248,14 @@ export async function externalDispatcharrPlaybackUrl(
   return url.toString();
 }
 
+/** Extract the opaque channel UUID from a Dispatcharr live-proxy URL. */
+export function dispatcharrStreamId(value: string): string | null {
+  const match = new URL(value).pathname.match(/^\/proxy\/ts\/stream\/([0-9a-f-]{36})\/?$/i);
+  return match && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(match[1])
+    ? match[1]
+    : null;
+}
+
 /**
  * Resolve the next/previous item index for a list, wrapping around. The current
  * item is matched against the playing title (exact, then substring). When nothing

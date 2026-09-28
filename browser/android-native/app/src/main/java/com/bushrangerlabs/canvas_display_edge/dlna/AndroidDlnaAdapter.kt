@@ -18,7 +18,7 @@ import android.media.MediaPlayer
  */
 object AudioSinkArbiter {
 
-    enum class Owner { IDLE, MEDIA, SNAPCAST }
+    enum class Owner { IDLE, MEDIA, VIDEO, SNAPCAST }
 
     private val releasers = mutableMapOf<Owner, () -> Unit>()
 

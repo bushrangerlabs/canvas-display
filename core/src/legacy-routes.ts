@@ -39,6 +39,7 @@ import {
   fetchDabStations,
   fetchDispatcharrChannels,
   externalDispatcharrPlaybackUrl,
+  dispatcharrStreamId,
   findDispatcharrAacOutputProfile,
   resolveDispatcharrChannel,
   stepTargetIndex,
@@ -1588,6 +1589,21 @@ export async function registerLegacyRoutes(
     return externalDispatcharrPlaybackUrl(url, undefined, profileId);
   };
 
+  const dispatcharrPlaybackUrl = async (url: string, target: PlaybackTarget | null): Promise<string> => {
+    if (!target) return url;
+    if (target.kind !== 'canvas') return dispatcharrExternalPlaybackUrl(url);
+    const result = await pool.query<{ architecture: string | null }>('SELECT architecture FROM devices WHERE id=$1', [target.id]);
+    if (String(result.rows[0]?.architecture ?? '').toLowerCase() !== 'android') return url;
+    const compatibleUrl = await dispatcharrExternalPlaybackUrl(url);
+    const streamId = dispatcharrStreamId(compatibleUrl);
+    const publicUrl = options.config?.publicUrl?.replace(/\/+$/, '');
+    if (!streamId || !publicUrl) return compatibleUrl;
+    const source = new URL(compatibleUrl);
+    const relay = new URL(`${publicUrl}/api/dispatcharr/stream/${streamId}`);
+    source.searchParams.forEach((value, key) => relay.searchParams.set(key, value));
+    return relay.toString();
+  };
+
   const proxiedDabUrl = (id: SdrModule['id'], upstream: string) => {
     const publicUrl = options.config?.publicUrl?.replace(/\/+$/, '');
     return publicUrl ? `${publicUrl}/api/dab/stream/${id}` : upstream;
@@ -1679,9 +1695,7 @@ export async function registerLegacyRoutes(
         .filter((item) => item.name.length > 0);
       const index = stepTargetIndex(channels, audioState.title, direction);
       const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
-      const playbackUrl = target && target.kind !== 'canvas'
-        ? await dispatcharrExternalPlaybackUrl(resolved.url)
-        : resolved.url;
+      const playbackUrl = await dispatcharrPlaybackUrl(resolved.url, target);
       return await applyAudioPlayback(
         { url: playbackUrl, title: resolved.name, source: 'dispatcharr', mediaKind: 'video' },
         target,
@@ -1999,6 +2013,45 @@ export async function registerLegacyRoutes(
     return reply.type(contentType).header('cache-control', 'public, max-age=14400').send(Buffer.from(await upstream.arrayBuffer()));
   });
 
+  // Android keeps strict TLS for the Core host, while Dispatcharr serves its
+  // LAN stream over HTTP on another port. Relay only validated channel UUIDs;
+  // never accept an arbitrary upstream URL from the player.
+  fastify.get<{ Params: { streamId: string }; Querystring: { output_profile?: string; output_format?: string } }>(
+    '/api/dispatcharr/stream/:streamId',
+    async (req, reply) => {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.streamId)) {
+        return reply.code(400).send({ error: 'Invalid Dispatcharr stream id' });
+      }
+      const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+      if (!base) return reply.code(503).send({ error: 'Dispatcharr is not configured' });
+      const upstreamUrl = new URL(`${base.replace(/\/+$/, '')}/proxy/ts/stream/${req.params.streamId}`);
+      if (/^\d+$/.test(req.query.output_profile ?? '')) upstreamUrl.searchParams.set('output_profile', req.query.output_profile!);
+      if (req.query.output_format === 'fmp4' || req.query.output_format === 'mpegts') {
+        upstreamUrl.searchParams.set('output_format', req.query.output_format);
+      }
+      let upstream: Response;
+      const upstreamAbort = new AbortController();
+      const connectTimeout = setTimeout(() => upstreamAbort.abort(), 15_000);
+      try {
+        upstream = await fetch(upstreamUrl, { signal: upstreamAbort.signal });
+      } catch (error) {
+        return reply.code(502).send({ error: `Dispatcharr stream unavailable: ${errorText(error)}` });
+      } finally {
+        clearTimeout(connectTimeout);
+      }
+      if (!upstream.ok || !upstream.body) {
+        return reply.code(upstream.status || 502).send({ error: `Dispatcharr stream unavailable: HTTP ${upstream.status}` });
+      }
+      // The response is continuous. Keep it alive beyond the connection timeout,
+      // but cancel Dispatcharr as soon as the display closes or replaces it.
+      reply.raw.once('close', () => upstreamAbort.abort());
+      return reply
+        .type(upstream.headers.get('content-type') || 'video/mp4')
+        .header('cache-control', 'no-store')
+        .send(Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream));
+    },
+  );
+
   // POST /api/dispatcharr/play { channel, url?, deviceId? } — deviceId targets one display
   fastify.post<{ Body: { channel?: string; url?: string; deviceId?: string; controllerDeviceId?: string } }>('/api/dispatcharr/play', {
     preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
@@ -2017,9 +2070,7 @@ export async function registerLegacyRoutes(
         const channels = await fetchDispatcharrChannels(base, apiKey || undefined);
         resolved = resolveDispatcharrChannel(channels, name, url);
       }
-      const playbackUrl = target && target.kind !== 'canvas'
-        ? await dispatcharrExternalPlaybackUrl(resolved.url)
-        : resolved.url;
+      const playbackUrl = await dispatcharrPlaybackUrl(resolved.url, target);
       const state = await applyAudioPlayback(
         { url: playbackUrl, title: resolved.name || resolved.url, source: 'dispatcharr', mediaKind: 'video' },
         target,
