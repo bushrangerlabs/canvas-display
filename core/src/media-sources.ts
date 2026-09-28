@@ -40,11 +40,20 @@ interface CacheEntry<T> {
 
 const dabCache = new Map<string, CacheEntry<DabStation[]>>();
 let dispatcharrCache: CacheEntry<DispatcharrChannel[]> | null = null;
+let dispatcharrOutputProfilesCache: CacheEntry<DispatcharrOutputProfile[]> | null = null;
+
+export interface DispatcharrOutputProfile {
+  id: number;
+  name: string;
+  parameters: string;
+  is_active: boolean;
+}
 
 /** Drop cached lists so a settings change takes effect immediately. */
 export function clearMediaCaches(): void {
   dabCache.clear();
   dispatcharrCache = null;
+  dispatcharrOutputProfilesCache = null;
 }
 
 function trimBase(url: string): string {
@@ -108,6 +117,20 @@ export async function fetchDispatcharrChannels(base: string, apiKey?: string): P
   }
   dispatcharrCache = { at: now, data: channels };
   return channels;
+}
+
+/** Return the active Dispatcharr profile that transcodes audio to Cast-safe AAC. */
+export async function findDispatcharrAacOutputProfile(base: string, apiKey?: string): Promise<number | undefined> {
+  const now = Date.now();
+  if (!dispatcharrOutputProfilesCache || now - dispatcharrOutputProfilesCache.at >= LIST_CACHE_TTL_MS) {
+    const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
+    const raw = await fetchJson(`${trimBase(base)}/api/core/outputprofiles/`, 8000, headers) as
+      DispatcharrOutputProfile[] | { results?: DispatcharrOutputProfile[] };
+    const profiles = Array.isArray(raw) ? raw : Array.isArray(raw.results) ? raw.results : [];
+    dispatcharrOutputProfilesCache = { at: now, data: profiles };
+  }
+  return dispatcharrOutputProfilesCache.data.find(profile => profile.is_active !== false
+    && (/\baac\b/i.test(profile.name) || /(?:-c:a|-codec:a)\s+(?:aac|libfdk_aac)\b/i.test(profile.parameters)))?.id;
 }
 
 /**
@@ -210,11 +233,13 @@ export function resolveDispatcharrChannel(
 export async function externalDispatcharrPlaybackUrl(
   value: string,
   resolveHost: (hostname: string) => Promise<string> = async hostname => (await lookup(hostname, { family: 4 })).address,
+  outputProfileId?: number,
 ): Promise<string> {
   const url = new URL(value);
   // Chromecast's Default Media Receiver rejects Dispatcharr's continuous
   // MPEG-TS response but plays its fragmented MP4 output.
   url.searchParams.set('output_format', 'fmp4');
+  if (outputProfileId !== undefined) url.searchParams.set('output_profile', String(outputProfileId));
   // Cast receivers normally cannot resolve private DNS search suffixes even
   // when Core can. Preserve public hostnames and resolve only LAN-only names.
   if (!isIP(url.hostname) && (url.hostname.endsWith('.localdomain') || url.hostname.endsWith('.local'))) {

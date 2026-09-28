@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { createTestDb } from './db-helpers.js';
 import { registerLegacyRoutes, getAudioState, resetAudioState, type LegacyRoutesOptions } from '../src/legacy-routes.js';
-import { clearMediaCaches, externalDispatcharrPlaybackUrl, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
+import { clearMediaCaches, externalDispatcharrPlaybackUrl, findDispatcharrAacOutputProfile, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
 import type { CoreConfig } from '../src/config.js';
 
 function makeConfig(overrides: Partial<CoreConfig> = {}): CoreConfig {
@@ -449,6 +449,7 @@ test('POST /api/dispatcharr/play resolves the channel URL and updates media stat
 });
 
 test('targeted Dispatcharr playback is dispatched as video', async () => {
+  clearMediaCaches();
   resetAudioState();
   const dispatched: Array<{ source: string; mediaKind?: 'audio' | 'video' }> = [];
   const { fastify, pool } = await buildServer(makeConfig(), {
@@ -461,23 +462,31 @@ test('targeted Dispatcharr playback is dispatched as video', async () => {
     payload: { mediaType: 'dispatcharr', target: { kind: 'media_player', id: 'ha:media_player.test_tv' } },
   });
   assert.equal(configured.statusCode, 200, configured.body);
-  const res = await fastify.inject({
-    method: 'POST',
-    url: '/api/dispatcharr/play',
-    payload: {
-      channel: 'Direct TV',
-      url: 'http://stream.example.test/live.ts',
-      controllerDeviceId: 'device-controller',
-    },
-  });
-  assert.equal(res.statusCode, 200);
-  assert.deepEqual(dispatched, [{
-    url: 'http://stream.example.test/live.ts?output_format=fmp4',
-    title: 'Direct TV',
-    source: 'dispatcharr',
-    artwork: undefined,
-    mediaKind: 'video',
-  }]);
+  const restore = stubFetch(() => jsonResponse([
+    { id: 1, name: 'Media Server (AC3 Audio)', parameters: '-c:a ac3', is_active: true },
+    { id: 2, name: 'Web Player (AAC Audio)', parameters: '-c:a aac', is_active: true },
+  ]));
+  try {
+    const res = await fastify.inject({
+      method: 'POST',
+      url: '/api/dispatcharr/play',
+      payload: {
+        channel: 'Direct TV',
+        url: 'http://stream.example.test/live.ts',
+        controllerDeviceId: 'device-controller',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(dispatched, [{
+      url: 'http://stream.example.test/live.ts?output_format=fmp4&output_profile=2',
+      title: 'Direct TV',
+      source: 'dispatcharr',
+      artwork: undefined,
+      mediaKind: 'video',
+    }]);
+  } finally {
+    restore();
+  }
 });
 
 test('POST /api/dispatcharr/play accepts an explicit URL without the lineup', async () => {
@@ -506,11 +515,25 @@ test('external Dispatcharr playback requests fMP4 and resolves a LAN-only hostna
       assert.equal(hostname, 'theserver.localdomain');
       return '192.168.1.108';
     },
+    2,
   );
   const url = new URL(result);
   assert.equal(url.hostname, '192.168.1.108');
-  assert.equal(url.searchParams.get('output_profile'), '1');
+  assert.equal(url.searchParams.get('output_profile'), '2');
   assert.equal(url.searchParams.get('output_format'), 'fmp4');
+});
+
+test('Dispatcharr AAC profile discovery ignores the AC3 media-server profile', async () => {
+  clearMediaCaches();
+  const restore = stubFetch(() => jsonResponse([
+    { id: 1, name: 'Media Server (AC3 Audio)', parameters: '-c:a ac3', is_active: true },
+    { id: 2, name: 'Web Player', parameters: '-c:a aac -b:a 192k', is_active: true },
+  ]));
+  try {
+    assert.equal(await findDispatcharrAacOutputProfile('http://dispatcharr.test', 'synthetic-key'), 2);
+  } finally {
+    restore();
+  }
 });
 
 test('external Dispatcharr playback preserves a public hostname', async () => {

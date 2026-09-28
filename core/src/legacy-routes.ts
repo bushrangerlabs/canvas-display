@@ -39,6 +39,7 @@ import {
   fetchDabStations,
   fetchDispatcharrChannels,
   externalDispatcharrPlaybackUrl,
+  findDispatcharrAacOutputProfile,
   resolveDispatcharrChannel,
   stepTargetIndex,
   tuneDabStation,
@@ -1578,6 +1579,15 @@ export async function registerLegacyRoutes(
 
   type SdrModule = { id: 'sdr1' | 'sdr2'; base: string; tuner: string; streamUrl: string; playbackUrl: string };
 
+  const dispatcharrExternalPlaybackUrl = async (url: string): Promise<string> => {
+    const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+    const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+    const profileId = base
+      ? await findDispatcharrAacOutputProfile(base, apiKey || undefined).catch(() => undefined)
+      : undefined;
+    return externalDispatcharrPlaybackUrl(url, undefined, profileId);
+  };
+
   const proxiedDabUrl = (id: SdrModule['id'], upstream: string) => {
     const publicUrl = options.config?.publicUrl?.replace(/\/+$/, '');
     return publicUrl ? `${publicUrl}/api/dab/stream/${id}` : upstream;
@@ -1670,7 +1680,7 @@ export async function registerLegacyRoutes(
       const index = stepTargetIndex(channels, audioState.title, direction);
       const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
       const playbackUrl = target && target.kind !== 'canvas'
-        ? await externalDispatcharrPlaybackUrl(resolved.url)
+        ? await dispatcharrExternalPlaybackUrl(resolved.url)
         : resolved.url;
       return await applyAudioPlayback(
         { url: playbackUrl, title: resolved.name, source: 'dispatcharr', mediaKind: 'video' },
@@ -2008,7 +2018,7 @@ export async function registerLegacyRoutes(
         resolved = resolveDispatcharrChannel(channels, name, url);
       }
       const playbackUrl = target && target.kind !== 'canvas'
-        ? await externalDispatcharrPlaybackUrl(resolved.url)
+        ? await dispatcharrExternalPlaybackUrl(resolved.url)
         : resolved.url;
       const state = await applyAudioPlayback(
         { url: playbackUrl, title: resolved.name || resolved.url, source: 'dispatcharr', mediaKind: 'video' },

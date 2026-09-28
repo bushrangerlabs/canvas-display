@@ -1011,3 +1011,10 @@ Validation and deployment:
 - `cd core && npm run build` — PASS.
 - Synced only `core/dist/`, rebuilt and restarted only `canvas-core`.
 - Production-path acceptance selected the Chromecast entity temporarily and called `/api/dispatcharr/play` with only `channel: AU: ABC news` (no manually modified URL). Core returned HTTP 200. Seven seconds later HA reported `playing`, Default Media Receiver, `media_content_type: video`, and advancing position/duration. The URL reported by HA used host `192.168.1.108`, retained `output_profile=1`, and added `output_format=fmp4`. Playback was intentionally left running for owner visual confirmation.
+
+Audio follow-up:
+
+- The TV played video without sound because HDHR/default output profile 1 is `Media Server (AC3 Audio)`. `ffprobe` confirmed the delivered fMP4 contained H.264 video plus AC3 stereo. The installed profile 2 is `Web Player (AAC Audio)`; this is the compatible profile for the Cast receiver.
+- Core now queries Dispatcharr's authenticated `/api/core/outputprofiles/` catalogue, selects an active profile whose name or ffmpeg parameters specify AAC, caches that catalogue briefly, and overrides only external TV/DLNA playback with that profile. This avoids assuming a fixed profile ID and leaves Canvas-edge playback unchanged.
+- `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 42/42 tests. `cd core && npm run build` — PASS. The tests cover ignoring the AC3 profile, selecting AAC and placing the selected profile on the external URL.
+- Synced only `core/dist/`, rebuilt and restarted only `canvas-core`. The normal production request now selects output profile 2 and fMP4 automatically. HA reports Bedroom TV `playing` with advancing position/duration, while a live `ffprobe` of the selected output confirms AAC, 48 kHz, stereo. Playback was left running for owner audio confirmation.
