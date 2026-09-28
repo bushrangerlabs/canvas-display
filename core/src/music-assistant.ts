@@ -373,6 +373,8 @@ export async function fetchMaPlaylists(conn: MaConnection): Promise<MaPlaylist[]
 
 export interface MaSearchResults {
   tracks: { uri: string; name: string; artist: string; artwork?: string }[];
+  albums: { uri: string; name: string; artist: string; artwork?: string }[];
+  artists: { uri: string; name: string; artwork?: string }[];
   radios: MaRadio[];
   playlists: MaPlaylist[];
 }
@@ -385,6 +387,8 @@ export async function maSearch(conn: MaConnection, query: string, limit = 20): P
   })) as Record<string, unknown> | null;
   const raw = result ?? {};
   const tracks = (Array.isArray(raw.tracks) ? raw.tracks : []) as Record<string, unknown>[];
+  const albums = (Array.isArray(raw.albums) ? raw.albums : []) as Record<string, unknown>[];
+  const artists = (Array.isArray(raw.artists) ? raw.artists : []) as Record<string, unknown>[];
   const radios = (Array.isArray(raw.radios) ? raw.radios : [])
     .map((radio) => normalizeMaRadio((radio ?? {}) as Record<string, unknown>))
     .filter((radio) => radio.uri.length > 0);
@@ -406,11 +410,29 @@ export async function maSearch(conn: MaConnection, query: string, limit = 20): P
       artist: firstArtistName(track),
       artwork: str(track.image_url) || undefined,
     })).filter((track) => track.uri.length > 0),
+    albums: albums.map((album) => ({ uri: str(album.uri), name: str(album.name), artist: firstArtistName(album), artwork: str(album.image_url) || undefined })).filter(album => album.uri),
+    artists: artists.map((artist) => ({ uri: str(artist.uri), name: str(artist.name), artwork: str(artist.image_url) || undefined })).filter(artist => artist.uri),
     radios,
     playlists: (Array.isArray(raw.playlists) ? raw.playlists : [])
       .map((playlist) => normalizeMaPlaylist((playlist ?? {}) as Record<string, unknown>))
       .filter((playlist) => playlist.uri.length > 0),
   };
+}
+
+export interface MaQueueItem { queueItemId: string; uri: string; name: string; artist: string; artwork?: string }
+
+export async function fetchMaQueue(conn: MaConnection, playerId: string): Promise<MaQueueItem[]> {
+  const result = await maCommand(conn, 'player_queues/items', { queue_id: playerId, limit: 500 });
+  return (Array.isArray(result) ? result : []).map(raw => {
+    const item = (raw ?? {}) as Record<string, unknown>;
+    const media = (item.media_item ?? item.mediaItem ?? {}) as Record<string, unknown>;
+    return { queueItemId: str(item.queue_item_id ?? item.queueItemId ?? item.item_id), uri: str(media.uri ?? item.uri), name: str(media.name ?? item.name), artist: firstArtistName(media), artwork: str(media.image_url ?? item.image_url) || undefined };
+  }).filter(item => item.queueItemId || item.uri);
+}
+
+export async function maQueueAction(conn: MaConnection, playerId: string, action: 'clear' | 'remove', queueItemId?: string): Promise<void> {
+  if (action === 'clear') await maCommand(conn, 'player_queues/clear', { queue_id: playerId });
+  else await maCommand(conn, 'player_queues/delete_item', { queue_id: playerId, queue_item_id: queueItemId });
 }
 
 /**

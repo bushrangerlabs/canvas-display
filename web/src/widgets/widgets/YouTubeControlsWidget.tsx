@@ -1,0 +1,1 @@
+import { YouTubeControls as Widget } from './media/YouTubeWidgets'; import { youtubeMetadata } from './media/youtubeMetadata'; export const YouTubeControlsWidgetMetadata=youtubeMetadata('controls'); export default Widget;

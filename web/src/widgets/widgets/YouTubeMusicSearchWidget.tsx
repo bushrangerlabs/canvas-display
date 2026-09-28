@@ -1,0 +1,1 @@
+import {YouTubeMusicSearch as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicSearchWidgetMetadata=m('search');export default W;

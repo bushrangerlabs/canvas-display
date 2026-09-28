@@ -22,11 +22,14 @@ const MaRadiosWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const filter = String(cfg.search ?? '').trim().toLowerCase();
   const maxItems = Math.max(1, Number(cfg.maxItems ?? 200));
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? 30)) * 1000;
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 48));
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 32));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const playerId = useMaPlayerId(cfg.playerId, pollMs);
   const { radios, error } = useMaRadios(pollMs);
-  const control = useMaControl(playerId);
+  const control = useMaControl(playerId, cfg.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant');
   const universalStyle = useResolvedUniversalStyle(config.config.style);
 
   if (!isVisible) return null;
@@ -56,7 +59,8 @@ const MaRadiosWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
               flex: 1,
               minWidth: 0,
               color: textColor,
-              fontSize: 12,
+              fontSize,
+              minHeight: rowHeight,
               fontWeight: 600,
               overflow: 'hidden',
               whiteSpace: 'nowrap',
@@ -93,7 +97,7 @@ const MaRadiosWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
             }}
           >
             {radio.artwork ? (
-              <img src={radio.artwork} alt="" style={{ width: 20, height: 20, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
+              <img src={radio.artwork} alt="" style={{ width: iconSize, height: iconSize, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
             ) : (
               <span style={{ fontSize: 12, opacity: 0.5, flexShrink: 0 }}>📻</span>
             )}

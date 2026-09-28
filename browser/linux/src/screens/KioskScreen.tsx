@@ -440,7 +440,10 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
       height:        pct(panel.h, sh),
       visible:       panel.visible !== false,
       ingressSession: null,
-      initScript:    config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : null,
+      initScript:    [
+        deviceId ? `window.__CANVAS_DEVICE_ID__ = ${JSON.stringify(deviceId)};` : '',
+        config.haToken ? buildHAAuthScript(config.haUrl, config.haToken) : '',
+      ].filter(Boolean).join('\n') || null,
     }));
     panelLabelsRef.current = specs.map(s => s.label);
     const visibleLabels = specs.filter(spec => spec.visible).map(spec => spec.label);
@@ -627,6 +630,8 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
                     : '';
                   if (!playerUrl) throw new Error('Device media response did not include a player URL');
                   await openFloatingUrl(playerUrl, true);
+                } else if (backend === 'mpv') {
+                  await openFloatingUrl('http://127.0.0.1:3100/api/media/radio/now-playing.html', false);
                 }
               }
               if (path === '/api/media/control') {

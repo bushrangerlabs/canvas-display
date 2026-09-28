@@ -1,0 +1,1 @@
+import {YouTubeMusicNowPlaying as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicNowPlayingWidgetMetadata=m('now');export default W;

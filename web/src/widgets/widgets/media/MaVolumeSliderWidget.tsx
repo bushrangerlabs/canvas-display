@@ -29,8 +29,9 @@ const MaVolumeSliderWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => 
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const playerId = useMaPlayerId(cfg.playerId, pollMs);
-  const { player } = useMaPlayerState(playerId, pollMs);
-  const control = useMaControl(playerId);
+  const mediaType = cfg.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+  const { player } = useMaPlayerState(playerId, pollMs, true, mediaType);
+  const control = useMaControl(playerId, mediaType);
   const universalStyle = useResolvedUniversalStyle(config.config.style);
 
   const volume = player?.volume ?? 0;

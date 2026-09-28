@@ -120,6 +120,12 @@ export function createTestDb(): { db: Db; pool: Pool } {
       size       BIGINT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS dab_station_logos (
+      station_id TEXT PRIMARY KEY,
+      content_type TEXT NOT NULL,
+      image_data BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS scene_entity_subscriptions (
       scene_id  TEXT NOT NULL,
       entity_id TEXT NOT NULL,

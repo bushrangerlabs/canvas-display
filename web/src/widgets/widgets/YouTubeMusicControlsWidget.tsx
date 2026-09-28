@@ -1,0 +1,1 @@
+import {YouTubeMusicControls as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicControlsWidgetMetadata=m('controls');export default W;

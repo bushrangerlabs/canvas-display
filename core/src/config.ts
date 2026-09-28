@@ -97,7 +97,7 @@ export interface CoreConfig {
   searxngPublicUrl: string;
   /** Dispatcharr (IPTV) base URL. Its HDHomeRun lineup is used to resolve channels. */
   dispatcharrUrl: string;
-  /** Optional Dispatcharr API key (sent as an `Authorization: Api-Key …` header). */
+  /** Optional Dispatcharr API key (sent as an `X-API-Key` header). */
   dispatcharrApiKey?: string;
   /** SDR radio (DAB+/FM) REST API base URL. */
   sdrRadioUrl: string;
@@ -105,6 +105,12 @@ export interface CoreConfig {
   sdrRadioTuner: string;
   /** Icecast stream URL for the SDR tuner (played on the edge device). */
   sdrRadioStreamUrl: string;
+  /** Optional second SDR radio REST API base URL. */
+  sdrRadio2Url?: string;
+  /** Tuner id used by the optional second SDR module. */
+  sdrRadio2Tuner?: string;
+  /** Icecast stream URL for the optional second SDR module. */
+  sdrRadio2StreamUrl?: string;
   /** Music Assistant base URL (e.g. http://homeassistant.local:8095). */
   musicAssistantUrl?: string;
   /** Music Assistant long-lived access token. */
@@ -190,6 +196,9 @@ export function loadConfig(): CoreConfig {
     sdrRadioUrl: str('SDR_RADIO_URL', 'http://192.168.1.108:8088'),
     sdrRadioTuner: str('SDR_RADIO_TUNER', 'tuner1'),
     sdrRadioStreamUrl: str('SDR_RADIO_STREAM_URL', 'http://192.168.1.108:8001/tuner1.mp3'),
+    sdrRadio2Url: process.env.SDR_RADIO_2_URL || undefined,
+    sdrRadio2Tuner: process.env.SDR_RADIO_2_TUNER || undefined,
+    sdrRadio2StreamUrl: process.env.SDR_RADIO_2_STREAM_URL || undefined,
     musicAssistantUrl: process.env.MUSIC_ASSISTANT_URL || undefined,
     musicAssistantToken: process.env.MUSIC_ASSISTANT_TOKEN || undefined,
     musicAssistantUsername: process.env.MUSIC_ASSISTANT_USERNAME || undefined,

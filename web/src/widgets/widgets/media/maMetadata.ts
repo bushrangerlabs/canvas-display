@@ -62,6 +62,9 @@ export function maPlayersMetadata(): WidgetMetadata {
       { name: 'title', type: 'text', label: 'Header title', default: 'Players', category: 'behavior' },
       { name: 'showHeader', type: 'checkbox', label: 'Show header', default: true, category: 'behavior' },
       { name: 'maxItems', type: 'number', label: 'Max items', default: 50, min: 1, max: 200, category: 'behavior' },
+      { name: 'rowHeight', type: 'number', label: 'Button height', default: 48, min: 28, max: 140, category: 'style' },
+      { name: 'iconSize', type: 'number', label: 'Icon size', default: 28, min: 14, max: 100, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Text size', default: 12, min: 8, max: 36, category: 'style' },
       ...styleFields(MA_ACCENT),
     ],
   };
@@ -191,6 +194,9 @@ export function maRadiosMetadata(): WidgetMetadata {
       { name: 'showHeader', type: 'checkbox', label: 'Show header', default: true, category: 'behavior' },
       { name: 'search', type: 'text', label: 'Filter (substring)', default: '', category: 'behavior' },
       { name: 'maxItems', type: 'number', label: 'Max items', default: 200, min: 1, max: 1000, category: 'behavior' },
+      { name: 'rowHeight', type: 'number', label: 'Button height', default: 48, min: 28, max: 140, category: 'style' },
+      { name: 'iconSize', type: 'number', label: 'Artwork size', default: 32, min: 16, max: 100, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Text size', default: 12, min: 8, max: 36, category: 'style' },
       ...styleFields(MA_ACCENT),
     ],
   };
@@ -211,6 +217,9 @@ export function maPlaylistsMetadata(): WidgetMetadata {
       { name: 'title', type: 'text', label: 'Header title', default: 'Playlists', category: 'behavior' },
       { name: 'showHeader', type: 'checkbox', label: 'Show header', default: true, category: 'behavior' },
       { name: 'maxItems', type: 'number', label: 'Max items', default: 100, min: 1, max: 500, category: 'behavior' },
+      { name: 'rowHeight', type: 'number', label: 'Button height', default: 48, min: 28, max: 140, category: 'style' },
+      { name: 'iconSize', type: 'number', label: 'Artwork size', default: 32, min: 16, max: 100, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Text size', default: 12, min: 8, max: 36, category: 'style' },
       ...styleFields(MA_ACCENT),
     ],
   };
@@ -229,7 +238,22 @@ export function maSearchMetadata(): WidgetMetadata {
       playerField('Play on player'),
       { name: 'resultLimit', type: 'number', label: 'Result limit', default: 20, min: 5, max: 50, category: 'behavior' },
       { name: 'placeholder', type: 'text', label: 'Placeholder', default: 'Search music…', category: 'behavior' },
+      { name: 'rowHeight', type: 'number', label: 'Result height', default: 52, min: 28, max: 140, category: 'style' },
+      { name: 'iconSize', type: 'number', label: 'Artwork size', default: 36, min: 16, max: 100, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Text size', default: 12, min: 8, max: 36, category: 'style' },
       ...styleFields(MA_ACCENT),
     ],
   };
 }
+
+const libraryListFields = (): FieldMetadata[] => [
+  playerField('Play on player'), pollField(8),
+  { name: 'title', type: 'text', label: 'Header title', default: '', category: 'behavior' },
+  { name: 'maxItems', type: 'number', label: 'Max items', default: 100, min: 1, max: 500, category: 'behavior' },
+  { name: 'rowHeight', type: 'number', label: 'Button height', default: 52, min: 28, max: 140, category: 'style' },
+  { name: 'iconSize', type: 'number', label: 'Artwork size', default: 36, min: 16, max: 100, category: 'style' },
+  { name: 'fontSize', type: 'number', label: 'Text size', default: 12, min: 8, max: 36, category: 'style' },
+  ...styleFields(MA_ACCENT),
+];
+export function maQueueMetadata(): WidgetMetadata { return { name:'MA Queue',icon:'QueueMusic',category:'media',description:'View, remove and clear items in the selected Music Assistant player queue',defaultSize:{w:330,h:320},minSize:{w:180,h:140},requiresEntity:false,fields:libraryListFields() }; }
+export function maBrowseMetadata(): WidgetMetadata { return { name:'MA Browse',icon:'LibraryMusic',category:'media',description:'Browse artists, albums, tracks, playlists, radio and provider folders',defaultSize:{w:330,h:340},minSize:{w:180,h:140},requiresEntity:false,fields:libraryListFields() }; }

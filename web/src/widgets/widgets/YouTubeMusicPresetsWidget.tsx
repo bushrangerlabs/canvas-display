@@ -1,0 +1,1 @@
+import {YouTubeMusicPresets as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicPresetsWidgetMetadata=m('presets');export default W;

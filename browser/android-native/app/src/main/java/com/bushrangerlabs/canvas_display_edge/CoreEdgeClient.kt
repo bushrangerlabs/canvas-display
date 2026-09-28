@@ -26,7 +26,7 @@ class CoreEdgeClient(
     private val onScene: (JSONObject, (Boolean, String?) -> Unit) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onVoiceConfigChanged: () -> Unit,
-    private val onMediaUrl: (String, String) -> Boolean,
+    private val onMediaUrl: (String, String, String) -> Boolean,
     private val onMediaControl: (String, Double?) -> Boolean,
     private val onOpenPage: (String, Long) -> Unit,
     private val onAppControl: (String) -> Unit,
@@ -157,7 +157,7 @@ class CoreEdgeClient(
                     val source = payload.optString("source", "direct_audio")
                     if (url.isBlank()) JSONObject().put("ok", false).put("error", "missing_url")
                     else {
-                        val applied = onMediaUrl(url, source)
+                        val applied = onMediaUrl(url, source, payload.optString("title", payload.optString("query", url)))
                         JSONObject().put("ok", applied).put("media_url", url)
                             .apply { if (!applied) put("error", "media_target_unavailable") }
                     }

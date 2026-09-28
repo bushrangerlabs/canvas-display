@@ -54,9 +54,12 @@ const CORE_PROVIDER_FIELDS: { key: string; label: string; placeholder: string; e
 interface MediaField { key: string; label: string; placeholder: string; secret?: boolean }
 
 const DAB_FIELDS: MediaField[] = [
-  { key: 'sdr_radio_url', label: 'SDR radio URL', placeholder: 'http://192.168.1.108:8088' },
-  { key: 'sdr_radio_tuner', label: 'SDR tuner id', placeholder: 'tuner1' },
-  { key: 'sdr_radio_stream_url', label: 'SDR stream URL (Icecast)', placeholder: 'http://192.168.1.108:8001/tuner1.mp3' },
+  { key: 'sdr_radio_url', label: 'SDR radio 1 URL', placeholder: 'http://192.168.1.108:8088' },
+  { key: 'sdr_radio_tuner', label: 'SDR radio 1 tuner id', placeholder: 'tuner1' },
+  { key: 'sdr_radio_stream_url', label: 'SDR radio 1 stream URL (Icecast)', placeholder: 'http://192.168.1.108:8001/tuner1.mp3' },
+  { key: 'sdr_radio_2_url', label: 'SDR radio 2 URL', placeholder: 'http://192.168.1.108:8091' },
+  { key: 'sdr_radio_2_tuner', label: 'SDR radio 2 tuner id', placeholder: 'tuner1' },
+  { key: 'sdr_radio_2_stream_url', label: 'SDR radio 2 stream URL (Icecast)', placeholder: 'http://192.168.1.108:8002/tuner1.mp3' },
 ];
 
 const DISPATCHARR_FIELDS: MediaField[] = [
@@ -466,6 +469,7 @@ export default function SettingsPage() {
                 onSave={() => saveMediaFields(DAB_FIELDS)}
                 onTest={coreApi.testDabConnection}
               />
+              <DabLogoManager />
               <MediaSourceCard
                 title="Dispatcharr (IPTV)"
                 description="HDHomeRun lineup used by the Dispatcharr TV widgets and voice channel tuning."
@@ -764,6 +768,73 @@ function MediaSourceCard({ title, description, fields, settings, onChange, onSav
           </Button>
         </Stack>
       </Stack>
+    </Paper>
+  );
+}
+
+function DabLogoManager() {
+  const [stations, setStations] = useState<Array<{ id: string; name: string; image_url?: string }>>([]);
+  const [logos, setLogos] = useState<Array<{ stationId: string; url: string }>>([]);
+  const [stationId, setStationId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const load = useCallback(async () => {
+    const [stationResult, logoResult] = await Promise.all([coreApi.dabStations(), coreApi.dabLogos()]);
+    setStations(stationResult.stations);
+    setLogos(logoResult.logos);
+  }, []);
+
+  useEffect(() => { void load().catch(err => setMessage((err as Error).message)); }, [load]);
+
+  async function upload(file: File) {
+    if (!stationId) return;
+    setBusy(true); setMessage('');
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(reader.error ?? new Error('Could not read image'));
+        reader.readAsDataURL(file);
+      });
+      await coreApi.uploadDabLogo(stationId, file.type, dataUrl.split(',', 2)[1] ?? '');
+      await load();
+      setMessage('Station logo saved.');
+    } catch (err) { setMessage((err as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function remove() {
+    if (!stationId) return;
+    setBusy(true); setMessage('');
+    try { await coreApi.deleteDabLogo(stationId); await load(); setMessage('Station logo removed.'); }
+    catch (err) { setMessage((err as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  const selected = stations.find(station => station.id === stationId);
+  const assigned = logos.find(logo => logo.stationId === stationId);
+  return (
+    <Paper sx={{ p: 2.5 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>DAB+ station logos</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Upload a PNG, JPEG, WebP or GIF up to 2 MB. The assigned image overrides artwork from the SDR service.
+      </Typography>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'center' } }}>
+        <FormControl size="small" sx={{ flex: 1 }}>
+          <InputLabel>Station</InputLabel>
+          <Select label="Station" value={stationId} onChange={event => setStationId(String(event.target.value))}>
+            {stations.map(station => <MenuItem key={station.id} value={station.id}>{station.name}{station.id.startsWith('sdr2::') ? ' (SDR 2)' : station.id.startsWith('sdr1::') ? ' (SDR 1)' : ''}</MenuItem>)}
+          </Select>
+        </FormControl>
+        {(assigned || selected?.image_url) && <Box component="img" src={`${assigned?.url ?? selected?.image_url}?v=${encodeURIComponent(assigned?.stationId ?? '')}`} alt="" sx={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 1 }} />}
+        <Button component="label" size="small" variant="contained" disabled={!stationId || busy} sx={{ textTransform: 'none' }}>
+          {busy ? <CircularProgress size={14} /> : assigned ? 'Replace logo' : 'Upload logo'}
+          <input type="file" hidden accept="image/png,image/jpeg,image/webp,image/gif" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ''; }} />
+        </Button>
+        <Button size="small" variant="outlined" color="error" disabled={!assigned || busy} onClick={() => void remove()} sx={{ textTransform: 'none' }}>Remove</Button>
+      </Stack>
+      {message && <Alert severity={message.includes('saved') || message.includes('removed') ? 'success' : 'error'} sx={{ mt: 1.5 }}>{message}</Alert>}
     </Paper>
   );
 }

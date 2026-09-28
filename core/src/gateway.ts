@@ -11,6 +11,7 @@ import {
 import { WebSocketServer, type WebSocket } from 'ws';
 import { createHash, randomUUID } from 'node:crypto';
 import type { AuthorityMode } from './devices.js';
+import { clearTemporaryPlaybackTarget } from './playback-routing.js';
 
 /**
  * Device Gateway (protocol v1, plan doc §12). This is the single WSS endpoint every
@@ -801,6 +802,7 @@ export function registerGateway(
           [deviceId],
         );
         const authority = authorityResult.rows[0];
+        clearTemporaryPlaybackTarget(deviceId);
         controller.attach(deviceId, {
           ws,
           coreStreamEpoch,

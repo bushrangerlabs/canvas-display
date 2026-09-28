@@ -21,6 +21,9 @@ const MaPlayersWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const showHeader = cfg.showHeader !== false;
   const maxItems = Math.max(1, Number(cfg.maxItems ?? 50));
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? 10)) * 1000;
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 48));
+  const iconSize = Math.max(14, Number(cfg.iconSize ?? 28));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const { players, error } = useMaPlayers(pollMs);
@@ -86,7 +89,8 @@ const MaPlayersWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
                 border: 'none',
                 color: textColor,
                 cursor: isEditMode ? 'default' : 'pointer',
-                fontSize: 12,
+                fontSize,
+                minHeight: rowHeight,
                 padding: '6px 8px',
                 borderRadius: 6,
                 display: 'flex',
@@ -96,7 +100,7 @@ const MaPlayersWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
               }}
               title={player.available ? undefined : 'Player unavailable'}
             >
-              <span style={{ fontSize: 13, color: playing ? accentColor : textColor, opacity: playing ? 1 : 0.5 }}>
+              <span style={{ fontSize: iconSize, color: playing ? accentColor : textColor, opacity: playing ? 1 : 0.5 }}>
                 {playing ? '▶' : '⏸'}
               </span>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>

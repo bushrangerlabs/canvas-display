@@ -43,16 +43,36 @@ import {
 } from './media-sources.js';
 import {
   clearMaTokenCache,
+  browseMa,
   fetchMaPlayers,
   fetchMaPlayer,
   fetchMaPlaylists,
   fetchMaRadios,
+  fetchMaQueue,
   maControl,
   maPlayMedia,
+  maQueueAction,
   maSearch,
   type MaConnection,
   type MaControlAction,
 } from './music-assistant.js';
+import {
+  MEDIA_TYPES,
+  clearTemporaryPlaybackTarget,
+  compatibleTargetKind,
+  compatibleTargetKinds,
+  effectivePlaybackTarget,
+  isMediaType,
+  isPlaybackTargetKind,
+  savePlaybackTargets,
+  savedPlaybackTargets,
+  setTemporaryPlaybackTarget,
+  temporaryPlaybackTarget,
+  type MediaType,
+  type PlaybackTarget,
+  type PlaybackTargetKind,
+} from './playback-routing.js';
+import { resolveYouTubeCandidates } from './youtube.js';
 
 /** The bound `requireAdmin` preHandler factory returned by `registerAuth`. */
 export type RequireAdmin = ReturnType<typeof makeRequireAdmin>;
@@ -97,9 +117,10 @@ export interface AudioState {
   muted: boolean;
   /** Logical source of the current playback (e.g. 'dab', 'dispatcharr'). */
   source?: string;
+  artwork?: string;
 }
 
-type ClientType = 'browser' | 'editor' | 'api';
+type ClientType = 'browser' | 'editor' | 'api' | 'display';
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -170,6 +191,9 @@ const SETTING_DEFAULTS: Record<string, string> = {
   sdr_radio_url: '',
   sdr_radio_tuner: '',
   sdr_radio_stream_url: '',
+  sdr_radio_2_url: '',
+  sdr_radio_2_tuner: '',
+  sdr_radio_2_stream_url: '',
   dispatcharr_url: '',
   dispatcharr_api_key: '',
   music_assistant_url: '',
@@ -223,14 +247,15 @@ export function resetAudioState(): void {
 
 /**
  * Start playback of a resolved stream: update the shared audio state and tell
- * the connected display clients to play it. When `deviceId` is given and the
- * host wired `dispatchMediaToDevice`, the stream is dispatched to that one
- * device instead (device-targeted widget playback). Returns the new state.
+ * the resolved destination to play it. When `target` names a Canvas display the
+ * stream is dispatched to that one device; DLNA renderers and Home Assistant
+ * media players are dispatched through the same hook. With no target the stream
+ * is broadcast to every connected browser renderer (legacy behaviour).
  */
 function applyAudioPlayback(
-  input: { url: string; title: string; source?: string },
-  deviceId?: string,
-  dispatch?: LegacyRoutesOptions['dispatchMediaToDevice'],
+  input: { url: string; title: string; source?: string; artwork?: string },
+  target: PlaybackTarget | null,
+  dispatch?: LegacyRoutesOptions['dispatchMediaToTarget'],
 ): AudioState {
   audioState = {
     ...audioState,
@@ -239,15 +264,21 @@ function applyAudioPlayback(
     title: input.title,
     muted: false,
     source: input.source,
+    artwork: input.artwork,
   };
-  if (deviceId && dispatch) {
+  if (target && target.id && dispatch) {
     // Fire-and-forget: the HTTP response should not wait on the device round-trip.
-    void dispatch(deviceId, input.url, input.title, input.source ?? 'direct_audio').catch((err) => {
-      console.warn(`[core][media] dispatch to device ${deviceId} failed:`, err instanceof Error ? err.message : err);
+    void dispatch(target, {
+      url: input.url,
+      title: input.title,
+      source: input.source ?? 'direct_audio',
+      artwork: input.artwork,
+    }).catch((err) => {
+      console.warn(`[core][media] dispatch to ${target.kind}:${target.id} failed:`, err instanceof Error ? err.message : err);
     });
   } else {
     broadcast(
-      { type: 'command', action: 'audio_play', payload: { url: input.url, title: input.title, volume: audioState.volume } },
+      { type: 'command', action: 'audio_play', payload: { url: input.url, title: input.title, artwork: input.artwork, volume: audioState.volume } },
       'browser',
     );
   }
@@ -298,6 +329,18 @@ export function sendCommand(deviceId: string, command: object): void {
       send(client.ws, command);
     }
   }
+}
+
+/** True when the device has a live browser renderer on the legacy WebSocket. */
+export function hasConnectedBrowserClient(deviceId: string): boolean {
+  for (const client of clients.values()) {
+    if (
+      client.deviceId === deviceId &&
+      client.clientType === 'browser' &&
+      client.ws.readyState === WebSocket.OPEN
+    ) return true;
+  }
+  return false;
 }
 
 /** Execute an allowlisted local Agent IPC action through the connected kiosk controller. */
@@ -458,6 +501,9 @@ function mediaEnvDefaults(config?: CoreConfig): Record<string, string> {
     sdr_radio_url: config?.sdrRadioUrl ?? '',
     sdr_radio_tuner: config?.sdrRadioTuner ?? '',
     sdr_radio_stream_url: config?.sdrRadioStreamUrl ?? '',
+    sdr_radio_2_url: config?.sdrRadio2Url ?? '',
+    sdr_radio_2_tuner: config?.sdrRadio2Tuner ?? '',
+    sdr_radio_2_stream_url: config?.sdrRadio2StreamUrl ?? '',
     dispatcharr_url: config?.dispatcharrUrl ?? '',
     dispatcharr_api_key: config?.dispatcharrApiKey ?? '',
     music_assistant_url: config?.musicAssistantUrl ?? '',
@@ -568,12 +614,20 @@ export interface LegacyRoutesOptions {
   connectedDeviceIds?: () => string[];
   /** Core runtime config — supplies env-derived defaults for media-source settings. */
   config?: CoreConfig;
-  /** Architecture-aware direct-audio dispatch to a specific device (Android →
-   * gateway media.play, Linux → device_http /api/media/play). Used by the
-   * device-targeted widget playback (deviceId in the play request). */
-  dispatchMediaToDevice?: (deviceId: string, url: string, title: string, source: string) => Promise<void>;
+  /** Architecture-aware media dispatch to the resolved playback destination.
+   * Canvas → gateway/device_http, DLNA → UPnP AVTransport, Home Assistant
+   * media_player → `media_player.play_media`. Used by device-targeted widget
+   * playback (controllerDeviceId in the play request). */
+  dispatchMediaToTarget?: (
+    target: PlaybackTarget,
+    input: { url: string; title: string; source: string; artwork?: string },
+  ) => Promise<void>;
+  dispatchYoutubeToDevice?: (deviceId: string, value: string, title: string) => Promise<void>;
   /** Dispatch a media control action to a specific device's local server. */
   controlMediaOnDevice?: (deviceId: string, action: string, value?: number | boolean) => Promise<void>;
+  /** Dispatch a media control action to a non-Canvas destination (DLNA renderer
+   * or Home Assistant media player). */
+  controlMediaOnTarget?: (target: PlaybackTarget, action: string, value?: number | boolean) => Promise<void>;
 }
 
 // Convenience wrapper: if requireAdmin is provided, return its preHandler; else
@@ -681,6 +735,99 @@ export async function registerLegacyRoutes(
   options: LegacyRoutesOptions,
 ): Promise<void> {
   const { pool } = options;
+
+  const maPlayers = async () => {
+    const conn = await maConnection(pool, options.config);
+    return conn ? fetchMaPlayers(conn) : [];
+  };
+
+  /**
+   * Resolve the renderer-supplied `controllerDeviceId` to the canonical Core
+   * device id. The Linux kiosk builds its scene URL from the Edge Agent's
+   * `agent.device_identity`, which is a NON-AUTHORITATIVE diagnostics hint
+   * (often the device's friendly name) rather than the enrolled Core id. Core
+   * records the device under the credential's id, so a hint like
+   * `pi5-living-room` never matched the browser socket's `device-2acc…` id and
+   * every device-targeted media dispatch failed with "kiosk is not connected".
+   * Accept the id, the name, or the hint so targeting works either way.
+   */
+  const resolveControllerDeviceId = async (reference: string): Promise<string> => {
+    const ref = reference.trim();
+    if (!ref) return '';
+    const match = await pool.query<{ id: string }>(
+      `SELECT id FROM devices
+        WHERE revoked_at IS NULL AND (id = $1 OR name = $1)
+        ORDER BY (id = $1) DESC, id
+        LIMIT 1`,
+      [ref],
+    );
+    return match.rows[0]?.id ?? ref;
+  };
+
+  const resolveCanvasPlaybackDevice = async (controllerDeviceId: string, mediaType: MediaType, explicitDeviceId = '') => {
+    if (!controllerDeviceId) return explicitDeviceId;
+    const resolved = await effectivePlaybackTarget(pool, await resolveControllerDeviceId(controllerDeviceId), mediaType);
+    return resolved.target.kind === 'canvas' ? resolved.target.id : '';
+  };
+
+  const resolveMaPlaybackPlayer = async (controllerDeviceId: string, mediaType: 'music_assistant' | 'youtube_music', explicitPlayerId = '') => {
+    if (!controllerDeviceId) return explicitPlayerId;
+    const players = await maPlayers();
+    const resolved = await effectivePlaybackTarget(pool, await resolveControllerDeviceId(controllerDeviceId), mediaType, players.find(player => player.available)?.id ?? players[0]?.id ?? '');
+    return resolved.target.kind === 'music_assistant' ? resolved.target.id : '';
+  };
+
+  /**
+   * Every selectable playback destination. Canvas displays and Music Assistant
+   * players come from the live registries; DLNA renderers and Home Assistant
+   * media players come from the durable broadcast-output catalogue (the same
+   * rows the broadcast fan-out uses).
+   */
+  const mediaDestinations = async (): Promise<Array<{ kind: PlaybackTargetKind; id: string; name: string; available: boolean }>> => {
+    const [canvasRows, players, outputs] = await Promise.all([
+      pool.query<{ id: string; name: string | null; status: string | null }>(
+        'SELECT id, name, status FROM devices WHERE revoked_at IS NULL ORDER BY name, id',
+      ),
+      maPlayers().catch(() => []),
+      pool.query<{ id: string; name: string | null; route_type: string; route_key: string; online: boolean }>(
+        `SELECT id, name, route_type, route_key, online FROM broadcast_outputs
+          WHERE route_type IN ('dlna','ha') ORDER BY name, id`,
+      ).catch(() => ({ rows: [] as Array<{ id: string; name: string | null; route_type: string; route_key: string; online: boolean }> })),
+    ]);
+    return [
+      ...canvasRows.rows.map(row => ({
+        kind: 'canvas' as const, id: String(row.id), name: String(row.name || row.id),
+        available: row.status === 'connected' || row.status === 'online',
+      })),
+      ...players.map(player => ({
+        kind: 'music_assistant' as const, id: player.id, name: player.name, available: player.available,
+      })),
+      ...outputs.rows.filter(row => row.route_type === 'dlna').map(row => ({
+        kind: 'dlna' as const, id: String(row.id), name: String(row.name || row.route_key), available: !!row.online,
+      })),
+      ...outputs.rows.filter(row => row.route_type === 'ha').map(row => ({
+        kind: 'media_player' as const, id: String(row.id), name: String(row.name || row.route_key), available: !!row.online,
+      })),
+    ];
+  };
+
+  /** Resolve the effective playback destination for a media type. */
+  const resolvePlaybackTarget = async (
+    controllerDeviceId: string,
+    mediaType: MediaType,
+    explicitDeviceId = '',
+  ): Promise<PlaybackTarget | null> => {
+    if (!controllerDeviceId) {
+      return explicitDeviceId ? { kind: 'canvas', id: explicitDeviceId } : null;
+    }
+    const canonical = await resolveControllerDeviceId(controllerDeviceId);
+    const players = await maPlayers().catch(() => []);
+    const resolved = await effectivePlaybackTarget(
+      pool, canonical, mediaType,
+      players.find(player => player.available)?.id ?? players[0]?.id ?? '',
+    );
+    return resolved.target;
+  };
   const deliverPage = async (page: PageRow, deviceId: string): Promise<boolean> => {
     if (options.onDisplayPage) {
       await options.onDisplayPage(page, deviceId);
@@ -1419,18 +1566,71 @@ export async function registerLegacyRoutes(
   // audio state (above) and is dispatched to connected display clients, matching
   // the /api/audio/* routes.
 
-  const stepMedia = async (source: string, direction: 1 | -1, deviceId?: string): Promise<AudioState> => {
+  type SdrModule = { id: 'sdr1' | 'sdr2'; base: string; tuner: string; streamUrl: string };
+
+  const getSdrModules = async (): Promise<SdrModule[]> => {
+    const firstBase = await mediaSetting(pool, options.config, 'sdr_radio_url');
+    const secondBase = await mediaSetting(pool, options.config, 'sdr_radio_2_url');
+    const modules: SdrModule[] = [];
+    if (firstBase) modules.push({
+      id: 'sdr1',
+      base: firstBase,
+      tuner: (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1',
+      streamUrl: await mediaSetting(pool, options.config, 'sdr_radio_stream_url'),
+    });
+    if (secondBase) modules.push({
+      id: 'sdr2',
+      base: secondBase,
+      tuner: (await mediaSetting(pool, options.config, 'sdr_radio_2_tuner')) || 'tuner1',
+      streamUrl: await mediaSetting(pool, options.config, 'sdr_radio_2_stream_url'),
+    });
+    return modules;
+  };
+
+  const getDabStations = async () => {
+    const modules = await getSdrModules();
+    const results = await Promise.allSettled(modules.map(async (module) => ({
+      module,
+      stations: await fetchDabStations(module.base),
+    })));
+    const available = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+    if (available.length === 0 && results.length > 0) throw (results[0] as PromiseRejectedResult).reason;
+    const qualifyIds = modules.length > 1;
+    const combined = available.flatMap(({ module, stations }) => stations.map((station) => ({
+      ...station,
+      id: qualifyIds ? `${module.id}::${station.id ?? station.name ?? ''}` : station.id,
+      module: qualifyIds ? module.id : undefined,
+      moduleConfig: module,
+    })));
+    const logos = await pool.query('SELECT station_id FROM dab_station_logos');
+    const logoIds = new Set(logos.rows.map((row) => String(row.station_id)));
+    return combined.map((station) => logoIds.has(String(station.id))
+      ? { ...station, image_url: `/api/dab/logos/${encodeURIComponent(String(station.id))}` }
+      : station);
+  };
+
+  const resolveDabStation = async (requested: string) => {
+    const stations = await getDabStations();
+    const match = stations.find((station) => station.id === requested)
+      ?? stations.find((station) => station.name?.toLowerCase() === requested.toLowerCase())
+      ?? stations.find((station) => String(station.id ?? '').replace(/^sdr[12]::/, '') === requested);
+    if (match) return match;
+    const modules = await getSdrModules();
+    if (modules.length === 1) {
+      return { id: requested, name: requested, moduleConfig: modules[0] };
+    }
+    throw new Error(`Station "${requested}" not found`);
+  };
+
+  const stepMedia = async (source: string, direction: 1 | -1, target: PlaybackTarget | null): Promise<AudioState> => {
     if (source === 'dab') {
-      const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
-      if (!base) throw new Error('DAB+ radio is not configured');
-      const tuner = (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1';
-      const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_stream_url');
-      const stations = (await fetchDabStations(base))
-        .map((station) => ({ name: String(station.name ?? station.id ?? '').trim() }))
+      const stations = (await getDabStations())
+        .map((station) => ({ ...station, name: String(station.name ?? station.id ?? '').trim() }))
         .filter((item) => item.name.length > 0);
-      const target = stepTargetIndex(stations, audioState.title, direction);
-      const title = await tuneDabStation(base, tuner, stations[target].name);
-      return applyAudioPlayback({ url: streamUrl, title, source: 'dab' }, deviceId, options.dispatchMediaToDevice);
+      const index = stepTargetIndex(stations, audioState.title, direction);
+      const station = stations[index];
+      const title = await tuneDabStation(station.moduleConfig.base, station.moduleConfig.tuner, station.name);
+      return applyAudioPlayback({ url: station.moduleConfig.streamUrl, title, source: 'dab', artwork: station.image_url }, target, options.dispatchMediaToTarget);
     }
     if (source === 'dispatcharr') {
       const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
@@ -1439,48 +1639,259 @@ export async function registerLegacyRoutes(
       const channels = (await fetchDispatcharrChannels(base, apiKey || undefined))
         .map((channel) => ({ name: String(channel.name ?? '').trim(), url: channel.url }))
         .filter((item) => item.name.length > 0);
-      const target = stepTargetIndex(channels, audioState.title, direction);
-      const resolved = resolveDispatcharrChannel(channels, channels[target].name, channels[target].url);
+      const index = stepTargetIndex(channels, audioState.title, direction);
+      const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
       return applyAudioPlayback(
         { url: resolved.url, title: resolved.name, source: 'dispatcharr' },
-        deviceId,
-        options.dispatchMediaToDevice,
+        target,
+        options.dispatchMediaToTarget,
       );
     }
     throw new Error('Unknown media source');
   };
 
+  // ═══ Playback destination routing ═════════════════════════════════════════
+
+  const DESTINATION_LABELS: Record<PlaybackTargetKind, string> = {
+    canvas: 'Canvas',
+    music_assistant: 'Music Assistant',
+    dlna: 'DLNA',
+    media_player: 'Home Assistant',
+  };
+
+  fastify.get('/api/media/destinations/catalog', async () => {
+    const destinations = await mediaDestinations();
+    return { destinations: destinations.map(destination => ({
+      value: `${destination.kind}:${destination.id}`,
+      kind: destination.kind,
+      id: destination.id,
+      name: destination.name,
+      available: destination.available,
+      label: `${destination.name} · ${DESTINATION_LABELS[destination.kind]}`,
+    })) };
+  });
+
+  fastify.get<{ Querystring: { q?: string; limit?: string } }>('/api/youtube/search', async (req, reply) => {
+    const query = String(req.query?.q ?? '').trim();
+    if (!query) return reply.code(400).send({ error: 'q is required' });
+    const limit = Math.min(50, Math.max(1, Number(req.query?.limit) || 20));
+    try {
+      const candidates = await resolveYouTubeCandidates(query, '', {
+        apiKey: (await getSetting(pool, 'youtube_api_key')) || options.config?.youtubeApiKey,
+        regionCode: (await getSetting(pool, 'youtube_region_code')) || options.config?.youtubeRegionCode,
+        relevanceLanguage: (await getSetting(pool, 'youtube_relevance_language')) || options.config?.youtubeRelevanceLanguage,
+        safeSearch: ((await getSetting(pool, 'youtube_safe_search')) || options.config?.youtubeSafeSearch) as 'none' | 'moderate' | 'strict' | undefined,
+        maxResults: limit,
+        allowYtDlpFallback: true,
+      });
+      return { results: candidates.slice(0, limit).map(item => ({
+        id: item.videoId, name: item.title || item.videoId, channel: item.channelTitle,
+        artwork: item.thumbnailUrl, url: `https://www.youtube.com/watch?v=${item.videoId}`,
+      })) };
+    } catch (error) {
+      return reply.code(502).send({ error: errorText(error) });
+    }
+  });
+
+  fastify.post<{ Body: { value?: string; title?: string; deviceId?: string; controllerDeviceId?: string } }>(
+    '/api/youtube/play',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      const value = String(req.body?.value ?? '').trim();
+      if (!value) return reply.code(400).send({ error: 'value is required' });
+      const deviceId = await resolveCanvasPlaybackDevice(String(req.body?.controllerDeviceId ?? '').trim(), 'youtube', String(req.body?.deviceId ?? '').trim());
+      if (!deviceId) return reply.code(409).send({ error: 'No compatible YouTube playback device is selected' });
+      if (!options.dispatchYoutubeToDevice) return reply.code(503).send({ error: 'YouTube device playback is unavailable' });
+      try {
+        const title = String(req.body?.title ?? value);
+        await options.dispatchYoutubeToDevice(deviceId, value, title);
+        audioState = { ...audioState, state: 'playing', url: value, title, source: 'youtube', muted: false };
+        return { success: true, deviceId, value, state: getAudioState() };
+      } catch (error) {
+        return reply.code(502).send({ error: errorText(error) });
+      }
+    },
+  );
+
+  fastify.get<{ Querystring: { controllerDeviceId?: string; mediaType?: string } }>(
+    '/api/media/destinations',
+    async (req, reply) => {
+      const controllerDeviceId = await resolveControllerDeviceId(String(req.query?.controllerDeviceId ?? '').trim());
+      const mediaType = req.query?.mediaType;
+      if (!controllerDeviceId || !isMediaType(mediaType)) {
+        return reply.code(400).send({ error: 'controllerDeviceId and a valid mediaType are required' });
+      }
+      const [allDestinations, saved] = await Promise.all([
+        mediaDestinations(),
+        savedPlaybackTargets(pool, controllerDeviceId),
+      ]);
+      const players = allDestinations.filter(destination => destination.kind === 'music_assistant');
+      const current = temporaryPlaybackTarget(controllerDeviceId, mediaType) ?? saved[mediaType] ?? (
+        compatibleTargetKind(mediaType) === 'canvas'
+          ? { kind: 'canvas' as const, id: controllerDeviceId }
+          : { kind: 'music_assistant' as const, id: players.find(player => player.available)?.id ?? players[0]?.id ?? '' }
+      );
+      const allowed = compatibleTargetKinds(mediaType);
+      const destinations = allDestinations.map(destination => ({
+        ...destination,
+        compatible: allowed.includes(destination.kind),
+        reason: allowed.includes(destination.kind) ? undefined : 'This source cannot play on this destination type',
+      }));
+      return {
+        mediaType, controllerDeviceId, destinations, current,
+        temporary: !!temporaryPlaybackTarget(controllerDeviceId, mediaType),
+        default: saved[mediaType] ?? null,
+      };
+    },
+  );
+
+  fastify.get<{ Params: { deviceId: string } }>('/api/media/routing/:deviceId', async (req) => {
+    const deviceId = await resolveControllerDeviceId(req.params.deviceId);
+    const defaults = await savedPlaybackTargets(pool, deviceId);
+    const players = await maPlayers().catch(() => []);
+    const current = Object.fromEntries(await Promise.all(MEDIA_TYPES.map(async mediaType => [
+      mediaType,
+      await effectivePlaybackTarget(pool, deviceId, mediaType, players.find(player => player.available)?.id ?? players[0]?.id ?? ''),
+    ])));
+    return { deviceId, defaults, current };
+  });
+
+  fastify.post<{ Params: { deviceId: string }; Body: { mediaType?: string; target?: PlaybackTarget } }>(
+    '/api/media/routing/:deviceId/select',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      const mediaType = req.body?.mediaType;
+      const target = req.body?.target;
+      if (!isMediaType(mediaType) || !target?.id || !isPlaybackTargetKind(target.kind) || !compatibleTargetKinds(mediaType).includes(target.kind)) {
+        return reply.code(400).send({ error: 'A compatible mediaType and target are required' });
+      }
+      const deviceId = await resolveControllerDeviceId(req.params.deviceId);
+      setTemporaryPlaybackTarget(deviceId, mediaType, { kind: target.kind, id: String(target.id), name: target.name });
+      return { ok: true, mediaType, target, temporary: true };
+    },
+  );
+
+  fastify.delete<{ Params: { deviceId: string; mediaType: string } }>(
+    '/api/media/routing/:deviceId/select/:mediaType',
+    { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
+    async (req, reply) => {
+      if (!isMediaType(req.params.mediaType)) return reply.code(400).send({ error: 'Invalid media type' });
+      clearTemporaryPlaybackTarget(await resolveControllerDeviceId(req.params.deviceId), req.params.mediaType);
+      return { ok: true };
+    },
+  );
+
+  fastify.get<{ Params: { deviceId: string } }>('/api/admin/devices/:deviceId/media-defaults', {
+    preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
+  }, async (req, reply) => {
+    const deviceId = await resolveControllerDeviceId(req.params.deviceId);
+    const device = await pool.query('SELECT 1 FROM devices WHERE id=$1', [deviceId]);
+    if (!device.rowCount) return reply.code(404).send({ error: 'device_not_found' });
+    return { deviceId, defaults: await savedPlaybackTargets(pool, deviceId) };
+  });
+
+  fastify.put<{ Params: { deviceId: string }; Body: { defaults?: Partial<Record<MediaType, PlaybackTarget | null>> } }>(
+    '/api/admin/devices/:deviceId/media-defaults',
+    { preHandler: adminPreHandler(options, ['admin'], true) },
+    async (req, reply) => {
+      const deviceId = await resolveControllerDeviceId(req.params.deviceId);
+      const device = await pool.query('SELECT 1 FROM devices WHERE id=$1', [deviceId]);
+      if (!device.rowCount) return reply.code(404).send({ error: 'device_not_found' });
+      const defaults = req.body?.defaults ?? {};
+      for (const [mediaType, target] of Object.entries(defaults)) {
+        if (!isMediaType(mediaType) || (target && (!target.id || !isPlaybackTargetKind(target.kind) || !compatibleTargetKinds(mediaType).includes(target.kind)))) {
+          return reply.code(400).send({ error: `Invalid destination for ${mediaType}` });
+        }
+      }
+      await savePlaybackTargets(pool, deviceId, defaults);
+      return { ok: true, defaults: await savedPlaybackTargets(pool, deviceId) };
+    },
+  );
+
   // GET /api/dab/stations?search=&limit= — the SDR lineup can be large, so the
   // widget's filter and visible-item cap are applied server-side to keep the
   // polled payload small.
   fastify.get<{ Querystring: { search?: string; limit?: string } }>('/api/dab/stations', async (req, reply) => {
-    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
-    if (!base) {
+    const modules = await getSdrModules();
+    if (modules.length === 0) {
       return reply.code(503).send({ error: 'DAB+ radio is not configured — set the SDR radio URL in Settings → Media.' });
     }
     try {
-      const { items, total } = applyListQuery(await fetchDabStations(base), req.query?.search, req.query?.limit);
-      return { stations: items, total };
+      const stations = await getDabStations();
+      const { items, total } = applyListQuery(stations, req.query?.search, req.query?.limit);
+      return { stations: items.map(({ moduleConfig: _moduleConfig, ...station }) => station), total };
     } catch (err) {
       return reply.code(502).send({ error: `SDR radio unavailable: ${errorText(err)}` });
     }
   });
 
+  fastify.get('/api/admin/dab/logos', {
+    preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
+  }, async () => {
+    const result = await pool.query('SELECT station_id, content_type, updated_at FROM dab_station_logos ORDER BY station_id');
+    return { logos: result.rows.map((row) => ({
+      stationId: String(row.station_id),
+      contentType: String(row.content_type),
+      updatedAt: row.updated_at,
+      url: `/api/dab/logos/${encodeURIComponent(String(row.station_id))}`,
+    })) };
+  });
+
+  fastify.get<{ Params: { stationId: string } }>('/api/dab/logos/:stationId', async (req, reply) => {
+    const result = await pool.query(
+      'SELECT content_type, image_data FROM dab_station_logos WHERE station_id = $1',
+      [req.params.stationId],
+    );
+    if (result.rows.length === 0) return reply.code(404).send({ error: 'Station logo not found' });
+    return reply.type(String(result.rows[0].content_type)).header('cache-control', 'public, max-age=300').send(result.rows[0].image_data);
+  });
+
+  fastify.put<{ Params: { stationId: string }; Body: { contentType?: string; dataBase64?: string } }>(
+    '/api/admin/dab/logos/:stationId',
+    { preHandler: adminPreHandler(options, ['admin'], true) },
+    async (req, reply) => {
+      const contentType = String(req.body?.contentType ?? '').toLowerCase();
+      if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(contentType)) {
+        return reply.code(400).send({ error: 'Logo must be PNG, JPEG, WebP or GIF' });
+      }
+      let bytes: Buffer;
+      try { bytes = Buffer.from(String(req.body?.dataBase64 ?? ''), 'base64'); }
+      catch { return reply.code(400).send({ error: 'Invalid image data' }); }
+      if (bytes.length === 0 || bytes.length > 2 * 1024 * 1024) {
+        return reply.code(400).send({ error: 'Logo must be between 1 byte and 2 MB' });
+      }
+      await pool.query(
+        `INSERT INTO dab_station_logos(station_id, content_type, image_data, updated_at)
+         VALUES($1, $2, $3, now())
+         ON CONFLICT(station_id) DO UPDATE SET content_type=excluded.content_type, image_data=excluded.image_data, updated_at=now()`,
+        [req.params.stationId, contentType, bytes],
+      );
+      return { ok: true, stationId: req.params.stationId, url: `/api/dab/logos/${encodeURIComponent(req.params.stationId)}` };
+    },
+  );
+
+  fastify.delete<{ Params: { stationId: string } }>('/api/admin/dab/logos/:stationId', {
+    preHandler: adminPreHandler(options, ['admin'], true),
+  }, async (req, reply) => {
+    const result = await pool.query('DELETE FROM dab_station_logos WHERE station_id = $1', [req.params.stationId]);
+    return reply.code(result.rowCount ? 204 : 404).send(result.rowCount ? undefined : { error: 'Station logo not found' });
+  });
+
   // POST /api/dab/play { station, deviceId? } — deviceId targets one display
-  fastify.post<{ Body: { station?: string; deviceId?: string } }>('/api/dab/play', {
+  fastify.post<{ Body: { station?: string; deviceId?: string; controllerDeviceId?: string } }>('/api/dab/play', {
     preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
   }, async (req, reply) => {
     const station = (req.body?.station ?? '').trim();
     if (!station) return reply.code(400).send({ error: 'station is required' });
-    const deviceId = (req.body?.deviceId ?? '').trim();
-    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
-    if (!base) return reply.code(503).send({ error: 'DAB+ radio is not configured' });
-    const tuner = (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1';
-    const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_stream_url');
+    const controllerDeviceId = (req.body?.controllerDeviceId ?? '').trim();
+    const target = await resolvePlaybackTarget(controllerDeviceId, 'dab', (req.body?.deviceId ?? '').trim());
     try {
-      const title = await tuneDabStation(base, tuner, station);
-      const state = applyAudioPlayback({ url: streamUrl, title, source: 'dab' }, deviceId, options.dispatchMediaToDevice);
-      return { success: true, station: title, url: streamUrl, state, ...(deviceId ? { deviceId } : {}) };
+      const resolved = await resolveDabStation(station);
+      const stationId = String(resolved.id ?? station).replace(/^sdr[12]::/, '');
+      const title = await tuneDabStation(resolved.moduleConfig.base, resolved.moduleConfig.tuner, stationId);
+      const artwork = 'image_url' in resolved ? resolved.image_url : undefined;
+      const state = applyAudioPlayback({ url: resolved.moduleConfig.streamUrl, title, source: 'dab', artwork }, target, options.dispatchMediaToTarget);
+      return { success: true, station: title, url: resolved.moduleConfig.streamUrl, state, ...(target ? { target } : {}) };
     } catch (err) {
       return reply.code(502).send({ error: `DAB+ tune failed: ${errorText(err)}` });
     }
@@ -1507,13 +1918,29 @@ export async function registerLegacyRoutes(
     }
   });
 
+  // Keep the Dispatcharr API key server-side while allowing display clients to
+  // load channel logos from its authenticated cache endpoint.
+  fastify.get<{ Params: { logoId: string } }>('/api/dispatcharr/logos/:logoId', async (req, reply) => {
+    const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
+    const apiKey = await mediaSetting(pool, options.config, 'dispatcharr_api_key');
+    if (!base || !apiKey) return reply.code(404).send({ error: 'Logo unavailable' });
+    const upstream = await fetch(`${base.replace(/\/+$/, '')}/api/channels/logos/${encodeURIComponent(req.params.logoId)}/cache/`, {
+      headers: { 'X-API-Key': apiKey },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!upstream.ok) return reply.code(upstream.status).send({ error: 'Logo unavailable' });
+    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    return reply.type(contentType).header('cache-control', 'public, max-age=14400').send(Buffer.from(await upstream.arrayBuffer()));
+  });
+
   // POST /api/dispatcharr/play { channel, url?, deviceId? } — deviceId targets one display
-  fastify.post<{ Body: { channel?: string; url?: string; deviceId?: string } }>('/api/dispatcharr/play', {
+  fastify.post<{ Body: { channel?: string; url?: string; deviceId?: string; controllerDeviceId?: string } }>('/api/dispatcharr/play', {
     preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
   }, async (req, reply) => {
     const name = (req.body?.channel ?? '').trim();
     const url = (req.body?.url ?? '').trim();
-    const deviceId = (req.body?.deviceId ?? '').trim();
+    const controllerDeviceId = (req.body?.controllerDeviceId ?? '').trim();
+    const target = await resolvePlaybackTarget(controllerDeviceId, 'dispatcharr', (req.body?.deviceId ?? '').trim());
     if (!name && !url) return reply.code(400).send({ error: 'channel or url is required' });
     try {
       let resolved = { name, url };
@@ -1526,10 +1953,10 @@ export async function registerLegacyRoutes(
       }
       const state = applyAudioPlayback(
         { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr' },
-        deviceId,
-        options.dispatchMediaToDevice,
+        target,
+        options.dispatchMediaToTarget,
       );
-      return { success: true, channel: resolved.name, url: resolved.url, state, ...(deviceId ? { deviceId } : {}) };
+      return { success: true, channel: resolved.name, url: resolved.url, state, ...(target ? { target } : {}) };
     } catch (err) {
       return reply.code(502).send({ error: `Dispatcharr play failed: ${errorText(err)}` });
     }
@@ -1539,23 +1966,37 @@ export async function registerLegacyRoutes(
   fastify.get('/api/media/state', async () => ({ audio: getAudioState() }));
 
   // POST /api/media/control { action, source?, deviceId?, level?, muted? }
-  fastify.post<{ Body: { action?: string; source?: string; deviceId?: string; level?: number; muted?: boolean } }>(
+  fastify.post<{ Body: { action?: string; source?: string; deviceId?: string; controllerDeviceId?: string; level?: number; muted?: boolean } }>(
     '/api/media/control',
     { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
     async (req, reply) => {
       const action = (req.body?.action ?? '').trim();
       const source = (req.body?.source ?? audioState.source ?? '').trim();
-      const deviceId = (req.body?.deviceId ?? '').trim();
+      const controllerDeviceId = (req.body?.controllerDeviceId ?? '').trim();
+      const mediaType: MediaType = source === 'dispatcharr' ? 'dispatcharr' : source === 'youtube' ? 'youtube' : 'dab';
+      const target = await resolvePlaybackTarget(controllerDeviceId, mediaType, (req.body?.deviceId ?? '').trim());
+      const deviceId = target?.kind === 'canvas' ? target.id : '';
       // Transport commands on a specific device go to that device's local server
-      // (the same one the voice path uses), so only that display reacts.
+      // (the same one the voice path uses), so only that display reacts. DLNA and
+      // Home Assistant destinations are controlled through their own protocols.
       const deviceControl = deviceId && options.controlMediaOnDevice ? options.controlMediaOnDevice : undefined;
+      const targetControl = target && target.kind !== 'canvas' && options.controlMediaOnTarget ? options.controlMediaOnTarget : undefined;
+      const hasControl = !!(deviceControl || targetControl);
+      const sendControl = (controlAction: string, value?: number | boolean) => {
+        const promise = targetControl && target
+          ? targetControl(target, controlAction, value)
+          : deviceControl
+            ? deviceControl(deviceId, controlAction, value)
+            : Promise.resolve();
+        void promise.catch((err) => console.warn(`[core][media] device ${controlAction} failed:`, err instanceof Error ? err.message : err));
+      };
       try {
         switch (action) {
           case 'pause': {
             if (audioState.state !== 'playing') return reply.code(409).send({ error: 'Not playing' });
             audioState.state = 'paused';
-            if (deviceControl) {
-              void deviceControl(deviceId, 'pause').catch((err) => console.warn('[core][media] device pause failed:', err instanceof Error ? err.message : err));
+            if (hasControl) {
+              sendControl('pause');
             } else {
               broadcast({ type: 'command', action: 'audio_pause', payload: {} }, 'browser');
             }
@@ -1564,8 +2005,8 @@ export async function registerLegacyRoutes(
           case 'resume': {
             if (audioState.state !== 'paused') return reply.code(409).send({ error: 'Not paused' });
             audioState.state = 'playing';
-            if (deviceControl) {
-              void deviceControl(deviceId, 'resume').catch((err) => console.warn('[core][media] device resume failed:', err instanceof Error ? err.message : err));
+            if (hasControl) {
+              sendControl('resume');
             } else {
               broadcast({ type: 'command', action: 'audio_resume', payload: {} }, 'browser');
             }
@@ -1573,8 +2014,8 @@ export async function registerLegacyRoutes(
           }
           case 'stop': {
             audioState = { ...audioState, state: 'idle', url: '', title: '', source: undefined };
-            if (deviceControl) {
-              void deviceControl(deviceId, 'stop').catch((err) => console.warn('[core][media] device stop failed:', err instanceof Error ? err.message : err));
+            if (hasControl) {
+              sendControl('stop');
             } else {
               broadcast({ type: 'command', action: 'audio_stop', payload: {} }, 'browser');
             }
@@ -1586,8 +2027,8 @@ export async function registerLegacyRoutes(
             const clamped = clampVolume(Number(level));
             audioState.volume = clamped;
             audioState.muted = false;
-            if (deviceControl) {
-              void deviceControl(deviceId, 'volume', clamped).catch((err) => console.warn('[core][media] device volume failed:', err instanceof Error ? err.message : err));
+            if (hasControl) {
+              sendControl('volume', clamped);
             } else {
               broadcast({ type: 'command', action: 'audio_volume', payload: { level: clamped } }, 'browser');
             }
@@ -1597,16 +2038,21 @@ export async function registerLegacyRoutes(
             const muted = req.body?.muted;
             if (muted === undefined) return reply.code(400).send({ error: 'muted is required' });
             audioState.muted = !!muted;
-            if (deviceControl) {
-              void deviceControl(deviceId, 'mute', !!muted).catch((err) => console.warn('[core][media] device mute failed:', err instanceof Error ? err.message : err));
+            if (hasControl) {
+              sendControl('mute', !!muted);
             } else {
               broadcast({ type: 'command', action: 'audio_mute', payload: { muted: audioState.muted } }, 'browser');
             }
             return getAudioState();
           }
           case 'next':
-          case 'previous':
-            return await stepMedia(source, action === 'next' ? 1 : -1, deviceId || undefined);
+          case 'previous': {
+            if (source === 'youtube' && deviceControl) {
+              await deviceControl(deviceId, action);
+              return getAudioState();
+            }
+            return await stepMedia(source, action === 'next' ? 1 : -1, target);
+          }
           default:
             return reply.code(400).send({ error: 'action must be one of pause, resume, stop, volume, mute, next, previous' });
         }
@@ -1642,8 +2088,9 @@ export async function registerLegacyRoutes(
   });
 
   // GET /api/ma/state?playerId= — a single player's state (widget polling)
-  fastify.get<{ Querystring: { playerId?: string } }>('/api/ma/state', async (req, reply) => {
-    const playerId = (req.query?.playerId ?? '').trim();
+  fastify.get<{ Querystring: { playerId?: string; controllerDeviceId?: string; mediaType?: string } }>('/api/ma/state', async (req, reply) => {
+    const mediaType = req.query?.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+    const playerId = await resolveMaPlaybackPlayer((req.query?.controllerDeviceId ?? '').trim(), mediaType, (req.query?.playerId ?? '').trim());
     if (!playerId) return reply.code(400).send({ error: 'playerId is required' });
     let conn: MaConnection | null;
     try {
@@ -1695,6 +2142,13 @@ export async function registerLegacyRoutes(
     }
   });
 
+  fastify.get<{ Querystring: { path?: string } }>('/api/ma/browse', async (req, reply) => {
+    const conn = await maConnection(pool, options.config).catch(() => null);
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try { return { items: await browseMa(conn, String(req.query?.path ?? '')) }; }
+    catch (err) { return reply.code(502).send({ error: `Music Assistant browse failed: ${errorText(err)}` }); }
+  });
+
   // GET /api/ma/search?q=&limit= — search tracks/radios/playlists
   fastify.get<{ Querystring: { q?: string; limit?: string } }>('/api/ma/search', async (req, reply) => {
     const query = (req.query?.q ?? '').trim();
@@ -1715,12 +2169,13 @@ export async function registerLegacyRoutes(
   });
 
   // POST /api/ma/play { uri, playerId, option? } — play media on an MA player
-  fastify.post<{ Body: { uri?: string; playerId?: string; option?: string } }>(
+  fastify.post<{ Body: { uri?: string; playerId?: string; controllerDeviceId?: string; mediaType?: string; option?: string } }>(
     '/api/ma/play',
     { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
     async (req, reply) => {
       const uri = (req.body?.uri ?? '').trim();
-      const playerId = (req.body?.playerId ?? '').trim();
+      const mediaType = req.body?.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+      const playerId = await resolveMaPlaybackPlayer((req.body?.controllerDeviceId ?? '').trim(), mediaType, (req.body?.playerId ?? '').trim());
       if (!uri) return reply.code(400).send({ error: 'uri is required' });
       if (!playerId) return reply.code(400).send({ error: 'playerId is required' });
       const option = ['replace', 'play', 'queue', 'add'].includes(req.body?.option ?? '')
@@ -1743,12 +2198,13 @@ export async function registerLegacyRoutes(
   );
 
   // POST /api/ma/control { action, playerId, level?, muted? } — transport control
-  fastify.post<{ Body: { action?: string; playerId?: string; level?: number; muted?: boolean } }>(
+  fastify.post<{ Body: { action?: string; playerId?: string; controllerDeviceId?: string; mediaType?: string; level?: number; muted?: boolean } }>(
     '/api/ma/control',
     { preHandler: adminPreHandler(options, ['admin', 'viewer'], false) },
     async (req, reply) => {
       const action = (req.body?.action ?? '').trim();
-      const playerId = (req.body?.playerId ?? '').trim();
+      const mediaType = req.body?.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+      const playerId = await resolveMaPlaybackPlayer((req.body?.controllerDeviceId ?? '').trim(), mediaType, (req.body?.playerId ?? '').trim());
       const allowed = ['play', 'pause', 'play_pause', 'stop', 'next', 'previous', 'volume', 'mute'];
       if (!allowed.includes(action)) {
         return reply.code(400).send({ error: `action must be one of ${allowed.join(', ')}` });
@@ -1771,6 +2227,30 @@ export async function registerLegacyRoutes(
     },
   );
 
+  fastify.get<{ Querystring: { playerId?: string; controllerDeviceId?: string; mediaType?: string } }>('/api/ma/queue', async (req, reply) => {
+    const mediaType = req.query?.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+    const playerId = await resolveMaPlaybackPlayer(String(req.query?.controllerDeviceId ?? ''), mediaType, String(req.query?.playerId ?? ''));
+    if (!playerId) return reply.code(409).send({ error: 'No Music Assistant player is selected' });
+    const conn = await maConnection(pool, options.config);
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try { return { playerId, items: await fetchMaQueue(conn, playerId) }; }
+    catch (error) { return reply.code(502).send({ error: errorText(error) }); }
+  });
+
+  fastify.post<{ Body: { action?: string; queueItemId?: string; playerId?: string; controllerDeviceId?: string; mediaType?: string } }>('/api/ma/queue', {
+    preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
+  }, async (req, reply) => {
+    const action = req.body?.action;
+    if (action !== 'clear' && action !== 'remove') return reply.code(400).send({ error: 'action must be clear or remove' });
+    const mediaType = req.body?.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant';
+    const playerId = await resolveMaPlaybackPlayer(String(req.body?.controllerDeviceId ?? ''), mediaType, String(req.body?.playerId ?? ''));
+    if (!playerId) return reply.code(409).send({ error: 'No Music Assistant player is selected' });
+    const conn = await maConnection(pool, options.config);
+    if (!conn) return reply.code(503).send({ error: 'Music Assistant is not configured' });
+    try { await maQueueAction(conn, playerId, action, req.body?.queueItemId); return { success: true }; }
+    catch (error) { return reply.code(502).send({ error: errorText(error) }); }
+  });
+
   // ═══ Media source connection tests ═══════════════════════════════════════
   //
   // Back the "Test connection" buttons in Settings → Media. Each returns a
@@ -1779,13 +2259,13 @@ export async function registerLegacyRoutes(
 
   // GET /api/dab/test — reach the SDR radio and count DAB+ stations
   fastify.get('/api/dab/test', async () => {
-    const base = await mediaSetting(pool, options.config, 'sdr_radio_url');
-    if (!base) return { ok: false, error: 'SDR radio URL is not configured.' };
+    const modules = await getSdrModules();
+    if (modules.length === 0) return { ok: false, error: 'SDR radio URL is not configured.' };
     try {
-      const stations = await fetchDabStations(base);
+      const stations = await getDabStations();
       return {
         ok: true,
-        detail: `Reached the SDR radio — ${stations.length} DAB+ station${stations.length === 1 ? '' : 's'}.`,
+        detail: `Reached ${modules.length} SDR radio module${modules.length === 1 ? '' : 's'} — ${stations.length} DAB+ station${stations.length === 1 ? '' : 's'}.`,
       };
     } catch (err) {
       return { ok: false, error: `SDR radio unavailable: ${errorText(err)}` };
@@ -2190,6 +2670,9 @@ async function handleWsMessage(pool: Pool, ws: WebSocket, msg: any): Promise<voi
 
       // For browser clients, prefer its assigned page, then fall back to the global active page.
       if (client.clientType === 'browser') {
+        // Temporary playback routing belongs to this Edge app session. A new
+        // renderer hello means the app restarted/reconnected, so defaults win.
+        if (client.deviceId) clearTemporaryPlaybackTarget(client.deviceId);
         try {
           let pageId: string | null = null;
           if (client.deviceId) {

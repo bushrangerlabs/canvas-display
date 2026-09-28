@@ -8,7 +8,7 @@ import { useVisibility } from '../../../hooks/useVisibility';
 import { useResolvedUniversalStyle } from '../../../hooks/useResolvedUniversalStyle';
 import type { WidgetProps } from '../../types/index';
 import { applyUniversalStyles } from '../../utils/styleBuilder';
-import { defaultAccent, defaultPollSeconds, useMediaAudio, useMediaPlay, type MediaKind } from './mediaSource';
+import { defaultAccent, defaultPollSeconds, useMediaAudio, useMediaItems, type MediaKind } from './mediaSource';
 
 const MediaPresets: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isEditMode, kind }) => {
   const cfg = config.config ?? {};
@@ -20,13 +20,15 @@ const MediaPresets: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isE
   const borderRadius = cfg.borderRadius ?? 12;
   const columns = Math.max(1, Math.min(8, Number(cfg.columns ?? 3)));
   const showLabels = cfg.showLabels !== false;
+  const showIcons = cfg.showIcons !== false;
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 28));
   const buttonHeight = Math.max(24, Number(cfg.buttonHeight ?? 40));
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? defaultPollSeconds(kind))) * 1000;
 
   const presets: string[] = Array.isArray(cfg.presets) ? cfg.presets.filter((p: unknown) => typeof p === 'string') : [];
 
   const isVisible = useVisibility(cfg.visibilityCondition);
-  const { error, playByName } = useMediaPlay(kind);
+  const { items, error, play, playByName } = useMediaItems(kind, pollMs);
   const { audio } = useMediaAudio(pollMs);
   const universalStyle = useResolvedUniversalStyle(config.config.style);
 
@@ -65,14 +67,16 @@ const MediaPresets: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isE
             No presets selected — tick some in the inspector.
           </div>
         )}
-        {presets.map((name) => {
+        {presets.map((value) => {
+          const item = items.find((candidate) => candidate.id === value || candidate.name === value);
+          const name = item?.name ?? value.replace(/^sdr[12]::/, '');
           const active = isActive(name);
           return (
             <button
-              key={name}
+              key={value}
               type="button"
               disabled={isEditMode}
-              onClick={() => void playByName(name)}
+              onClick={() => void (item ? play(item) : playByName(value))}
               title={name}
               style={{
                 minWidth: 0,
@@ -92,7 +96,9 @@ const MediaPresets: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isE
                 overflow: 'hidden',
               }}
             >
-              {!showLabels && <span style={{ color: accentColor }}>{kind === 'dab' ? '📻' : '📺'}</span>}
+              {showIcons && (item?.logo
+                ? <img src={item.logo} alt="" loading="lazy" style={{ width: iconSize, height: iconSize, objectFit: 'contain', flex: '0 0 auto', borderRadius: 4 }} />
+                : <span aria-hidden="true" style={{ color: accentColor, fontSize: Math.max(14, iconSize * 0.65) }}>{kind === 'dab' ? '📻' : '📺'}</span>)}
               {showLabels && (
                 <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{name}</span>
               )}

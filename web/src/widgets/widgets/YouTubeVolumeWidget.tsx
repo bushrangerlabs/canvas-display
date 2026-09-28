@@ -1,0 +1,1 @@
+import { YouTubeVolume as Widget } from './media/YouTubeWidgets'; import { youtubeMetadata } from './media/youtubeMetadata'; export const YouTubeVolumeWidgetMetadata=youtubeMetadata('volume'); export default Widget;

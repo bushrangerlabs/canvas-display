@@ -49,6 +49,7 @@ import { DabVolumeSliderWidgetMetadata } from '../widgets/DabVolumeSliderWidget'
 import { DabVolumeDialWidgetMetadata } from '../widgets/DabVolumeDialWidget';
 import { DabPresetsWidgetMetadata } from '../widgets/DabPresetsWidget';
 import { DabSearchWidgetMetadata } from '../widgets/DabSearchWidget';
+import { DabPlayButtonWidgetMetadata } from '../widgets/DabPlayButtonWidget';
 import { DispatcharrChannelsWidgetMetadata } from '../widgets/DispatcharrChannelsWidget';
 import { DispatcharrNowPlayingWidgetMetadata } from '../widgets/DispatcharrNowPlayingWidget';
 import { DispatcharrControlsWidgetMetadata } from '../widgets/DispatcharrControlsWidget';
@@ -56,6 +57,22 @@ import { DispatcharrVolumeSliderWidgetMetadata } from '../widgets/DispatcharrVol
 import { DispatcharrVolumeDialWidgetMetadata } from '../widgets/DispatcharrVolumeDialWidget';
 import { DispatcharrPresetsWidgetMetadata } from '../widgets/DispatcharrPresetsWidget';
 import { DispatcharrSearchWidgetMetadata } from '../widgets/DispatcharrSearchWidget';
+import { DispatcharrPlayButtonWidgetMetadata } from '../widgets/DispatcharrPlayButtonWidget';
+import { PlaybackDeviceListWidgetMetadata } from '../widgets/PlaybackDeviceListWidget';
+import { PlaybackDeviceButtonWidgetMetadata } from '../widgets/PlaybackDeviceButtonWidget';
+import { PlaybackDeviceIndicatorWidgetMetadata } from '../widgets/PlaybackDeviceIndicatorWidget';
+import { YouTubeSearchWidgetMetadata } from '../widgets/YouTubeSearchWidget';
+import { YouTubePresetsWidgetMetadata } from '../widgets/YouTubePresetsWidget';
+import { YouTubePlayButtonWidgetMetadata } from '../widgets/YouTubePlayButtonWidget';
+import { YouTubeNowPlayingWidgetMetadata } from '../widgets/YouTubeNowPlayingWidget';
+import { YouTubeControlsWidgetMetadata } from '../widgets/YouTubeControlsWidget';
+import { YouTubeVolumeWidgetMetadata } from '../widgets/YouTubeVolumeWidget';
+import { YouTubeMusicSearchWidgetMetadata } from '../widgets/YouTubeMusicSearchWidget';
+import { YouTubeMusicPresetsWidgetMetadata } from '../widgets/YouTubeMusicPresetsWidget';
+import { YouTubeMusicPlayButtonWidgetMetadata } from '../widgets/YouTubeMusicPlayButtonWidget';
+import { YouTubeMusicNowPlayingWidgetMetadata } from '../widgets/YouTubeMusicNowPlayingWidget';
+import { YouTubeMusicControlsWidgetMetadata } from '../widgets/YouTubeMusicControlsWidget';
+import { YouTubeMusicVolumeWidgetMetadata } from '../widgets/YouTubeMusicVolumeWidget';
 import { MaPlayersWidgetMetadata } from '../widgets/MaPlayersWidget';
 import { MaNowPlayingWidgetMetadata } from '../widgets/MaNowPlayingWidget';
 import { MaControlsWidgetMetadata } from '../widgets/MaControlsWidget';
@@ -64,6 +81,8 @@ import { MaVolumeDialWidgetMetadata } from '../widgets/MaVolumeDialWidget';
 import { MaRadiosWidgetMetadata } from '../widgets/MaRadiosWidget';
 import { MaPlaylistsWidgetMetadata } from '../widgets/MaPlaylistsWidget';
 import { MaSearchWidgetMetadata } from '../widgets/MaSearchWidget';
+import { MaQueueWidgetMetadata } from '../widgets/MaQueueWidget';
+import { MaBrowseWidgetMetadata } from '../widgets/MaBrowseWidget';
 import { BroadcastWidgetMetadata } from '../widgets/BroadcastWidget';
 
 export interface WidgetRegistryEntry {
@@ -118,6 +137,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   dabvolumedial: DabVolumeDialWidgetMetadata,
   dabpresets: DabPresetsWidgetMetadata,
   dabsearch: DabSearchWidgetMetadata,
+  dabplaybutton: DabPlayButtonWidgetMetadata,
   dispatcharrchannels: DispatcharrChannelsWidgetMetadata,
   dispatcharrnowplaying: DispatcharrNowPlayingWidgetMetadata,
   dispatcharrcontrols: DispatcharrControlsWidgetMetadata,
@@ -125,6 +145,22 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   dispatcharrvolumedial: DispatcharrVolumeDialWidgetMetadata,
   dispatcharrpresets: DispatcharrPresetsWidgetMetadata,
   dispatcharrsearch: DispatcharrSearchWidgetMetadata,
+  dispatcharrplaybutton: DispatcharrPlayButtonWidgetMetadata,
+  playbackdevicelist: PlaybackDeviceListWidgetMetadata,
+  playbackdevicebutton: PlaybackDeviceButtonWidgetMetadata,
+  playbackdeviceindicator: PlaybackDeviceIndicatorWidgetMetadata,
+  youtubesearch: YouTubeSearchWidgetMetadata,
+  youtubepresets: YouTubePresetsWidgetMetadata,
+  youtubeplaybutton: YouTubePlayButtonWidgetMetadata,
+  youtubenowplaying: YouTubeNowPlayingWidgetMetadata,
+  youtubecontrols: YouTubeControlsWidgetMetadata,
+  youtubevolume: YouTubeVolumeWidgetMetadata,
+  youtubemusicsearch: YouTubeMusicSearchWidgetMetadata,
+  youtubemusicpresets: YouTubeMusicPresetsWidgetMetadata,
+  youtubemusicplaybutton: YouTubeMusicPlayButtonWidgetMetadata,
+  youtubemusicnowplaying: YouTubeMusicNowPlayingWidgetMetadata,
+  youtubemusiccontrols: YouTubeMusicControlsWidgetMetadata,
+  youtubemusicvolume: YouTubeMusicVolumeWidgetMetadata,
   maplayers: MaPlayersWidgetMetadata,
   manowplaying: MaNowPlayingWidgetMetadata,
   macontrols: MaControlsWidgetMetadata,
@@ -133,6 +169,8 @@ export const WIDGET_REGISTRY: Record<string, WidgetMetadata> = {
   maradios: MaRadiosWidgetMetadata,
   maplaylists: MaPlaylistsWidgetMetadata,
   masearch: MaSearchWidgetMetadata,
+  maqueue: MaQueueWidgetMetadata,
+  mabrowse: MaBrowseWidgetMetadata,
   broadcast: BroadcastWidgetMetadata,
 };
 

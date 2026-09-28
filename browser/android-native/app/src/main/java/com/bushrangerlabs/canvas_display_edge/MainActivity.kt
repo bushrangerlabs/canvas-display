@@ -64,6 +64,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pageStore: EdgePageStore
     private var lastPage: EdgePage? = null
     private var directAudioPlayer: MediaPlayer? = null
+    private var directAudioActive = false
+    private var directAudioPaused = false
+    private var directAudioVolume = 75
+    private var audioOverlay: LinearLayout? = null
+    private var audioOverlayTitle: TextView? = null
     private var dlnaService: DlnaService? = null
     private var dlnaAdapter: AndroidDlnaAdapter? = null
     private var snapcastService: SnapcastService? = null
@@ -252,6 +257,7 @@ class MainActivity : AppCompatActivity() {
             true
         }
         root.addView(status, statusParams)
+        createAudioOverlay(root)
         setContentView(root)
         root.requestFocus()
         pageStore.load(config.coreUrl)?.let { cached ->
@@ -276,9 +282,9 @@ class MainActivity : AppCompatActivity() {
                     { scene, complete -> renderScene(scene, complete) },
                     { text -> runOnUiThread { statusText(text) }; if (text == "online") refreshVoiceConfigAndMaybeStart() },
                     { refreshVoiceConfigAndMaybeStart() },
-                    { url, source ->
+                    { url, source, title ->
                         if (source == "direct_audio") {
-                            runOnUiThread { playDirectAudio(url) }
+                            runOnUiThread { playDirectAudio(url, title) }
                             true
                         } else {
                             runOnUiThread { renderer.showFloating(url, fullscreen = true) }
@@ -516,7 +522,7 @@ class MainActivity : AppCompatActivity() {
         val completed = CountDownLatch(1)
         var applied = false
         runOnUiThread {
-            applied = renderer.controlMedia(action, value)
+            applied = if (directAudioActive) controlDirectAudio(action, value) else renderer.controlMedia(action, value)
             completed.countDown()
         }
         return completed.await(2, TimeUnit.SECONDS) && applied
@@ -526,10 +532,13 @@ class MainActivity : AppCompatActivity() {
      *  Unlike YouTube/WebView media, this uses a native [MediaPlayer] so a recorded
      *  announcement plays without opening a window. Routed through the DLNA adapter so
      *  it shares one audio sink with DLNA pushes (see [AudioSinkArbiter]). */
-    private fun playDirectAudio(url: String) {
+    private fun playDirectAudio(url: String, title: String = url) {
+        directAudioActive = true
+        directAudioPaused = false
+        showAudioOverlay(title)
         val adapter = dlnaAdapter
         if (adapter != null) {
-            adapter.playAudio(url, null, 100)
+            adapter.playAudio(url, title, directAudioVolume)
             return
         }
         try {
@@ -562,6 +571,76 @@ class MainActivity : AppCompatActivity() {
         } catch (error: Throwable) {
             android.util.Log.w("CanvasEdge", "direct audio playback failed: ${error.message}")
         }
+    }
+
+    private fun controlDirectAudio(action: String, value: Double?): Boolean {
+        val adapter = dlnaAdapter
+        when (action) {
+            "pause" -> { adapter?.pauseAudio() ?: runCatching { directAudioPlayer?.pause() }; directAudioPaused = true }
+            "resume" -> { adapter?.resumeAudio() ?: runCatching { directAudioPlayer?.start() }; directAudioPaused = false }
+            "stop" -> {
+                adapter?.stopAudio() ?: runCatching { directAudioPlayer?.stop(); directAudioPlayer?.release(); directAudioPlayer = null }
+                directAudioActive = false
+                directAudioPaused = false
+                hideAudioOverlay()
+            }
+            "volume" -> {
+                directAudioVolume = (value ?: directAudioVolume.toDouble()).toInt().coerceIn(0, 100)
+                adapter?.setVolume(directAudioVolume) ?: directAudioPlayer?.setVolume(directAudioVolume / 100f, directAudioVolume / 100f)
+            }
+            "mute" -> adapter?.setMute((value ?: 1.0) != 0.0) ?: directAudioPlayer?.setVolume(0f, 0f)
+            else -> return false
+        }
+        return true
+    }
+
+    private fun createAudioOverlay(root: FrameLayout) {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(22, 14, 22, 14)
+            setBackgroundColor(Color.argb(235, 18, 22, 31))
+            visibility = View.GONE
+        }
+        val title = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f; maxLines = 2 }
+        panel.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        fun button(label: String, action: () -> Unit) = Button(this).apply { text = label; setOnClickListener { action() } }
+        panel.addView(button("−") { controlDirectAudio("volume", (directAudioVolume - 10).toDouble()) })
+        panel.addView(button("▶/Ⅱ") { controlDirectAudio(if (directAudioPaused) "resume" else "pause", null) })
+        panel.addView(button("+") { controlDirectAudio("volume", (directAudioVolume + 10).toDouble()) })
+        panel.addView(button("■") { controlDirectAudio("stop", null) })
+        val params = FrameLayout.LayoutParams(-1, -2).apply { gravity = android.view.Gravity.BOTTOM }
+        root.addView(panel, params)
+        audioOverlay = panel
+        audioOverlayTitle = title
+        // The bar is a bottom-gravity sibling of the renderer, so it would otherwise
+        // overlap the scene. Re-inset the renderer whenever the bar's height changes
+        // (e.g. a two-line title) so the scene always reflows above it.
+        panel.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateRendererInsets() }
+    }
+
+    /** Keep the scene clear of the bottom audio bar by insetting the renderer container
+     *  to the overlay's height while it is visible, and restoring it when hidden. */
+    private fun updateRendererInsets() {
+        val container = rendererContainer
+        val overlay = audioOverlay
+        val bottom = if (overlay != null && overlay.visibility == View.VISIBLE) overlay.height else 0
+        val lp = container.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (lp.bottomMargin == bottom) return
+        lp.bottomMargin = bottom
+        container.layoutParams = lp
+    }
+
+    private fun showAudioOverlay(title: String) {
+        audioOverlayTitle?.text = title
+        audioOverlay?.visibility = View.VISIBLE
+        audioOverlay?.bringToFront()
+        updateRendererInsets()
+    }
+
+    private fun hideAudioOverlay() {
+        audioOverlay?.visibility = View.GONE
+        updateRendererInsets()
     }
 
     /** Remotely requested by Core (action=hide) — send the task to the background,

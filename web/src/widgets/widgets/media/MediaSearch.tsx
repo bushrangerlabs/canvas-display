@@ -56,6 +56,9 @@ const MediaSearch: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isEd
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? defaultPollSeconds(kind))) * 1000;
   const isDab = kind === 'dab';
   const placeholder = cfg.placeholder || (isDab ? 'Search stations…' : 'Search channels…');
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 44));
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 30));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const universalStyle = useResolvedUniversalStyle(config.config.style);
@@ -116,8 +119,11 @@ const MediaSearch: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isEd
     border: 'none',
     color: textColor,
     cursor: isEditMode ? 'default' : 'pointer',
-    fontSize: 12,
-    padding: '6px 8px',
+    fontSize,
+    padding: '4px 8px',
+    minHeight: rowHeight,
+    flex: '0 0 auto',
+    alignItems: 'center',
     borderRadius: 6,
     display: 'flex',
     justifyContent: 'space-between',
@@ -216,7 +222,8 @@ const MediaSearch: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, isEd
         )}
         {items.map((item) => (
           <button key={item.id} type="button" disabled={isEditMode} onClick={() => void play(item)} style={resultButton}>
-            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.name}</span>
+            {item.logo ? <img src={item.logo} alt="" style={{ width: iconSize, height: iconSize, objectFit: 'contain', borderRadius: 4 }} /> : <span style={{ width: iconSize, textAlign: 'center' }}>{isDab ? '📻' : '📺'}</span>}
+            <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.name}</span>
             {item.subtitle && <span style={{ opacity: 0.5, fontSize: 10 }}>{item.subtitle}</span>}
           </button>
         ))}

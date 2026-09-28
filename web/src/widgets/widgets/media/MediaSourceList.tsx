@@ -52,6 +52,10 @@ const MediaSourceList: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, 
   const maxItems = Math.max(1, Number(cfg.maxItems ?? 200));
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? defaultPollSeconds(kind))) * 1000;
   const isDab = kind === 'dab';
+  const showIcons = cfg.showIcons !== false;
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 32));
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 48));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const { items, error, play } = useMediaItems(kind, pollMs, true, { search: cfg.search, limit: maxItems });
@@ -152,15 +156,21 @@ const MediaSourceList: React.FC<WidgetProps & { kind: MediaKind }> = ({ config, 
               border: 'none',
               color: textColor,
               cursor: isEditMode ? 'default' : 'pointer',
-              fontSize: 12,
-              padding: '6px 8px',
+              fontSize,
+              padding: '4px 8px',
+              minHeight: rowHeight,
+              flex: '0 0 auto',
               borderRadius: 6,
               display: 'flex',
               justifyContent: 'space-between',
               gap: 8,
+              alignItems: 'center',
             }}
           >
-            <span style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.name}</span>
+            {showIcons && (item.logo
+              ? <img src={item.logo} alt="" loading="lazy" style={{ width: iconSize, height: iconSize, objectFit: 'contain', flex: '0 0 auto', borderRadius: 4 }} />
+              : <span aria-hidden="true" style={{ width: iconSize, height: iconSize, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', fontSize: Math.max(14, iconSize * 0.65) }}>{isDab ? '📻' : '📺'}</span>)}
+            <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{item.name}</span>
             {item.subtitle && <span style={{ opacity: 0.5, fontSize: 10 }}>{item.subtitle}</span>}
           </button>
         ))}

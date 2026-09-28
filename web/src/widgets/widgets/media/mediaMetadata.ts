@@ -50,6 +50,10 @@ export function stationsMetadata(kind: MediaKind): WidgetMetadata {
       { name: 'showNext', type: 'checkbox', label: 'Show next button', default: false, category: 'behavior' },
       { name: 'search', type: 'text', label: 'Filter (substring)', default: '', category: 'behavior' },
       { name: 'maxItems', type: 'number', label: 'Max items', default: 200, min: 1, max: 1000, category: 'behavior' },
+      { name: 'showIcons', type: 'checkbox', label: 'Show station/channel icons', default: true, category: 'behavior' },
+      { name: 'iconSize', type: 'number', label: 'Icon size (px)', default: 32, min: 16, max: 128, category: 'style' },
+      { name: 'rowHeight', type: 'number', label: 'Button height (px)', default: 48, min: 28, max: 140, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Button text size (px)', default: 12, min: 8, max: 36, category: 'style' },
       ...styleFields(defaultAccent(kind)),
     ],
   };
@@ -193,6 +197,8 @@ export function presetsMetadata(kind: MediaKind): WidgetMetadata {
       pollField(kind),
       { name: 'columns', type: 'number', label: 'Columns', default: 3, min: 1, max: 8, category: 'behavior' },
       { name: 'showLabels', type: 'checkbox', label: 'Show labels', default: true, category: 'behavior' },
+      { name: 'showIcons', type: 'checkbox', label: 'Show station/channel icons', default: true, category: 'behavior' },
+      { name: 'iconSize', type: 'number', label: 'Icon size (px)', default: 28, min: 16, max: 128, category: 'style' },
       { name: 'buttonHeight', type: 'number', label: 'Button height (px)', default: 40, min: 24, max: 120, category: 'style' },
       ...styleFields(defaultAccent(kind)),
     ],
@@ -218,6 +224,35 @@ export function searchMetadata(kind: MediaKind): WidgetMetadata {
       { name: 'showNext', type: 'checkbox', label: 'Show next button', default: false, category: 'behavior' },
       { name: 'placeholder', type: 'text', label: 'Placeholder', default: isDab ? 'Search stations…' : 'Search channels…', category: 'behavior' },
       { name: 'maxItems', type: 'number', label: 'Max results', default: 50, min: 1, max: 500, category: 'behavior' },
+      { name: 'rowHeight', type: 'number', label: 'Result height (px)', default: 44, min: 28, max: 140, category: 'style' },
+      { name: 'iconSize', type: 'number', label: 'Artwork size (px)', default: 30, min: 16, max: 100, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Result text size (px)', default: 12, min: 8, max: 36, category: 'style' },
+      ...styleFields(defaultAccent(kind)),
+    ],
+  };
+}
+
+export function singlePlayMetadata(kind: MediaKind): WidgetMetadata {
+  const isDab = kind === 'dab';
+  return {
+    name: isDab ? 'DAB+ Play Button' : 'Dispatcharr Play Button',
+    icon: isDab ? 'PlayCircle' : 'SmartDisplay',
+    category: 'media',
+    description: `A single button that plays one configured ${isDab ? 'DAB+ station' : 'Dispatcharr channel'}`,
+    defaultSize: { w: 220, h: 72 },
+    minSize: { w: 100, h: 48 },
+    requiresEntity: false,
+    fields: [
+      ...(isDab ? [{
+        name: 'item', type: 'select' as const, label: 'Station', default: '', category: 'behavior' as const,
+        description: 'Choose a DAB+ station', optionsSource: '/api/dab/stations?limit=1000', optionsSourceKey: 'stations',
+        optionValueKey: 'id', optionLabelKey: 'name',
+      }] : [{ name: 'item', type: 'text' as const, label: 'Channel name', default: '', category: 'behavior' as const, description: 'Exact or partial Dispatcharr channel name' }]),
+      { name: 'label', type: 'text', label: 'Button label override', default: '', category: 'behavior' },
+      pollField(kind),
+      { name: 'showIcon', type: 'checkbox', label: 'Show icon/logo', default: true, category: 'behavior' },
+      { name: 'iconSize', type: 'number', label: 'Icon size (px)', default: 36, min: 16, max: 128, category: 'style' },
+      { name: 'fontSize', type: 'number', label: 'Font size (px)', default: 14, min: 8, max: 48, category: 'style' },
       ...styleFields(defaultAccent(kind)),
     ],
   };

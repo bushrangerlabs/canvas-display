@@ -1,0 +1,1 @@
+import {YouTubeMusicVolume as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicVolumeWidgetMetadata=m('volume');export default W;

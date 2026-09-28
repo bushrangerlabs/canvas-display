@@ -1,6 +1,6 @@
 # Project status and session handover
 
-Last reviewed: 2026-09-27. This file records local checkout evidence, not deployment acceptance.
+Last reviewed: 2026-09-28. This file records local checkout evidence, not deployment acceptance.
 
 ## Start here
 
@@ -54,6 +54,41 @@ The uncommitted changes suggest several concurrent tracks:
 There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometry task is already implemented and historically reported device-verified; it is not evidence of the latest task.
 
 ## Work completed in this session
+
+### Edge audio regression + DLNA / HA media-player destinations (2026-09-28)
+
+Objective: the user reported "I don't hear audio on the edge devices" and asked to be able to select DLNA and Home Assistant media-player devices as default playback destinations.
+
+**Root cause of the silent edges (device-ID mismatch).** Device-targeted media playback failed with `[core][media] dispatch to device pi5-living-room failed: device pi5-living-room kiosk is not connected`. The Linux kiosk builds its scene URL from the Edge Agent's `agent.device_identity`, which is the **non-authoritative** `CANVAS_EDGE_DEVICE_ID` diagnostics hint (`pi5-living-room`), not the enrolled Core id. Core records the device under the credential's id (`device-2acc4690-…`), so the widget's `controllerDeviceId` never matched the kiosk's `browser` WebSocket and every dispatch was rejected. Verified live: the same play request succeeded with `device-2acc4690-…` and failed with `pi5-living-room`.
+
+Fix (Core, `core/src/legacy-routes.ts`): new `resolveControllerDeviceId()` maps the renderer-supplied reference to the canonical device id by id **or** name, and is applied in `resolveCanvasPlaybackDevice`, `resolveMaPlaybackPlayer`, `/api/media/destinations`, `/api/media/routing/:deviceId` (+ `/select`), and the device media-defaults routes. Verified live: `POST /api/dab/play` with `controllerDeviceId: "pi5-living-room"` now resolves to `device-2acc4690-…` and the Pi's `mpv` plays.
+
+**DLNA + HA media-player destinations.** `PlaybackTargetKind` gained `dlna` and `media_player` (`core/src/playback-routing.ts`), with `compatibleTargetKinds()` returning the allowed kinds per media type (DAB+/Dispatcharr → canvas/DLNA/HA player; Music Assistant/YouTube Music → MA/HA player/DLNA; YouTube stays Canvas-only). The destination catalogue and `/api/media/destinations` now include DLNA renderers and HA `media_player` entities from the durable `broadcast_outputs` table. `applyAudioPlayback` now takes a resolved `PlaybackTarget`, and Core's new `dispatchMediaToTarget` routes Canvas → gateway/`device_http`, DLNA → UPnP `SetAVTransportURI`+`Play`, HA media_player → `media_player.play_media`. A matching `controlMediaOnTarget` sends stop/pause/resume/volume/mute to DLNA (AVTransport/RenderingControl) and HA (`media_player.*`) destinations, so transport controls reach the selected device instead of broadcasting to browser clients. The Devices page media-defaults dropdowns list every compatible destination grouped by kind, the routing widgets render DLNA/HA icons and labels, and the Audio tab has an inline **Add DLNA renderer** field (Core's SSDP cannot see the LAN from its bridged Docker network, so DLNA renderers are registered by description URL).
+
+Validation: `core` `npm run type-check` PASS; `npx tsx --test test/media-routes.test.ts test/legacy-routes.test.ts` 63/63 PASS; full `npm test` 537 pass / 4 fail (the same pre-existing ASR/intelligence/intent-router failures); `web` `npx tsc -b` PASS and `npm run build` PASS. Deployed Core (rebuilt only `canvas-core` from the parent compose with the hardcoded TLS paths; `core/dist` + `core/public` synced). Live: health `ok`; DAB+ playback reaches the Pi via the hint id; the catalogue reports 34 HA media players + 12 MA players + 2 Canvas displays; a temporary DLNA target dispatched DAB+ to the Pi's own DLNA renderer (`transportState: PLAYING`), a target-scoped `stop` returned it to `STOPPED`, and both the temporary target and the test catalogue row were then removed.
+
+Caveat: DLNA renderers must be present in the broadcast-output catalogue. Core's SSDP discovery cannot see the LAN from its bridged Docker network, so add them under Settings → Broadcast outputs → "Add DLNA" or the Devices → Audio tab's **Add DLNA renderer** field (description URL). HA media players are discovered automatically.
+
+### Pi display update latency: push-based HA entity updates (2026-09-28)
+
+Objective: the Linux Pi 5 display felt slow to refresh/update. Root causes were three overlapping pollers per scene window plus full re-renders on unchanged data.
+
+- **Push instead of poll.** Core now broadcasts `ha_state_update` frames to `role=display` WebSocket clients from the existing `ha.onEntityChange` handler (`core/src/index.ts`); `ClientType` gained a `display` role (`core/src/legacy-routes.ts`). The display's `WebSocketProvider` opens `/ws?role=display`, applies pushed entities, and coalesces bursts into one render every 120 ms.
+- **Fallback poll is now adaptive.** Full `/api/ha/entities` snapshots poll every 15 s while the socket is healthy and every 2 s when it is down, so a blocked WebSocket can never be slower than the previous always-poll behaviour.
+- **Removed a redundant 1 s poller.** `EntitySubscriptionManager` polled every second on top of the provider's own updates; `useEntityBinding`/`useVisibility` already re-evaluate when the provider swaps `entities`, so the manager and its timer were deleted.
+- Validation: `core` and `web` production builds PASS. Deployed Core to `192.168.1.108` (rebuilt only the `canvas-core` service; `tls-proxy` untouched). Live: Core health `ok`; a `role=display` test client received 40 `ha_state_update` frames for 29 distinct entities in 12 s; the Pi (`192.168.1.216`) and Android scene windows reconnected as `display` and loaded the new bundle.
+
+### Playback destination routing and expanded media widgets (2026-09-28)
+
+- Added saved per-display defaults for DAB+, Dispatcharr, Music Assistant, YouTube and YouTube Music (`device_media_defaults`), plus session-only temporary selections that reset when the display renderer reconnects.
+- Added a unified destination catalog covering Canvas displays and Music Assistant players, with incompatible targets disabled, and three scene widgets: playback-device list, fixed device button and current-device indicator.
+- DAB+/Dispatcharr/YouTube playback and controls now resolve the current Canvas destination; MA and YouTube Music resolve the current MA player. Device Audio settings expose all five durable defaults.
+- Added dedicated YouTube search, presets, single-play, now-playing, controls and volume widgets. Added equivalent YouTube Music widgets backed by Music Assistant.
+- Expanded Music Assistant with artists/albums in search, browse, queue view/remove/clear, shared destination routing, and configurable row/artwork/text sizing across list widgets.
+- Linux now injects its resolved Edge device ID into every panel as well as using the scene URL query parameter. This closes a startup race where a page could render before the async identity lookup and leave destination selectors empty.
+- Created and published **Media Routing & Search Demo**: page `e3bd5322-147d-4129-a856-b110735da39d`, scene `ade8b56c-6ce1-464c-a3dd-0c0da04b7941`, with 15 routing, YouTube, YouTube Music and MA browse/search/queue/control widgets. It is currently force-displayed on the Pi; its persistent page assignment was not changed.
+- Validation: `cd core && npm run type-check` PASS; `npx tsx --test test/legacy-routes.test.ts test/ma-routes.test.ts test/media-routes.test.ts` PASS 85/85; `cd web && npx tsc -b --pretty false` PASS; production web/Core builds PASS; Linux web build and native Pi `npx tauri build --no-bundle` PASS with existing warnings; `git diff --check` PASS before final generated assets.
+- Deployed the rebuilt Core/web and arm64 Linux kiosk. Core health is `ok`; both Canvas displays and MA players appear in the live destination selector, incompatible MA targets are disabled for YouTube, MA provider roots render, and the live queue loads. A Wayland capture confirmed the complete demo layout. The queue currently shows two MA item IDs because those live queue entries do not include resolved media metadata.
 
 ### Media integration fixes: MA provider radios, MQTT source, list pagination (2026-09-28)
 
@@ -806,3 +841,93 @@ after = round(r / (r - 1))      // frames between single-frame corrections
 - Android only delivers multicast to an app holding a `WifiManager.MulticastLock` — `DlnaService` acquires one (`CHANGE_WIFI_MULTICAST_STATE` + `ACCESS_WIFI_STATE` added to the manifest).
 - Android's `MulticastSocket` ends up as a **dual-stack** socket (`[::]:1900`) even when bound to the IPv4 wildcard; it still receives the IPv4 SSDP group, so this is fine (verified by the M-SEARCH probe).
 - `DlnaLog.sink` defaults to a no-op so the `dlna` package stays Android-free for JVM tests; `DlnaService` wires it to logcat (`CanvasDlna`).
+
+# Dual SDR modules and media artwork (2026-09-28)
+
+Objective: allow Core to combine two RTL-SDR radio modules and show station/channel artwork in the DAB+ Stations, DAB+ Presets, Dispatcharr Channels and Dispatcharr Presets widgets.
+
+Implemented and deployed to Core (2026-09-28, owner-authorized):
+
+- Core now accepts an optional second SDR tuple through Settings (`sdr_radio_2_url`, `sdr_radio_2_tuner`, `sdr_radio_2_stream_url`) or env (`SDR_RADIO_2_URL`, `SDR_RADIO_2_TUNER`, `SDR_RADIO_2_STREAM_URL`). Settings → Media exposes all three fields.
+- `/api/dab/stations` merges both modules. With two modules configured it returns collision-safe IDs (`sdr1::<station-id>` / `sdr2::<station-id>`) plus the module and the SDR service's `image_url`; the play route, next/previous control, connection test and voice DAB path use the matching module's tuner and stream. One-module IDs remain unchanged for compatibility. One unavailable module does not hide stations from the other.
+- Dispatcharr lineup loading uses its authenticated channel-summary endpoint (when an API key is configured) to attach each channel's `logo_id`. Widget-facing logo URLs point to `GET /api/dispatcharr/logos/:logoId`, which proxies the Dispatcharr logo cache without exposing the API key.
+- The four requested list/preset widgets normalize and render these image URLs. Their inspector metadata now includes `Show station/channel icons` and `Icon size`; preset values are resolved back to full items so labels and artwork remain available.
+- DAB playback state now carries station artwork, allowing the existing now-playing widget to use it too.
+- Live diagnosis after the first deployment found that this Dispatcharr installation authenticates with `X-API-Key` (the former `Authorization: Api-Key …` header returned 401). All Core Dispatcharr calls now use the working header. The authenticated summary reports 55,260 channels with logos out of 55,382 total.
+- The installed SDR APIs expose only `city`, `id` and `name`, so they cannot supply station artwork. DAB+ station/preset widgets now render a radio-icon fallback whenever `image_url` is absent. Real artwork still takes precedence when supplied.
+- Configured the second live SDR tuple in Core settings: REST API `:8091`, tuner `tuner1`, Icecast `:8002/tuner1.mp3`. The first tuple remains unchanged. No credentials were written to this file.
+
+Validation:
+
+- `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 29/29 tests.
+- `cd core && npm run type-check` — PASS after the final artwork type narrowing.
+- `cd web && npx tsc -b --pretty false` — PASS.
+- `cd web && npm run build` — PASS; Vite emitted the production bundle to `web/dist` (existing chunk-size/dynamic-import warnings only).
+- `cp -r web/dist/. core/public/ && cd core && npm run build` — PASS; Core's local deployable `public/` and `dist/` now contain the change. Generated bundle inspection found the icon controls and second-SDR settings in the served assets.
+- `cd web && npm run lint -- --quiet` — FAILS on the pre-existing `react-hooks/preserve-manual-memoization` error in `web/src/components/VoiceStateOverlay.tsx:78`; none of the changed media files produced a lint error.
+- An earlier accidental full Core-suite run reported 6 unrelated existing failures, including `core/test/asr.test.ts` expecting `response_format=json` while the current implementation sends `verbose_json`. The focused media suite above is green.
+- Deployment: backed up the remote `dist/` and `public/`, synced only those directories, and rebuilt/restarted only `canvas-core` using the existing external TLS directory. Strict HTTPS acceptance passed: health `ok`, live bundle `assets/index-Dl-Ote0B.js`, 234 aggregated DAB+ entries across `sdr1`/`sdr2`, 1,000/1,000 sampled Dispatcharr channels with logo URLs, and a proxied logo returned HTTP 200 `image/jpeg`. Container remained up after restart.
+
+Next step: hard-refresh the editor/display so its browser cache loads `assets/index-Dl-Ote0B.js`, then visually confirm DAB+ fallback icons and Dispatcharr logos in all four widgets. Physical playback through SDR module 2 remains to be checked; its Icecast mount was absent before tuning, which can be normal for an idle module.
+
+## Manual DAB+ logos and single-play widgets (2026-09-28)
+
+Implemented and deployed to Core (owner-authorized continuation):
+
+- Added durable `dab_station_logos` PostgreSQL storage. Admin routes list, upload/replace and delete assignments; `/api/dab/logos/:stationId` serves assigned images publicly for unattended displays. Uploads accept PNG, JPEG, WebP or GIF up to 2 MB. The DAB station feed gives a manual assignment precedence over SDR-provided artwork.
+- Settings → Media now includes a **DAB+ station logos** manager with station selection, preview, upload/replace and remove controls. With two SDR modules, selectors distinguish SDR 1 and SDR 2 and mappings use the collision-safe qualified station ID.
+- Added **DAB+ Play Button** (`dabplaybutton`) and **Dispatcharr Play Button** (`dispatcharrplaybutton`) widgets. Each plays exactly one configured station/channel through the existing device-targeted media route and supports a logo/icon, label override, sizing and normal universal styling. DAB uses a dynamic station selector; Dispatcharr accepts an exact or partial channel name so the editor does not load all 55,382 channels into a select menu.
+
+Validation and deployment:
+
+- `cd core && npm run type-check` — PASS.
+- `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 31/31 tests, including manual logo upload/feed/image validation.
+- `cd web && npx tsc -b --pretty false` — PASS.
+- `cd web && npm run build`; sync `web/dist/` → `core/public/`; `cd core && npm run build` — PASS (existing Vite size/dynamic-import warnings only).
+- Backed up the live Core `dist/` and `public/`, synced only those directories, rebuilt and restarted only `canvas-core`. Strict HTTPS health returned `ok`; live bundle is `assets/index-CwGNnX09.js`; bundle inspection found both widget registrations and the logo manager; the migration table exists with zero initial assignments; an unknown public logo correctly returns 404; container remained up.
+
+Next step: hard-refresh the editor, upload desired station images in Settings → Media → DAB+ station logos, and visually exercise the two live demo pages described below. Physical playback and display rendering remain the final acceptance checks.
+
+## DAB+ and Dispatcharr control demo pages (2026-09-28)
+
+Created through the live Core APIs after the media-widget deployment:
+
+- **DAB+ Controls Demo** — page `83f3e9f4-b948-4cb2-965a-1ea352ad3299`, backed by published scene `991c2a91-7a82-4406-a5a2-b4479933980b`.
+- **Dispatcharr Controls Demo** — page `f5728ce4-3c2f-46c0-8ef6-03b71f32bbe8`, backed by published scene `8d7118f7-cbc2-4d3e-b354-05cdde0cf590`.
+
+Both scenes use a 1920×1080 canvas and contain all nine source-specific widgets: combined picker, list, search, now playing, transport controls, volume slider, volume dial, presets and single-play button. Each preset grid contains eight live items. The DAB+ button targets `sdr1::triplem`; the Dispatcharr button targets `AU: ABC news`. Lists, presets and single-play buttons have icons/logos enabled.
+
+Live API verification passed: both pages resolve to their expected published scene, both manifests report nine widgets with the complete expected type set, and their configured preset counts and play-button selections survived persistence. The DAB+ page was subsequently force-displayed and visually verified on the Pi as recorded below; Dispatcharr visual rendering and physical media playback remain to be checked.
+
+## Android-sized media control demo pages (2026-09-28)
+
+The native Android client reports a **1280×800** landscape screen (`browser/android-native/.../CoreEdgeClient.kt` hardcodes `screen_width`/`screen_height`; Core stores them as `devices.display_width`/`display_height`), so the 1920×1080 demo scenes do not fit it. Added Android-sized equivalents via the new `scripts/create-media-control-demos.mjs`:
+
+Confirmed against the physical tablet `A1064US260402203` (model `A10_A16_US`) with `adb shell wm size` / `wm density` / `dumpsys display`: physical panel is **800×1280** portrait, density **213** dpi, and the device is held in `ROTATION_90`, giving an app/display area of **1280×800** landscape — matching the value the client reports. The display renderer uniformly scales the fixed canvas to fit the WebView viewport (`SceneDisplayPage.tsx`), so a 1280×800 canvas maps 1:1 to the tablet's physical pixels (the WebView's CSS viewport is ~962×601 at 213 dpi).
+
+- **DAB+ Controls Demo (Android)** — page `fe362913-8520-414b-9c53-82164174fd9b`, published scene `47382a6a-b442-4590-958f-19448df2c437`.
+- **Dispatcharr Controls Demo (Android)** — page `e1012cd0-5bd0-4ff5-8456-e33c2d08e0a2`, published scene `8e6f094f-91e7-4fec-9b87-ecb89dd30779`.
+
+Both scenes are 1280×800 and contain the same nine source-specific widgets as the 1920×1080 demos (combined picker, list, search, now-playing, transport controls, volume slider, volume dial, presets, single-play button), re-laid out for the smaller canvas: three 300×360 pickers across the top-left, a 932×392 preset grid below them, and a 300-wide right rail (now-playing, controls, volume slider, volume dial, single-play). Presets and the single-play target are unchanged (`sdr1::triplem` / `AU: ABC news`). The existing 1920×1080 pages are untouched. Both Android pages are assigned to the Android Edge device (`android-7dcf6644c78118ed805b90f3`).
+
+A stray `resolution` debug widget had been staged onto the Dispatcharr Android scene (revision 2, ~11 min after creation) at `20,20 200×150`, overlapping the picker; the DAB+ scene never had it, so the two pages did not match. It was removed by staging and publishing revision 3, leaving both Android scenes with the identical nine-widget layout.
+
+The creator runs inside the Core container so the automation token is never handled locally: `ssh <core-host> 'docker exec -i -e CANVAS_DEMO_BASE=http://127.0.0.1:3100 canvas-core-canvas-core-1 node -' < scripts/create-media-control-demos.mjs`. It is idempotent (skips a page whose name already exists). Verified via the read-only API: both pages resolve to their published scenes, each manifest reports nine widgets at 1280×800, and each page has a single full-bleed `Main` panel.
+
+## Linux force-display delivery fix (2026-09-28)
+
+Reported behavior: **Force display now** worked on Android but did not change the Linux Raspberry Pi display.
+
+Root cause and fix:
+
+- The Pi has both a Gateway v1 Edge connection and a legacy browser-renderer WebSocket under the same device ID. Core treated any live gateway connection as authoritative and suppressed `load_page` on the browser socket, although the Linux kiosk's panel webviews are controlled by that browser socket. Its stored architecture is `arm64`, so the older `linux` architecture fallback also did not apply.
+- `core/src/legacy-routes.ts` now exposes `hasConnectedBrowserClient(deviceId)`. `deliverPageToDevice` in `core/src/index.ts` prefers a live browser renderer when one exists, sends it `load_page`, and reports the direct browser delivery as applied. Gateway-only devices continue through Gateway v1.
+
+Validation and deployment:
+
+- `cd core && npm run type-check` — PASS.
+- `cd core && npx tsx --test test/legacy-routes.test.ts` — PASS, 32/32 tests.
+- `cd core && npm run build` — PASS.
+- Synced only `core/dist/` to the Core host and rebuilt/restarted only `canvas-core`, preserving the externally mounted TLS material. Health returned HTTP 200; both the Pi browser renderer and its Edge gateway reconnected.
+- Forced **DAB+ Controls Demo** to `pi5-living-room` through `POST /api/pages/:id/display`; the response reported `delivered: true`. The Pi created a new 1920×1080 panel, fetched scene `991c2a91-7a82-4406-a5a2-b4479933980b` and the media widget bundles, and began polling the DAB endpoints.
+- A Wayland capture from the Pi visually confirmed the full DAB+ demo page rendered on screen. The force-display override remains active on the Pi; its persistent page assignment was not changed.

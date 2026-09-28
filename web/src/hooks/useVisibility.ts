@@ -4,7 +4,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import { entitySubscriptionManager } from '../widgets/managers/EntitySubscriptionManager';
 import { useWebSocket } from '../widgets/providers/WebSocketProvider';
 import { BindingEvaluator } from '../widgets/utils/BindingEvaluator';
 
@@ -17,51 +16,21 @@ export function useVisibility(visibilityCondition?: string): boolean {
   const { entities } = useWebSocket();
   const [isVisible, setIsVisible] = useState(true);
 
+  // The provider only swaps `entities` when an entity actually changed, so this
+  // effect is the single, event-driven update path. The old
+  // EntitySubscriptionManager polled every second on top of this, which was
+  // redundant work on the Pi.
   useEffect(() => {
-    // If no condition, always visible
     if (!visibilityCondition || visibilityCondition.trim() === '') {
       setIsVisible(true);
       return;
     }
-
-    // Extract entity IDs from condition
-    const entityIds = BindingEvaluator.extractEntityIds(visibilityCondition);
-    
-    if (entityIds.length === 0) {
-      // No entity references, evaluate as static expression
-      try {
-        const result = BindingEvaluator.evaluate(visibilityCondition, entities);
-        setIsVisible(Boolean(result));
-      } catch {
-        setIsVisible(true);
-      }
-      return;
-    }
-
-    // Connect subscription manager to WebSocket (idempotent)
-    entitySubscriptionManager.connect(() => entities);
-
-    // Subscribe to entity changes
-    const unsubscribe = entitySubscriptionManager.subscribe(entityIds, (updatedEntities) => {
-      try {
-        const result = BindingEvaluator.evaluate(visibilityCondition, updatedEntities);
-        setIsVisible(Boolean(result));
-      } catch (error) {
-        console.error('Visibility evaluation error:', error, visibilityCondition);
-        setIsVisible(true); // Show widget on error
-      }
-    });
-
-    // Initial evaluation
     try {
-      const result = BindingEvaluator.evaluate(visibilityCondition, entities);
-      setIsVisible(Boolean(result));
+      setIsVisible(Boolean(BindingEvaluator.evaluate(visibilityCondition, entities)));
     } catch (error) {
       console.error('Visibility evaluation error:', error, visibilityCondition);
-      setIsVisible(true);
+      setIsVisible(true); // Show widget on error
     }
-
-    return unsubscribe;
   }, [visibilityCondition, entities]);
 
   return isVisible;

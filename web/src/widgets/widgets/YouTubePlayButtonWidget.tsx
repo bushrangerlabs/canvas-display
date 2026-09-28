@@ -1,0 +1,1 @@
+import { YouTubeSinglePlay as Widget } from './media/YouTubeWidgets'; import { youtubeMetadata } from './media/youtubeMetadata'; export const YouTubePlayButtonWidgetMetadata=youtubeMetadata('single'); export default Widget;

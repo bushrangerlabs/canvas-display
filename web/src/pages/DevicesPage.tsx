@@ -10,7 +10,7 @@ import {
   Box, Stack, Typography, Paper, Button, Chip, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, IconButton, Tooltip, Divider, Alert,
-  Tabs, Tab, Slider, FormControlLabel, Switch, Select, MenuItem, InputLabel, FormControl, CircularProgress,
+  Tabs, Tab, Slider, FormControlLabel, Switch, Select, MenuItem, InputLabel, FormControl, CircularProgress, ListSubheader,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/PersonAdd';
 import RevokeIcon from '@mui/icons-material/Block';
@@ -24,10 +24,26 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type DeviceRow, type InvitationRecord, type AuthorityStatusSummary, type AuthorityMode, type LegacyPage } from '../api/client';
+import { coreApi, ApiError, type DeviceRow, type InvitationRecord, type AuthorityStatusSummary, type AuthorityMode, type LegacyPage, type PlaybackTargetKind } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, BoolChip, fmtRelative } from '../components/ui';
 
 const AUTHORITY_MODES: AuthorityMode[] = ['legacy', 'shadow', 'core', 'rollback_pending'];
+// `kind` is the destination kind used when the operator clears the selection
+// (the source's default). The dropdown itself lists every compatible
+// destination, including DLNA renderers and Home Assistant media players.
+const MEDIA_DEFAULT_TYPES = [
+  { id: 'dab', label: 'DAB+', kind: 'canvas' },
+  { id: 'dispatcharr', label: 'Dispatcharr', kind: 'canvas' },
+  { id: 'youtube', label: 'YouTube', kind: 'canvas' },
+  { id: 'music_assistant', label: 'Music Assistant', kind: 'music_assistant' },
+  { id: 'youtube_music', label: 'YouTube Music', kind: 'music_assistant' },
+] as const;
+const DESTINATION_KIND_LABELS: Record<PlaybackTargetKind, string> = {
+  canvas: 'Canvas displays',
+  music_assistant: 'Music Assistant players',
+  dlna: 'DLNA renderers',
+  media_player: 'Home Assistant media players',
+};
 const VOICE_CUE_PRESETS = [
   { value: 'builtin:soft_chime', label: 'Soft chime' },
   { value: 'builtin:glass_ping', label: 'Glass ping' },
@@ -372,6 +388,10 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
   const [tab, setTab] = useState(0);
   const [audioConfig, setAudioConfig] = useState<Record<string, any>>({});
   const [voiceConfig, setVoiceConfig] = useState<Record<string, any>>({});
+  const [mediaDefaults, setMediaDefaults] = useState<Record<string, { kind: PlaybackTargetKind; id: string }>>({});
+  const [playbackDestinations, setPlaybackDestinations] = useState<Array<{ value: string; kind: PlaybackTargetKind; id: string; name: string; label: string }>>([]);
+  const [dlnaUrl, setDlnaUrl] = useState('');
+  const [addingDlna, setAddingDlna] = useState(false);
   const [displayWidth, setDisplayWidth] = useState<number | ''>('');
   const [displayHeight, setDisplayHeight] = useState<number | ''>('');
   const [savingDisplay, setSavingDisplay] = useState(false);
@@ -428,9 +448,11 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
     setDisplayWidth(device.display_width ?? '');
     setDisplayHeight(device.display_height ?? '');
     setLoading(true); setError(null);
-    coreApi.getDeviceAudio(device.id)
-      .then(r => {
+    Promise.all([coreApi.getDeviceAudio(device.id), coreApi.getDeviceMediaDefaults(device.id), coreApi.playbackDestinationCatalog()])
+      .then(([r, routing, catalog]) => {
         setAudioConfig(r.audio_config || {});
+        setMediaDefaults(routing.defaults || {});
+        setPlaybackDestinations(catalog.destinations || []);
         setVoiceConfig({
           wake_ack_enabled: false,
           wake_ack_sound: 'builtin:ready_up',
@@ -491,10 +513,28 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
     if (!device) return;
     setSaving(true); setError(null);
     try {
-      await coreApi.updateDeviceAudio(device.id, audioConfig);
+      await Promise.all([
+        coreApi.updateDeviceAudio(device.id, audioConfig),
+        coreApi.updateDeviceMediaDefaults(device.id, Object.fromEntries(MEDIA_DEFAULT_TYPES.map(media => [media.id, mediaDefaults[media.id] ?? null]))),
+      ]);
       onRefresh();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
+  }
+
+  // Core's SSDP discovery cannot see the LAN from its bridged Docker network, so
+  // DLNA renderers are registered by their device-description URL.
+  async function addDlnaDestination() {
+    const location = dlnaUrl.trim();
+    if (!location) return;
+    setAddingDlna(true); setError(null);
+    try {
+      await coreApi.addDlnaBroadcastOutput(location);
+      setDlnaUrl('');
+      const catalog = await coreApi.playbackDestinationCatalog();
+      setPlaybackDestinations(catalog.destinations || []);
+    } catch (e) { setError((e as Error).message); }
+    finally { setAddingDlna(false); }
   }
 
   async function saveVoice() {
@@ -860,6 +900,47 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
                 <Typography variant="body2">Speaker Volume: {audioConfig.speaker_volume ?? 90}%</Typography>
                 <Slider value={audioConfig.speaker_volume ?? 90} min={0} max={100}
                   onChange={(_, v) => setAudioConfig(c => ({ ...c, speaker_volume: v as number }))} />
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2">Default media playback devices</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  These defaults return after the Edge app restarts. Playback-device widgets can temporarily override them for the current session.
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <TextField size="small" fullWidth label="Add DLNA renderer (description URL)"
+                    placeholder="http://192.168.1.50:49500/description.xml"
+                    value={dlnaUrl} onChange={e => setDlnaUrl(e.target.value)} />
+                  <Button size="small" variant="outlined" disabled={!dlnaUrl.trim() || addingDlna}
+                    onClick={() => void addDlnaDestination()} sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}>
+                    {addingDlna ? 'Adding…' : 'Add DLNA'}
+                  </Button>
+                </Stack>
+                {MEDIA_DEFAULT_TYPES.map(media => {
+                  const current = mediaDefaults[media.id];
+                  const value = current ? `${current.kind}:${current.id}` : '';
+                  const grouped = (Object.keys(DESTINATION_KIND_LABELS) as PlaybackTargetKind[])
+                    .map(kind => ({ kind, items: playbackDestinations.filter(destination => destination.kind === kind) }))
+                    .filter(group => group.items.length > 0);
+                  return <FormControl fullWidth size="small" key={media.id}>
+                    <InputLabel>{media.label}</InputLabel>
+                    <Select label={media.label} value={value} onChange={event => {
+                      const raw = String(event.target.value);
+                      if (!raw) {
+                        setMediaDefaults(defaults => { const next = { ...defaults }; delete next[media.id]; return next; });
+                        return;
+                      }
+                      const [kind, ...id] = raw.split(':');
+                      setMediaDefaults(defaults => ({ ...defaults, [media.id]: { kind: kind as PlaybackTargetKind, id: id.join(':') } }));
+                    }}>
+                      <MenuItem value=""><em>{media.kind === 'canvas' ? 'This display' : 'First available MA player'}</em></MenuItem>
+                      {grouped.flatMap(group => [
+                        <ListSubheader key={`header-${group.kind}`}>{DESTINATION_KIND_LABELS[group.kind]}</ListSubheader>,
+                        ...group.items.map(destination => (
+                          <MenuItem key={destination.value} value={destination.value}>{destination.label}</MenuItem>
+                        )),
+                      ])}
+                    </Select>
+                  </FormControl>;
+                })}
                 <Divider sx={{ my: 1 }} />
                 <Typography variant="subtitle2">Snapcast (multi-room audio)</Typography>
                 <Typography variant="caption" color="text.secondary">

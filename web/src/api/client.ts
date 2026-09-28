@@ -18,6 +18,9 @@ export function getApiBase(): string {
   return '';
 }
 
+/** Playback destination kinds Core can route a media source to. */
+export type PlaybackTargetKind = 'canvas' | 'music_assistant' | 'dlna' | 'media_player';
+
 const BASE = getApiBase();
 
 /** Read the readable CSRF cookie (set on login). Returns '' if absent. */
@@ -738,6 +741,11 @@ export const coreApi = {
   coreBridgeStatus: () => api.get<{ url: string; tokenSet: boolean; source: string }>('/api/settings/core-bridge'),
   testCoreBridge: () => api.post<{ ok: boolean; status?: unknown; error?: string }>('/api/settings/core-bridge/test'),
   testDabConnection: () => api.get<MediaConnectionTest>('/api/dab/test'),
+  dabStations: () => api.get<{ stations: Array<{ id: string; name: string; image_url?: string }> }>('/api/dab/stations?limit=1000'),
+  dabLogos: () => api.get<{ logos: Array<{ stationId: string; contentType: string; updatedAt: string; url: string }> }>('/api/admin/dab/logos'),
+  uploadDabLogo: (stationId: string, contentType: string, dataBase64: string) =>
+    api.put<{ ok: boolean; stationId: string; url: string }>(`/api/admin/dab/logos/${encodeURIComponent(stationId)}`, { contentType, dataBase64 }),
+  deleteDabLogo: (stationId: string) => api.delete<void>(`/api/admin/dab/logos/${encodeURIComponent(stationId)}`),
   testDispatcharrConnection: () => api.get<MediaConnectionTest>('/api/dispatcharr/test'),
   testMusicAssistantConnection: () => api.get<MediaConnectionTest>('/api/ma/test'),
   restartVoice: () => api.post<{ ok: boolean; mode: string; status: string }>('/api/settings/voice/restart'),
@@ -802,6 +810,10 @@ export const coreApi = {
     }>(`/api/admin/devices/${encodeURIComponent(id)}/audio/devices`),
   updateDeviceAudio: (id: string, config: Record<string, any>) =>
     api.put<{ ok: boolean }>(`/api/admin/devices/${encodeURIComponent(id)}/audio`, config),
+  playbackDestinationCatalog: () => api.get<{ destinations: Array<{ value: string; kind: PlaybackTargetKind; id: string; name: string; label: string; available?: boolean }> }>('/api/media/destinations/catalog'),
+  getDeviceMediaDefaults: (id: string) => api.get<{ defaults: Record<string, { kind: PlaybackTargetKind; id: string }> }>(`/api/admin/devices/${encodeURIComponent(id)}/media-defaults`),
+  updateDeviceMediaDefaults: (id: string, defaults: Record<string, { kind: PlaybackTargetKind; id: string } | null>) =>
+    api.put<{ ok: boolean }>(`/api/admin/devices/${encodeURIComponent(id)}/media-defaults`, { defaults }),
   updateDeviceVoice: (id: string, config: Record<string, any>) =>
     api.put<{ ok: boolean }>(`/api/admin/devices/${encodeURIComponent(id)}/voice`, config),
   testDeviceMic: (id: string, config: { device: string; duration_ms?: number }) =>

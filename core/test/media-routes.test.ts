@@ -34,6 +34,9 @@ function makeConfig(overrides: Partial<CoreConfig> = {}): CoreConfig {
     sdrRadioUrl: 'http://sdr.test:8088',
     sdrRadioTuner: 'tuner1',
     sdrRadioStreamUrl: 'http://sdr.test:8001/tuner1.mp3',
+    sdrRadio2Url: undefined,
+    sdrRadio2Tuner: undefined,
+    sdrRadio2StreamUrl: undefined,
     dispatcharrUrl: 'http://dispatcharr.test:9191',
     ...overrides,
   };
@@ -86,6 +89,55 @@ test('GET /api/dab/stations returns 503 when the SDR URL is not configured', asy
   assert.equal(res.statusCode, 503);
 });
 
+test('GET /api/dab/stations merges two SDR modules with routable ids and artwork', async () => {
+  clearMediaCaches();
+  const { fastify } = await buildServer(makeConfig({
+    sdrRadio2Url: 'http://sdr.test:8091',
+    sdrRadio2Tuner: 'tuner1',
+    sdrRadio2StreamUrl: 'http://sdr.test:8002/tuner1.mp3',
+  }));
+  const restore = stubFetch((url) => jsonResponse({ dab: [{
+    id: url.includes('8091') ? 'second' : 'first',
+    name: url.includes('8091') ? 'Second Station' : 'First Station',
+    image_url: `${url.split('/api/')[0]}/logo.png`,
+  }] }));
+  try {
+    const list = await fastify.inject({ method: 'GET', url: '/api/dab/stations' });
+    assert.equal(list.statusCode, 200);
+    assert.deepEqual(list.json().stations.map((station: { id: string; module: string; image_url: string }) => ({
+      id: station.id, module: station.module, image_url: station.image_url,
+    })), [
+      { id: 'sdr1::first', module: 'sdr1', image_url: 'http://sdr.test:8088/logo.png' },
+      { id: 'sdr2::second', module: 'sdr2', image_url: 'http://sdr.test:8091/logo.png' },
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test('POST /api/dab/play routes a qualified station to its SDR module', async () => {
+  clearMediaCaches();
+  const { fastify } = await buildServer(makeConfig({
+    sdrRadio2Url: 'http://sdr.test:8091',
+    sdrRadio2Tuner: 'tuner2',
+    sdrRadio2StreamUrl: 'http://sdr.test:8002/tuner2.mp3',
+  }));
+  const calls: string[] = [];
+  const restore = stubFetch((url, init) => {
+    calls.push(`${init?.method ?? 'GET'} ${url}`);
+    if (url.endsWith('/api/stations')) return jsonResponse({ dab: [{ id: url.includes('8091') ? 'b' : 'a', name: url.includes('8091') ? 'Bravo' : 'Alpha' }] });
+    return jsonResponse({ station_name: 'Bravo' });
+  });
+  try {
+    const res = await fastify.inject({ method: 'POST', url: '/api/dab/play', payload: { station: 'sdr2::b' } });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().url, 'http://sdr.test:8002/tuner2.mp3');
+    assert.ok(calls.includes('POST http://sdr.test:8091/api/tuners/tuner2/play'));
+  } finally {
+    restore();
+  }
+});
+
 test('POST /api/dab/play tunes the station and updates media state', async () => {
   clearMediaCaches();
   resetAudioState();
@@ -116,6 +168,38 @@ test('POST /api/dab/play requires a station', async () => {
   const { fastify } = await buildServer();
   const res = await fastify.inject({ method: 'POST', url: '/api/dab/play', payload: {} });
   assert.equal(res.statusCode, 400);
+});
+
+test('admin can upload a DAB station logo and the station list uses it', async () => {
+  clearMediaCaches();
+  const { fastify } = await buildServer();
+  const restore = stubFetch(() => jsonResponse({ dab: [{ id: 'abc', name: 'BBC Radio 1' }] }));
+  try {
+    const upload = await fastify.inject({
+      method: 'PUT',
+      url: '/api/admin/dab/logos/abc',
+      payload: { contentType: 'image/png', dataBase64: Buffer.from([1, 2, 3]).toString('base64') },
+    });
+    assert.equal(upload.statusCode, 200);
+    const list = await fastify.inject({ method: 'GET', url: '/api/dab/stations' });
+    assert.equal(list.json().stations[0].image_url, '/api/dab/logos/abc');
+    const image = await fastify.inject({ method: 'GET', url: '/api/dab/logos/abc' });
+    assert.equal(image.statusCode, 200);
+    assert.equal(image.headers['content-type'], 'image/png');
+    assert.deepEqual([...image.rawPayload], [1, 2, 3]);
+  } finally {
+    restore();
+  }
+});
+
+test('DAB station logo upload rejects unsupported content types', async () => {
+  const { fastify } = await buildServer();
+  const upload = await fastify.inject({
+    method: 'PUT',
+    url: '/api/admin/dab/logos/abc',
+    payload: { contentType: 'image/svg+xml', dataBase64: Buffer.from('<svg/>').toString('base64') },
+  });
+  assert.equal(upload.statusCode, 400);
 });
 
 // ─── Dispatcharr ─────────────────────────────────────────────────────────────
@@ -152,6 +236,45 @@ test('GET /api/dispatcharr/channels applies the search and limit query parameter
     const body = res.json();
     assert.equal(body.total, 3);
     assert.deepEqual(body.channels, [{ number: '1', name: 'News HD', url: 'http://stream/1' }]);
+  } finally {
+    restore();
+  }
+});
+
+test('GET /api/dispatcharr/channels attaches Core-proxied logos from the authenticated summary', async () => {
+  clearMediaCaches();
+  const { fastify } = await buildServer(makeConfig({ dispatcharrApiKey: 'test-key' }));
+  const restore = stubFetch((url, init) => {
+    assert.equal((init?.headers as Record<string, string> | undefined)?.['X-API-Key'], 'test-key');
+    if (url.endsWith('/api/hdhr/lineup.json')) {
+      return jsonResponse([{ GuideNumber: '7', GuideName: 'Seven', URL: 'http://stream/7' }]);
+    }
+    if (url.endsWith('/api/channels/channels/summary/')) {
+      return jsonResponse([{ name: 'Seven', channel_number: 7, logo_id: 42 }]);
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  });
+  try {
+    const res = await fastify.inject({ method: 'GET', url: '/api/dispatcharr/channels' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().channels[0].logo, '/api/dispatcharr/logos/42');
+  } finally {
+    restore();
+  }
+});
+
+test('GET /api/dispatcharr/logos/:id proxies image bytes without exposing the API key', async () => {
+  const { fastify } = await buildServer(makeConfig({ dispatcharrApiKey: 'test-key' }));
+  const restore = stubFetch((url, init) => {
+    assert.equal(url, 'http://dispatcharr.test:9191/api/channels/logos/42/cache/');
+    assert.equal((init?.headers as Record<string, string> | undefined)?.['X-API-Key'], 'test-key');
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'image/png' } });
+  });
+  try {
+    const res = await fastify.inject({ method: 'GET', url: '/api/dispatcharr/logos/42' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['content-type'], 'image/png');
+    assert.deepEqual([...res.rawPayload], [1, 2, 3]);
   } finally {
     restore();
   }

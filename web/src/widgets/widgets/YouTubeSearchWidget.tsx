@@ -1,0 +1,1 @@
+import { YouTubeSearch as Widget } from './media/YouTubeWidgets'; import { youtubeMetadata } from './media/youtubeMetadata'; export const YouTubeSearchWidgetMetadata=youtubeMetadata('search'); export default Widget;

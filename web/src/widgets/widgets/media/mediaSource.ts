@@ -16,6 +16,7 @@ export interface MediaItem {
   name: string;
   subtitle?: string;
   url?: string;
+  logo?: string;
 }
 
 export interface MediaAudioState {
@@ -53,7 +54,9 @@ function authHeaders(): Record<string, string> {
 export function targetDeviceId(): string | undefined {
   try {
     const id = new URLSearchParams(window.location.search).get('deviceId');
-    return id ? id.trim() : undefined;
+    if (id?.trim()) return id.trim();
+    const injected = (window as Window & { __CANVAS_DEVICE_ID__?: string }).__CANVAS_DEVICE_ID__;
+    return injected?.trim() || undefined;
   } catch {
     return undefined;
   }
@@ -81,6 +84,7 @@ const SOURCES: Record<MediaKind, SourceConfig> = {
       id: String(raw?.id ?? raw?.name ?? ''),
       name: String(raw?.name ?? raw?.id ?? ''),
       subtitle: raw?.city ? String(raw.city) : undefined,
+      logo: raw?.image_url ? String(raw.image_url) : undefined,
     }),
   },
   dispatcharr: {
@@ -95,6 +99,7 @@ const SOURCES: Record<MediaKind, SourceConfig> = {
       name: String(raw?.name ?? ''),
       subtitle: raw?.number ? String(raw.number) : undefined,
       url: raw?.url ? String(raw.url) : undefined,
+      logo: raw?.logo ? String(raw.logo) : undefined,
     }),
   },
 };
@@ -137,8 +142,8 @@ export function useMediaPlay(kind: MediaKind) {
   const play = useCallback(
     async (item: MediaItem) => {
       setError('');
-      const deviceId = targetDeviceId();
-      const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBody(item), ...(deviceId ? { deviceId } : {}) });
+      const controllerDeviceId = targetDeviceId();
+      const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBody(item), ...(controllerDeviceId ? { controllerDeviceId } : {}) });
       if (!result.ok) setError(result.error ?? 'Playback failed');
       return result.ok;
     },
@@ -148,8 +153,8 @@ export function useMediaPlay(kind: MediaKind) {
   const playByName = useCallback(
     async (name: string) => {
       setError('');
-      const deviceId = targetDeviceId();
-      const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBodyByName(name), ...(deviceId ? { deviceId } : {}) });
+      const controllerDeviceId = targetDeviceId();
+      const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBodyByName(name), ...(controllerDeviceId ? { controllerDeviceId } : {}) });
       if (!result.ok) setError(result.error ?? 'Playback failed');
       return result.ok;
     },
@@ -285,8 +290,8 @@ export function useMediaAudio(pollMs: number, enabled = true) {
   // every other display in the house.
   const control = useCallback(
     (action: string, extra: Record<string, unknown> = {}) => {
-      const deviceId = targetDeviceId();
-      return run(() => postJson('/api/media/control', { action, ...(deviceId ? { deviceId } : {}), ...extra }));
+      const controllerDeviceId = targetDeviceId();
+      return run(() => postJson('/api/media/control', { action, ...(controllerDeviceId ? { controllerDeviceId } : {}), ...extra }));
     },
     [run],
   );

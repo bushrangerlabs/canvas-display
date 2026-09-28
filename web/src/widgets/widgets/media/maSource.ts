@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { targetDeviceId } from './mediaSource';
 
 export interface MaPlayer {
   id: string;
@@ -41,6 +42,8 @@ export interface MaPlaylist {
 
 export interface MaSearchResults {
   tracks: { uri: string; name: string; artist: string; artwork?: string }[];
+  albums: { uri: string; name: string; artist: string; artwork?: string }[];
+  artists: { uri: string; name: string; artwork?: string }[];
   radios: MaRadio[];
   playlists: MaPlaylist[];
 }
@@ -106,7 +109,10 @@ export function useMaPlayerId(playerId: string | undefined, pollMs: number): str
     };
   }, [explicit, pollMs]);
 
-  return explicit || firstPlayer;
+  // Display scenes use Core's shared playback routing when no fixed legacy
+  // player is configured. Editor previews have no controller device, so retain
+  // the old first-player fallback there.
+  return explicit || (targetDeviceId() ? '' : firstPlayer);
 }
 
 /** Poll the MA player list (for the player picker widget). */
@@ -145,16 +151,21 @@ export function useMaPlayers(pollMs: number, enabled = true) {
 }
 
 /** Poll a single MA player's state (now-playing / controls / volume widgets). */
-export function useMaPlayerState(playerId: string, pollMs: number, enabled = true) {
+export function useMaPlayerState(playerId: string, pollMs: number, enabled = true, mediaType: 'music_assistant' | 'youtube_music' = 'music_assistant') {
   const [player, setPlayer] = useState<MaPlayer | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!enabled || !playerId) return;
+    if (!enabled || (!playerId && !targetDeviceId())) return;
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch(`/api/ma/state?playerId=${encodeURIComponent(playerId)}`, { cache: 'no-store' });
+        const controllerDeviceId = targetDeviceId();
+        const params = new URLSearchParams();
+        if (playerId) params.set('playerId', playerId);
+        if (controllerDeviceId) params.set('controllerDeviceId', controllerDeviceId);
+        params.set('mediaType', mediaType);
+        const res = await fetch(`/api/ma/state?${params}`, { cache: 'no-store' });
         if (!res.ok) {
           const detail = (await res.json().catch(() => ({}))) as { error?: string };
           if (!cancelled) setError(detail.error ?? `HTTP ${res.status}`);
@@ -174,7 +185,7 @@ export function useMaPlayerState(playerId: string, pollMs: number, enabled = tru
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [playerId, pollMs, enabled]);
+  }, [playerId, pollMs, enabled, mediaType]);
 
   return { player, error };
 }
@@ -182,7 +193,7 @@ export function useMaPlayerState(playerId: string, pollMs: number, enabled = tru
 /** Transport + volume helpers for a target player. Each action accepts an
  * optional playerId override (used by the player picker to act on the tapped
  * player instead of the widget's configured target). */
-export function useMaControl(playerId: string) {
+export function useMaControl(playerId: string, mediaType: 'music_assistant' | 'youtube_music' = 'music_assistant') {
   const [error, setError] = useState('');
 
   const run = useCallback(
@@ -195,15 +206,19 @@ export function useMaControl(playerId: string) {
   );
 
   const control = useCallback(
-    (action: string, extra: Record<string, unknown> = {}, targetId?: string) =>
-      run(() => postJson('/api/ma/control', { action, playerId: targetId || playerId, ...extra })),
-    [run, playerId],
+    (action: string, extra: Record<string, unknown> = {}, targetId?: string) => {
+      const controllerDeviceId = targetDeviceId();
+      return run(() => postJson('/api/ma/control', { action, playerId: targetId || playerId, mediaType, ...(controllerDeviceId ? { controllerDeviceId } : {}), ...extra }));
+    },
+    [run, playerId, mediaType],
   );
 
   const play = useCallback(
-    (uri: string, option = 'replace', targetId?: string) =>
-      run(() => postJson('/api/ma/play', { uri, playerId: targetId || playerId, option })),
-    [run, playerId],
+    (uri: string, option = 'replace', targetId?: string) => {
+      const controllerDeviceId = targetDeviceId();
+      return run(() => postJson('/api/ma/play', { uri, playerId: targetId || playerId, mediaType, ...(controllerDeviceId ? { controllerDeviceId } : {}), option }));
+    },
+    [run, playerId, mediaType],
   );
 
   const playPause = useCallback((targetId?: string) => control('play_pause', {}, targetId), [control]);

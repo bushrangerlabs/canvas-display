@@ -4,7 +4,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import { entitySubscriptionManager } from '../widgets/managers/EntitySubscriptionManager';
 import { useWebSocket } from '../widgets/providers/WebSocketProvider';
 import { BindingEvaluator } from '../widgets/utils/BindingEvaluator';
 
@@ -23,34 +22,16 @@ export function useEntityBinding<T = any>(expression: any, defaultValue?: T): T 
     return BindingEvaluator.evaluate(expression, entities) as T;
   });
 
+  // The provider only swaps `entities` when an entity actually changed, so this
+  // effect is the single, event-driven update path. The old
+  // EntitySubscriptionManager polled every second on top of this, which was
+  // redundant work on the Pi.
   useEffect(() => {
-    // If no binding syntax, just return the value
     if (!BindingEvaluator.hasBinding(expression)) {
       setValue((expression ?? defaultValue) as T);
       return;
     }
-
-    // Extract entity IDs from expression
-    const entityIds = BindingEvaluator.extractEntityIds(expression);
-    
-    if (entityIds.length === 0) {
-      setValue((expression ?? defaultValue) as T);
-      return;
-    }
-
-    // Connect subscription manager to WebSocket (idempotent)
-    entitySubscriptionManager.connect(() => entities);
-
-    // Subscribe to entity changes
-    const unsubscribe = entitySubscriptionManager.subscribe(entityIds, (updatedEntities) => {
-      const newValue = BindingEvaluator.evaluate(expression, updatedEntities);
-      setValue(newValue as T);
-    });
-
-    // Initial evaluation
     setValue(BindingEvaluator.evaluate(expression, entities) as T);
-
-    return unsubscribe;
   }, [expression, entities, defaultValue]);
 
   return value;

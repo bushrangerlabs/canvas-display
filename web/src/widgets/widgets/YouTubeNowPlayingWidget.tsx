@@ -1,0 +1,1 @@
+import { YouTubeNowPlaying as Widget } from './media/YouTubeWidgets'; import { youtubeMetadata } from './media/youtubeMetadata'; export const YouTubeNowPlayingWidgetMetadata=youtubeMetadata('now'); export default Widget;

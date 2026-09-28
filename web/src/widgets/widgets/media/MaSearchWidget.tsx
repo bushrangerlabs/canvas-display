@@ -20,11 +20,14 @@ const MaSearchWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const borderRadius = cfg.borderRadius ?? 12;
   const placeholder = cfg.placeholder || 'Search music…';
   const resultLimit = Math.min(50, Math.max(5, Number(cfg.resultLimit ?? 20)));
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 52));
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 36));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
   const pollMs = 10_000; // only used to resolve the default player
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const playerId = useMaPlayerId(cfg.playerId, pollMs);
-  const control = useMaControl(playerId);
+  const control = useMaControl(playerId, cfg.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant');
   const universalStyle = useResolvedUniversalStyle(config.config.style);
 
   const [query, setQuery] = useState('');
@@ -80,8 +83,9 @@ const MaSearchWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
     border: 'none',
     color: textColor,
     cursor: isEditMode ? 'default' : 'pointer',
-    fontSize: 12,
-    padding: '6px 8px',
+    fontSize,
+    padding: '5px 8px',
+    minHeight: rowHeight,
     borderRadius: 6,
     display: 'flex',
     alignItems: 'center',
@@ -132,9 +136,19 @@ const MaSearchWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
         )}
         {results && (
           <>
+            {results.artists?.map((artist) => (
+              <button key={artist.uri} type="button" disabled={isEditMode} onClick={() => void control.play(artist.uri)} style={resultButton}>
+                {artist.artwork ? <img src={artist.artwork} alt="" style={{width:iconSize,height:iconSize,borderRadius:4,objectFit:'cover'}}/> : <span>♬</span>}<span style={{flex:1}}>{artist.name}<small style={{display:'block',opacity:.5}}>Artist</small></span>
+              </button>
+            ))}
+            {results.albums?.map((album) => (
+              <button key={album.uri} type="button" disabled={isEditMode} onClick={() => void control.play(album.uri)} style={resultButton}>
+                {album.artwork ? <img src={album.artwork} alt="" style={{width:iconSize,height:iconSize,borderRadius:4,objectFit:'cover'}}/> : <span>▣</span>}<span style={{flex:1}}>{album.name}<small style={{display:'block',opacity:.5}}>{album.artist || 'Album'}</small></span>
+              </button>
+            ))}
             {results.tracks.map((track) => (
               <button key={track.uri} type="button" disabled={isEditMode} onClick={() => void control.play(track.uri)} style={resultButton}>
-                <span style={{ fontSize: 12, opacity: 0.5, flexShrink: 0 }}>♪</span>
+                {track.artwork ? <img src={track.artwork} alt="" style={{width:iconSize,height:iconSize,borderRadius:4,objectFit:'cover'}}/> : <span style={{ fontSize: 12, opacity: 0.5, flexShrink: 0 }}>♪</span>}
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                   {track.name}
                   {track.artist && <span style={{ opacity: 0.5 }}> — {track.artist}</span>}
@@ -153,7 +167,7 @@ const MaSearchWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{playlist.name}</span>
               </button>
             ))}
-            {results.tracks.length + results.radios.length + results.playlists.length === 0 && (
+            {(results.artists?.length ?? 0) + (results.albums?.length ?? 0) + results.tracks.length + results.radios.length + results.playlists.length === 0 && (
               <div style={{ color: textColor, fontSize: 11, opacity: 0.5 }}>No results</div>
             )}
           </>

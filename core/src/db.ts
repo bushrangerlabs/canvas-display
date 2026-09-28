@@ -92,6 +92,17 @@ export async function migrate(pool: pg.Pool): Promise<void> {
   await addColumnIfNotExists(pool, 'devices', 'display_width', 'INTEGER');
   await addColumnIfNotExists(pool, 'devices', 'display_height', 'INTEGER');
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS device_media_defaults (
+      device_id   TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      media_type  TEXT NOT NULL CHECK (media_type IN ('dab','dispatcharr','music_assistant','youtube','youtube_music')),
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('canvas','music_assistant')),
+      target_id   TEXT NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (device_id, media_type)
+    )
+  `);
+
   // --- device_invitations: one-time pairing tokens (P-003 bootstrap) ---------
   await pool.query(`
     CREATE TABLE IF NOT EXISTS device_invitations (
@@ -279,6 +290,16 @@ export async function migrate(pool: pg.Pool): Promise<void> {
       id         TEXT PRIMARY KEY,
       size       BIGINT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
+  // --- dab_station_logos: administrator-supplied artwork for SDR stations ---
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dab_station_logos (
+      station_id TEXT PRIMARY KEY,
+      content_type TEXT NOT NULL,
+      image_data BYTEA NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
 

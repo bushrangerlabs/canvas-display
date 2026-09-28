@@ -1,6 +1,6 @@
 # Agent working guide
 
-Last reviewed: 2026-09-27.
+Last reviewed: 2026-09-28.
 
 This is the maintained working guide for **Canvas Display Hermes**. It applies throughout this repository; read any additional instructions scoped to the files you change. Do not assume previous conversation history is available.
 

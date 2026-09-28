@@ -37,6 +37,9 @@ export default function SceneDisplayPage() {
   const [error, setError] = useState('');
   const [transitioning, setTransitioning] = useState(false);
   const prevSceneId = useRef<string>('');
+  // Revision of the scene currently rendered, so the refresh poll can skip the
+  // expensive manifest comparison when nothing was republished.
+  const lastRevisionRef = useRef<number | null>(null);
 
   // Stage ref measures the available viewport so we can uniformly scale the
   // canvas to fit (same behaviour as the editor's zoom-to-fit).
@@ -58,6 +61,7 @@ export default function SceneDisplayPage() {
         } else {
           setDisplayWidgets(widgets);
         }
+        lastRevisionRef.current = scene.revision;
         prevSceneId.current = sceneId;
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
@@ -71,13 +75,14 @@ export default function SceneDisplayPage() {
     const refresh = async () => {
       try {
         const { scene } = await coreApi.publishedScene(sceneId);
+        // Only swap widgets when the published revision actually changed. Comparing
+        // the revision is far cheaper than stringifying the whole manifest on every
+        // poll, which was a recurring CPU spike on the Pi.
+        if (lastRevisionRef.current === scene.revision) return;
         const { widgets, w, h } = readManifest(scene);
+        lastRevisionRef.current = scene.revision;
         setCanvasSize(prev => (prev.w === w && prev.h === h ? prev : { w, h }));
-        setDisplayWidgets(prev => {
-          if (prev === null) return prev;
-          if (JSON.stringify(prev) === JSON.stringify(widgets)) return prev;
-          return widgets;
-        });
+        setDisplayWidgets(widgets);
       } catch {
         /* keep showing the last good scene; Core may briefly be busy */
       }
@@ -133,7 +138,11 @@ export default function SceneDisplayPage() {
   return (
     <Box
       ref={stageRef}
-      sx={{ position: 'fixed', inset: 0, overflow: 'hidden', bgcolor: '#0a0a12', display: 'grid', placeItems: 'center' }}
+      // `placeItems` centres the scene inside its grid track, but when the canvas is
+      // larger than the viewport the track itself overflows and is laid out from the
+      // start edge — pushing the scene off the right/bottom. `placeContent` centres
+      // the track too, so an oversized canvas is scaled and centred instead of clipped.
+      sx={{ position: 'fixed', inset: 0, overflow: 'hidden', bgcolor: '#0a0a12', display: 'grid', placeItems: 'center', placeContent: 'center' }}
     >
       <Box sx={{
         position: 'relative',

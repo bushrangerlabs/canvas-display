@@ -20,11 +20,14 @@ const MaPlaylistsWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
   const showHeader = cfg.showHeader !== false;
   const maxItems = Math.max(1, Number(cfg.maxItems ?? 100));
   const pollMs = Math.max(2, Number(cfg.pollInterval ?? 30)) * 1000;
+  const rowHeight = Math.max(28, Number(cfg.rowHeight ?? 48));
+  const iconSize = Math.max(16, Number(cfg.iconSize ?? 32));
+  const fontSize = Math.max(8, Number(cfg.fontSize ?? 12));
 
   const isVisible = useVisibility(cfg.visibilityCondition);
   const playerId = useMaPlayerId(cfg.playerId, pollMs);
   const { playlists, error } = useMaPlaylists(pollMs);
-  const control = useMaControl(playerId);
+  const control = useMaControl(playerId, cfg.mediaType === 'youtube_music' ? 'youtube_music' : 'music_assistant');
   const universalStyle = useResolvedUniversalStyle(config.config.style);
 
   if (!isVisible) return null;
@@ -54,7 +57,8 @@ const MaPlaylistsWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
               flex: 1,
               minWidth: 0,
               color: textColor,
-              fontSize: 12,
+              fontSize,
+              minHeight: rowHeight,
               fontWeight: 600,
               overflow: 'hidden',
               whiteSpace: 'nowrap',
@@ -91,7 +95,7 @@ const MaPlaylistsWidget: React.FC<WidgetProps> = ({ config, isEditMode }) => {
             }}
           >
             {playlist.artwork ? (
-              <img src={playlist.artwork} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
+              <img src={playlist.artwork} alt="" style={{ width: iconSize, height: iconSize, borderRadius: 4, objectFit: 'cover', flexShrink: 0 }} />
             ) : (
               <span style={{ fontSize: 12, opacity: 0.5, flexShrink: 0 }}>🎵</span>
             )}

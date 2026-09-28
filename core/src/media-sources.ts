@@ -17,12 +17,15 @@ export interface DabStation {
   id?: string;
   name?: string;
   city?: string;
+  image_url?: string;
+  module?: string;
 }
 
 export interface DispatcharrChannel {
   number?: string;
   name?: string;
   url?: string;
+  logo?: string;
 }
 
 const LIST_CACHE_TTL_MS = 10_000;
@@ -32,12 +35,12 @@ interface CacheEntry<T> {
   data: T;
 }
 
-let dabCache: CacheEntry<DabStation[]> | null = null;
+const dabCache = new Map<string, CacheEntry<DabStation[]>>();
 let dispatcharrCache: CacheEntry<DispatcharrChannel[]> | null = null;
 
 /** Drop cached lists so a settings change takes effect immediately. */
 export function clearMediaCaches(): void {
-  dabCache = null;
+  dabCache.clear();
   dispatcharrCache = null;
 }
 
@@ -54,10 +57,13 @@ async function fetchJson(url: string, timeoutMs = 8000, headers?: Record<string,
 /** Fetch the DAB+ station list from the SDR REST API (`/api/stations`). */
 export async function fetchDabStations(base: string): Promise<DabStation[]> {
   const now = Date.now();
-  if (dabCache && now - dabCache.at < LIST_CACHE_TTL_MS) return dabCache.data;
-  const data = (await fetchJson(`${trimBase(base)}/api/stations`)) as { dab?: DabStation[] };
-  const stations = Array.isArray(data?.dab) ? data.dab : [];
-  dabCache = { at: now, data: stations };
+  const key = trimBase(base);
+  const cached = dabCache.get(key);
+  if (cached && now - cached.at < LIST_CACHE_TTL_MS) return cached.data;
+  const data = (await fetchJson(`${key}/api/stations`)) as { dab?: DabStation[] } | DabStation[];
+  const stations = Array.isArray(data) ? data.filter((station) => station?.id && station?.name)
+    : Array.isArray(data?.dab) ? data.dab : [];
+  dabCache.set(key, { at: now, data: stations });
   return stations;
 }
 
@@ -65,7 +71,7 @@ export async function fetchDabStations(base: string): Promise<DabStation[]> {
 export async function fetchDispatcharrChannels(base: string, apiKey?: string): Promise<DispatcharrChannel[]> {
   const now = Date.now();
   if (dispatcharrCache && now - dispatcharrCache.at < LIST_CACHE_TTL_MS) return dispatcharrCache.data;
-  const headers = apiKey ? { Authorization: `Api-Key ${apiKey}` } : undefined;
+  const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
   const raw = (await fetchJson(`${trimBase(base)}/api/hdhr/lineup.json`, 8000, headers)) as Array<{
     GuideNumber?: string;
     GuideName?: string;
@@ -74,6 +80,29 @@ export async function fetchDispatcharrChannels(base: string, apiKey?: string): P
   const channels: DispatcharrChannel[] = Array.isArray(raw)
     ? raw.map((entry) => ({ number: entry.GuideNumber, name: entry.GuideName, url: entry.URL }))
     : [];
+  if (apiKey && channels.length > 0) {
+    try {
+      const summary = (await fetchJson(
+        `${trimBase(base)}/api/channels/channels/summary/`,
+        8000,
+        headers,
+      )) as Array<{ name?: string; channel_number?: string | number; logo_id?: string | number }>;
+      const logos = new Map<string, string>();
+      for (const entry of Array.isArray(summary) ? summary : []) {
+        if (entry.logo_id == null) continue;
+        const number = entry.channel_number == null ? '' : String(entry.channel_number);
+        logos.set(`${number}\n${entry.name ?? ''}`.toLowerCase(), String(entry.logo_id));
+        if (entry.name) logos.set(`\n${entry.name}`.toLowerCase(), String(entry.logo_id));
+      }
+      for (const channel of channels) {
+        const logoId = logos.get(`${channel.number ?? ''}\n${channel.name ?? ''}`.toLowerCase())
+          ?? logos.get(`\n${channel.name ?? ''}`.toLowerCase());
+        if (logoId) channel.logo = `/api/dispatcharr/logos/${encodeURIComponent(logoId)}`;
+      }
+    } catch {
+      // The public lineup remains useful when the authenticated summary is unavailable.
+    }
+  }
   dispatcharrCache = { at: now, data: channels };
   return channels;
 }

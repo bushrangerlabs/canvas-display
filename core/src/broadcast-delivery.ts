@@ -98,6 +98,17 @@ export class BroadcastDeliveryService {
     return result.rows as BroadcastOutput[];
   }
 
+  /** Look up a single output by its id (used by destination-targeted playback). */
+  async getOutput(id: string): Promise<BroadcastOutput | null> {
+    const result = await this.pool.query(
+      `SELECT id, logical_id, route_type, route_key, name, selected, preferred,
+              online, metadata, last_seen
+       FROM broadcast_outputs WHERE id = $1`,
+      [id],
+    );
+    return (result.rows[0] as BroadcastOutput | undefined) ?? null;
+  }
+
   async updateOutput(id: string, patch: {
     selected?: boolean;
     preferred?: boolean;

@@ -69,7 +69,7 @@ import { ShadowModeRunner } from './shadow-mode.js';
 import { RolloutStrategy, InMemoryRolloutRepository, registerRolloutRoutes } from './rollout-strategy.js';
 import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
-import { registerLegacyRoutes, requestDeviceAction, sendCommand, getDeviceIp, mediaSetting } from './legacy-routes.js';
+import { registerLegacyRoutes, requestDeviceAction, sendCommand, hasConnectedBrowserClient, getDeviceIp, mediaSetting, broadcast } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
@@ -78,7 +78,7 @@ import { registerLogRoutes } from './log-routes.js';
 import { registerAiLogRoutes } from './ai-log.js';
 import { resolveYouTubeWatchUrl, resolveYouTubeQueue, buildYouTubePlaylistUrl, resolveYouTubeStreams as resolveYouTubeStreamsFn, type YouTubeSearchOptions } from './youtube.js';
 import { policyFromSettings } from './request-routing.js';
-import { clearMediaCaches } from './media-sources.js';
+import { clearMediaCaches, fetchDabStations, tuneDabStation } from './media-sources.js';
 import { clearMaTokenCache, clearMaRadioCache } from './music-assistant.js';
 import { confirmationDigest, mcpCallRequiresConfirmation, normalizeToolArguments, resolveToolName, selectToolsForRequest } from './mcp-policy.js';
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
@@ -86,6 +86,7 @@ import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-d
 import { advertiseCore } from './discovery.js';
 import { BroadcastStore, extensionForMime, type BroadcastClip } from './broadcast.js';
 import { BroadcastDeliveryService, discoverDlnaRenderers, type BroadcastKind, type BroadcastOutput } from './broadcast-delivery.js';
+import type { PlaybackTarget } from './playback-routing.js';
 import { CORE_VERSION } from './version.js';
 
 /**
@@ -358,6 +359,19 @@ async function main(): Promise<void> {
       void cacheHaEntity(entity).catch((err) => {
         console.warn('[core][ha] failed to persist entity cache update:', (err as Error).message);
       });
+      // Push the change to display clients so widgets update immediately instead of
+      // waiting for the next full entity poll. Display clients coalesce bursts and
+      // ignore unchanged payloads, so a chatty HA instance stays cheap on the Pi.
+      broadcast({
+        type: 'ha_state_update',
+        entity: {
+          entity_id: entityId,
+          state: entity.state,
+          attributes: entity.attributes,
+          last_changed: entity.lastChanged,
+          last_updated: entity.lastUpdated,
+        },
+      }, 'display');
       // Fire any trigger_ha_state flows that match this entity+state
       if (flowExecutor) {
         void flowExecutor.onHaEntityChange(entityId, String(entity.state ?? '')).catch(err =>
@@ -2012,20 +2026,21 @@ async function main(): Promise<void> {
           };
         }),
       };
-      // A live Gateway v1 session is authoritative regardless of the registry's
-      // historical architecture/protocol labels. Only disconnected legacy clients
-      // receive the browser command path.
-      if (!gatewayConnected) {
+      // Linux kiosks may have both a native Edge gateway session and a browser
+      // renderer session under the same device ID. The browser session owns the
+      // panel webviews, so deliver there whenever it is present.
+      const browserRendererConnected = hasConnectedBrowserClient(deviceId);
+      if (browserRendererConnected || !gatewayConnected) {
         sendCommand(deviceId, {
           type: 'load_page',
           page_id: page.id,
           page_data: effectivePage,
         });
       }
-      // Android/Linux Tauri clients use the legacy browser WebSocket and do
-      // not connect to the native Edge gateway or report scene state there.
-      // The command above is the complete delivery path for those clients.
-      if (!gatewayConnected && (architecture === 'android' || architecture === 'linux' || architecture === 'browser')) {
+      // A connected browser renderer is direct evidence of the device's render
+      // path. Stored architecture values are only a fallback and can be CPU names
+      // such as "arm64" rather than "linux".
+      if (browserRendererConnected || (!gatewayConnected && (architecture === 'android' || architecture === 'linux' || architecture === 'browser'))) {
         return {
           revision: 0,
           application: { scene: { status: 'applied', reason: 'legacy_browser_websocket' } },
@@ -2139,22 +2154,23 @@ async function main(): Promise<void> {
   const escapeSoap = (value: string) => value
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  /** Send a UPnP AVTransport/RenderingControl SOAP action to a renderer. */
+  const dlnaSoapAction = async (controlUrl: string, service: 'AVTransport' | 'RenderingControl', name: string, args: string) => {
+    const body = `<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:${name} xmlns:u="urn:schemas-upnp-org:service:${service}:1">${args}</u:${name}></s:Body></s:Envelope>`;
+    const response = await fetch(controlUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'text/xml; charset="utf-8"', soapaction: `"urn:schemas-upnp-org:service:${service}:1#${name}"` },
+      body,
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error(`DLNA ${name} returned HTTP ${response.status}`);
+  };
   const playDlnaOutput = async (output: BroadcastOutput, url: string, title: string, mimeType: string) => {
     const controlUrl = String(output.metadata.controlUrl ?? '');
     if (!controlUrl) throw new Error('DLNA output has no AVTransport control URL');
-    const action = async (name: string, args: string) => {
-      const body = `<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:${name} xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">${args}</u:${name}></s:Body></s:Envelope>`;
-      const response = await fetch(controlUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'text/xml; charset="utf-8"', soapaction: `"urn:schemas-upnp-org:service:AVTransport:1#${name}"` },
-        body,
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (!response.ok) throw new Error(`DLNA ${name} returned HTTP ${response.status}`);
-    };
     const metadata = `&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="broadcast" parentID="0" restricted="1"&gt;&lt;dc:title&gt;${escapeSoap(title)}&lt;/dc:title&gt;&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:${escapeSoap(mimeType)}:*"&gt;${escapeSoap(url)}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;`;
-    await action('SetAVTransportURI', `<InstanceID>0</InstanceID><CurrentURI>${escapeSoap(url)}</CurrentURI><CurrentURIMetaData>${metadata}</CurrentURIMetaData>`);
-    await action('Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
+    await dlnaSoapAction(controlUrl, 'AVTransport', 'SetAVTransportURI', `<InstanceID>0</InstanceID><CurrentURI>${escapeSoap(url)}</CurrentURI><CurrentURIMetaData>${metadata}</CurrentURIMetaData>`);
+    await dlnaSoapAction(controlUrl, 'AVTransport', 'Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
   };
 
   const dispatchBroadcastEvent = async (
@@ -2671,16 +2687,26 @@ async function main(): Promise<void> {
       const name = station.trim();
       if (!name) return { ok: false, message: 'A DAB+ station name is required.' };
       try {
-        const base = (await mediaSetting(pool, config, 'sdr_radio_url')).replace(/\/$/, '');
-        if (!base) return { ok: false, message: 'DAB+ radio is not configured.' };
-        const tuner = (await mediaSetting(pool, config, 'sdr_radio_tuner')) || 'tuner1';
-        const streamUrl = await mediaSetting(pool, config, 'sdr_radio_stream_url');
-        const res = await fetch(`${base}/api/stations`, { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) {
-          return { ok: false, message: `SDR radio returned HTTP ${res.status}.` };
-        }
-        const data = (await res.json()) as { dab?: Array<{ id?: string; name?: string }> };
-        const dab = data.dab ?? [];
+        const modules = (await Promise.all([
+          Promise.all([
+            mediaSetting(pool, config, 'sdr_radio_url'),
+            mediaSetting(pool, config, 'sdr_radio_tuner'),
+            mediaSetting(pool, config, 'sdr_radio_stream_url'),
+          ]),
+          Promise.all([
+            mediaSetting(pool, config, 'sdr_radio_2_url'),
+            mediaSetting(pool, config, 'sdr_radio_2_tuner'),
+            mediaSetting(pool, config, 'sdr_radio_2_stream_url'),
+          ]),
+        ])).map(([base, tuner, streamUrl]) => ({ base, tuner: tuner || 'tuner1', streamUrl }))
+          .filter(module => module.base);
+        if (modules.length === 0) return { ok: false, message: 'DAB+ radio is not configured.' };
+        const stationResults = await Promise.allSettled(
+          modules.map(async module => ({ module, stations: await fetchDabStations(module.base) })),
+        );
+        const stationLists = stationResults.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+        if (stationLists.length === 0) throw new Error('No configured SDR radio module is reachable.');
+        const dab = stationLists.flatMap(({ module, stations }) => stations.map(station => ({ ...station, module })));
         const needle = name.toLowerCase();
         const match = dab.find(s => (s.name ?? '').toLowerCase() === needle)
           ?? dab.find(s => (s.id ?? '').toLowerCase() === needle)
@@ -2688,19 +2714,8 @@ async function main(): Promise<void> {
         if (!match?.id) {
           return { ok: false, message: `I could not find the DAB+ station "${name}".` };
         }
-        const tune = await fetch(`${base}/api/tuners/${encodeURIComponent(tuner)}/play`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ station: `dab:${match.id}` }),
-          signal: AbortSignal.timeout(20_000),
-        });
-        if (!tune.ok) {
-          const detail = await tune.text().catch(() => '');
-          return {
-            ok: false,
-            message: `I could not tune to ${match.name ?? name}: ${detail || `HTTP ${tune.status}`}`,
-          };
-        }
+        const streamUrl = match.module.streamUrl;
+        await tuneDabStation(match.module.base, match.module.tuner, match.id);
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
           await gateway.requestAction(
@@ -2737,7 +2752,7 @@ async function main(): Promise<void> {
         if (!base) return { ok: false, message: 'Dispatcharr is not configured.' };
         const apiKey = await mediaSetting(pool, config, 'dispatcharr_api_key');
         const res = await fetch(`${base}/api/hdhr/lineup.json`, {
-          headers: apiKey ? { Authorization: `Api-Key ${apiKey}` } : undefined,
+          headers: apiKey ? { 'X-API-Key': apiKey } : undefined,
           signal: AbortSignal.timeout(8000),
         });
         if (!res.ok) {
@@ -3334,22 +3349,106 @@ async function main(): Promise<void> {
     requireAdmin,
     config,
     onDisplayPage: deliverPageToDevice,
-    // Device-targeted widget playback: same architecture-aware dispatch the
-    // voice path uses (Android → gateway media.play, Linux → device_http).
-    dispatchMediaToDevice: async (deviceId, url, title, source) => {
+    // Destination-targeted widget playback: Canvas → gateway/device_http,
+    // DLNA → UPnP AVTransport, Home Assistant media_player → play_media.
+    dispatchMediaToTarget: async (target, input) => {
+      const { url, title, source } = input;
+      if (target.kind === 'canvas') {
+        const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [target.id]);
+        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+          await gateway.requestAction(target.id, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+        } else {
+          await requestDeviceAction(target.id, 'device_http', {
+            path: '/api/media/play',
+            http_method: 'POST',
+            body: { source: 'direct_audio', url, title },
+          }, 20_000);
+        }
+        mqttNavigation.updateMediaState(target.id, { state: 'playing', title, url, source });
+        return;
+      }
+      if (target.kind === 'dlna') {
+        const output = await broadcastDelivery.getOutput(target.id);
+        if (!output) throw new Error(`DLNA destination ${target.id} is not in the output catalogue`);
+        await playDlnaOutput(output, url, title, 'audio/mpeg');
+        return;
+      }
+      if (target.kind === 'media_player') {
+        if (!ha) throw new Error('Home Assistant is not configured');
+        const output = await broadcastDelivery.getOutput(target.id);
+        const entityId = output?.route_key ?? target.id.replace(/^ha:/, '');
+        await ha.callService('media_player', 'play_media', {
+          entity_id: entityId,
+          media_content_id: url,
+          media_content_type: 'music',
+        });
+        return;
+      }
+      if (target.kind === 'music_assistant') {
+        if (!ha) throw new Error('Home Assistant is not configured');
+        await ha.callService('music_assistant', 'play_media', { entity_id: target.id, media_id: url });
+        return;
+      }
+      throw new Error(`Unsupported playback destination kind: ${target.kind}`);
+    },
+    // Transport control for non-Canvas destinations (DLNA renderers and Home
+    // Assistant media players) so stop/pause/volume reach the selected device.
+    controlMediaOnTarget: async (target, action, value) => {
+      if (target.kind === 'dlna') {
+        const output = await broadcastDelivery.getOutput(target.id);
+        const controlUrl = String(output?.metadata.controlUrl ?? '');
+        if (!controlUrl) throw new Error(`DLNA destination ${target.id} has no AVTransport control URL`);
+        if (action === 'stop') await dlnaSoapAction(controlUrl, 'AVTransport', 'Stop', '<InstanceID>0</InstanceID>');
+        else if (action === 'pause') await dlnaSoapAction(controlUrl, 'AVTransport', 'Pause', '<InstanceID>0</InstanceID>');
+        else if (action === 'resume') await dlnaSoapAction(controlUrl, 'AVTransport', 'Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
+        else if (action === 'volume' && typeof value === 'number') {
+          const renderingControl = String(output?.metadata.renderingControlUrl ?? controlUrl.replace(/\/AVTransport$/, '/RenderingControl'));
+          await dlnaSoapAction(renderingControl, 'RenderingControl', 'SetVolume', `<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>${Math.max(0, Math.min(100, Math.round(value)))}</DesiredVolume>`);
+        }
+        return;
+      }
+      if (target.kind === 'media_player') {
+        if (!ha) throw new Error('Home Assistant is not configured');
+        const output = await broadcastDelivery.getOutput(target.id);
+        const entityId = output?.route_key ?? target.id.replace(/^ha:/, '');
+        if (action === 'stop') await ha.callService('media_player', 'media_stop', { entity_id: entityId });
+        else if (action === 'pause') await ha.callService('media_player', 'media_pause', { entity_id: entityId });
+        else if (action === 'resume') await ha.callService('media_player', 'media_play', { entity_id: entityId });
+        else if (action === 'volume' && typeof value === 'number') await ha.callService('media_player', 'volume_set', { entity_id: entityId, volume_level: Math.max(0, Math.min(1, value / 100)) });
+        else if (action === 'mute' && typeof value === 'boolean') await ha.callService('media_player', 'volume_mute', { entity_id: entityId, is_volume_muted: value });
+        return;
+      }
+      throw new Error(`Unsupported control destination kind: ${target.kind}`);
+    },
+    dispatchYoutubeToDevice: async (deviceId, value, title) => {
       const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-      if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-        await gateway.requestAction(deviceId, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+      const architecture = String(archRow.rows[0]?.architecture ?? '').toLowerCase();
+      const url = await resolveYouTubeWatchUrl(value, title, {
+        apiKey: config.youtubeApiKey,
+        regionCode: config.youtubeRegionCode,
+        relevanceLanguage: config.youtubeRelevanceLanguage,
+        safeSearch: config.youtubeSafeSearch,
+        allowYtDlpFallback: true,
+      }) ?? value;
+      if (architecture === 'android') {
+        await gateway.requestAction(deviceId, 'media.play', { source: 'youtube', query: title, url, playlist: false }, 20_000);
       } else {
         await requestDeviceAction(deviceId, 'device_http', {
-          path: '/api/media/play',
-          http_method: 'POST',
-          body: { source: 'direct_audio', url, title },
+          path: '/api/media/play', http_method: 'POST',
+          body: { source: 'youtube', url, title },
         }, 20_000);
       }
-      mqttNavigation.updateMediaState(deviceId, { state: 'playing', title, url, source });
+      mqttNavigation.updateMediaState(deviceId, { state: 'playing', title, url, source: 'youtube' });
     },
     controlMediaOnDevice: async (deviceId, action, value) => {
+      const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
+      if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+        const payload: Record<string, unknown> = { action };
+        if (action === 'volume' && typeof value === 'number') payload.value = value;
+        if (action === 'mute' && typeof value === 'boolean') payload.value = value ? 1 : 0;
+        await gateway.requestAction(deviceId, 'media.control', payload, 20_000);
+        return;
+      }
       const body: Record<string, unknown> = { action };
       if (action === 'volume' && typeof value === 'number') body.level = value;
       if (action === 'mute' && typeof value === 'boolean') body.muted = value;

@@ -1,0 +1,1 @@
+import {YouTubeMusicPlayButton as W} from './media/YouTubeMusicWidgets';import{youtubeMusicMetadata as m}from'./media/youtubeMusicMetadata';export const YouTubeMusicPlayButtonWidgetMetadata=m('single');export default W;
