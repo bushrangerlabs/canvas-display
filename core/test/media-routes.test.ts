@@ -448,6 +448,32 @@ test('POST /api/dispatcharr/play resolves the channel URL and updates media stat
   }
 });
 
+test('targeted Dispatcharr playback is dispatched as video', async () => {
+  resetAudioState();
+  const dispatched: Array<{ source: string; mediaKind?: 'audio' | 'video' }> = [];
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    dispatchMediaToTarget: async (_target, input) => { dispatched.push(input); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-controller', 'Controller', 'android')");
+  const res = await fastify.inject({
+    method: 'POST',
+    url: '/api/dispatcharr/play',
+    payload: {
+      channel: 'Direct TV',
+      url: 'http://stream/live.ts',
+      deviceId: 'device-controller',
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(dispatched, [{
+    url: 'http://stream/live.ts',
+    title: 'Direct TV',
+    source: 'dispatcharr',
+    artwork: undefined,
+    mediaKind: 'video',
+  }]);
+});
+
 test('POST /api/dispatcharr/play accepts an explicit URL without the lineup', async () => {
   resetAudioState();
   const { fastify } = await buildServer();

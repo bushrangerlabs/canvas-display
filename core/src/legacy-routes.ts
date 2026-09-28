@@ -256,7 +256,7 @@ export function resetAudioState(): void {
 class PlaybackDestinationUnavailableError extends Error {}
 
 async function applyAudioPlayback(
-  input: { url: string; title: string; source?: string; artwork?: string },
+  input: { url: string; title: string; source?: string; artwork?: string; mediaKind?: 'audio' | 'video' },
   target: PlaybackTarget | null,
   dispatch?: LegacyRoutesOptions['dispatchMediaToTarget'],
 ): Promise<AudioState> {
@@ -268,6 +268,7 @@ async function applyAudioPlayback(
         title: input.title,
         source: input.source ?? 'direct_audio',
         artwork: input.artwork,
+        mediaKind: input.mediaKind,
       });
     } catch (error) {
       throw new PlaybackDestinationUnavailableError(
@@ -627,7 +628,7 @@ export interface LegacyRoutesOptions {
    * playback (controllerDeviceId in the play request). */
   dispatchMediaToTarget?: (
     target: PlaybackTarget,
-    input: { url: string; title: string; source: string; artwork?: string },
+    input: { url: string; title: string; source: string; artwork?: string; mediaKind?: 'audio' | 'video' },
   ) => Promise<void>;
   dispatchYoutubeToDevice?: (deviceId: string, value: string, title: string) => Promise<void>;
   /** Dispatch a media control action to a specific device's local server. */
@@ -1668,7 +1669,7 @@ export async function registerLegacyRoutes(
       const index = stepTargetIndex(channels, audioState.title, direction);
       const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
       return await applyAudioPlayback(
-        { url: resolved.url, title: resolved.name, source: 'dispatcharr' },
+        { url: resolved.url, title: resolved.name, source: 'dispatcharr', mediaKind: 'video' },
         target,
         options.dispatchMediaToTarget,
       );
@@ -2003,7 +2004,7 @@ export async function registerLegacyRoutes(
         resolved = resolveDispatcharrChannel(channels, name, url);
       }
       const state = await applyAudioPlayback(
-        { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr' },
+        { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr', mediaKind: 'video' },
         target,
         options.dispatchMediaToTarget,
       );

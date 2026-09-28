@@ -2218,7 +2218,8 @@ async function main(): Promise<void> {
   const playDlnaOutput = async (output: BroadcastOutput, url: string, title: string, mimeType: string) => {
     const controlUrl = String(output.metadata.controlUrl ?? '');
     if (!controlUrl) throw new Error('DLNA output has no AVTransport control URL');
-    const metadata = `&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="broadcast" parentID="0" restricted="1"&gt;&lt;dc:title&gt;${escapeSoap(title)}&lt;/dc:title&gt;&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:${escapeSoap(mimeType)}:*"&gt;${escapeSoap(url)}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;`;
+    const upnpClass = mimeType.startsWith('video/') ? 'object.item.videoItem' : 'object.item.audioItem.musicTrack';
+    const metadata = `&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="broadcast" parentID="0" restricted="1"&gt;&lt;dc:title&gt;${escapeSoap(title)}&lt;/dc:title&gt;&lt;upnp:class&gt;${upnpClass}&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:${escapeSoap(mimeType)}:*"&gt;${escapeSoap(url)}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;`;
     await dlnaSoapAction(controlUrl, 'AVTransport', 'SetAVTransportURI', `<InstanceID>0</InstanceID><CurrentURI>${escapeSoap(url)}</CurrentURI><CurrentURIMetaData>${metadata}</CurrentURIMetaData>`);
     await dlnaSoapAction(controlUrl, 'AVTransport', 'Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
   };
@@ -3371,17 +3372,17 @@ async function main(): Promise<void> {
     // Destination-targeted widget playback: Canvas → gateway/device_http,
     // DLNA → UPnP AVTransport, Home Assistant media_player → play_media.
     dispatchMediaToTarget: async (target, input) => {
-      const { url, title, source } = input;
+      const { url, title, source, mediaKind = 'audio' } = input;
       if (target.kind === 'canvas') {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [target.id]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-          const result = await gateway.requestAction(target.id, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+          const result = await gateway.requestAction(target.id, 'media.play', { source, url, title }, 20_000);
           if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.play'));
         } else {
           await requestDeviceAction(target.id, 'device_http', {
             path: '/api/media/play',
             http_method: 'POST',
-            body: { source: 'direct_audio', url, title },
+            body: { source, url, title },
           }, 20_000);
         }
         mqttNavigation.updateMediaState(target.id, { state: 'playing', title, url, source });
@@ -3390,7 +3391,7 @@ async function main(): Promise<void> {
       if (target.kind === 'dlna') {
         const output = await broadcastDelivery.getOutput(target.id);
         if (!output) throw new Error(`DLNA destination ${target.id} is not in the output catalogue`);
-        await playDlnaOutput(output, url, title, 'audio/mpeg');
+        await playDlnaOutput(output, url, title, mediaKind === 'video' ? 'video/mpeg' : 'audio/mpeg');
         return;
       }
       if (target.kind === 'media_player') {
@@ -3400,7 +3401,7 @@ async function main(): Promise<void> {
         await ha.callService('media_player', 'play_media', {
           entity_id: entityId,
           media_content_id: url,
-          media_content_type: 'music',
+          media_content_type: mediaKind === 'video' ? 'video' : 'music',
         });
         return;
       }

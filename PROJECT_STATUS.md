@@ -977,3 +977,23 @@ Validation and deployment:
 - Synced only `core/dist/` to the Core host and rebuilt/restarted only `canvas-core`, preserving the externally mounted TLS material. Health returned HTTP 200; both the Pi browser renderer and its Edge gateway reconnected.
 - Forced **DAB+ Controls Demo** to `pi5-living-room` through `POST /api/pages/:id/display`; the response reported `delivered: true`. The Pi created a new 1920×1080 panel, fetched scene `991c2a91-7a82-4406-a5a2-b4479933980b` and the media widget bundles, and began polling the DAB endpoints.
 - A Wayland capture from the Pi visually confirmed the full DAB+ demo page rendered on screen. The force-display override remains active on the Pi; its persistent page assignment was not changed.
+
+## Dispatcharr playback to television destinations (2026-09-28)
+
+Reported behavior: selecting Bedroom TV from a Dispatcharr widget on an edge returned success but did not start the channel.
+
+Root cause and fix:
+
+- `POST /api/dispatcharr/play` retained only the logical source name. The final destination dispatcher hardcoded every stream as direct audio: Canvas received `source: direct_audio`, DLNA received `audio/mpeg` plus an audio UPnP class, and Home Assistant received `media_content_type: music`. Dispatcharr supplies IPTV video, so a Chromecast/TV accepted the service call while receiving the wrong media classification.
+- The route now carries `mediaKind: video` for initial play and next/previous. Core preserves the real `dispatcharr` source for Canvas edges, sends DLNA `video/mpeg` with `object.item.videoItem`, and sends HA media players `media_content_type: video`. Audio sources retain their existing defaults.
+- No edge binary changed for this fix. Android already opens every non-`direct_audio` source in its floating renderer. The Linux sidecar already accepts `dispatcharr` as a media source.
+
+Validation and deployment:
+
+- `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 39/39 tests, including a new targeted Dispatcharr video-classification regression.
+- `cd core && npm run build` — PASS.
+- `cd core && npm test` — 549 pass / 4 fail. The four failures are the already-recorded ASR response-format, intelligence registry/failover and intent-router failures; the focused media suite passes.
+- Synced only `core/dist/` to the Core host and rebuilt/restarted only `canvas-core`, using the TLS directory already mounted by the running proxy. The initial documented compose command failed before changing containers because the remote `.env` lacks `CANVAS_CORE_TLS_DIR`; inspecting the existing public certificate mount supplied the correct path without reading private key contents.
+- Live reversible acceptance selected `ha:media_player.bedroom_tv` temporarily for the Pi controller and played `AU: ABC news`. Core returned HTTP 200 with the requested HA target. After five seconds the HA entity reported Chromecast `Default Media Receiver`, the Dispatcharr stream URL and `media_content_type: video`. The test then sent stop and cleared the temporary route; Core media state and the TV returned to idle.
+
+Operational note: the catalogue currently contains three distinct entities all named `Bedroom TV` (a Chromecast receiver, an Android TV control entity and a Music Assistant queue entity). The working video target in this acceptance was `ha:media_player.bedroom_tv`; an owner-facing integration/entity discriminator would make the selector less ambiguous.
