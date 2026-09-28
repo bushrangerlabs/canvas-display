@@ -89,6 +89,14 @@ export class BroadcastDeliveryService {
     );
   }
 
+  /** Age out SSDP-discovered renderers without disabling durable manual entries. */
+  async markDiscoveredDlnaOffline(): Promise<void> {
+    await this.pool.query(
+      `UPDATE broadcast_outputs SET online=false, updated_at=now()
+       WHERE route_type='dlna' AND route_key NOT LIKE 'manual:%'`,
+    );
+  }
+
   async listOutputs(): Promise<BroadcastOutput[]> {
     const result = await this.pool.query(
       `SELECT id, logical_id, route_type, route_key, name, selected, preferred,

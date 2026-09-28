@@ -41,8 +41,10 @@ class CoreEdgeClient(
     private var lastCoreSequence = 0L
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var heartbeat: ScheduledFuture<*>? = null
+    @Volatile private var closed = false
 
     fun connect() {
+        if (closed) return
         val wsUrl = config.coreUrl.replaceFirst("^http".toRegex(), "ws") + "/gateway/v1"
         onStatus("connecting: $wsUrl")
         socket = http.newWebSocket(
@@ -65,21 +67,33 @@ class CoreEdgeClient(
                     webSocket.close(1000, null)
                 }
 
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    heartbeat?.cancel(false)
+                    onStatus("disconnected: $code $reason")
+                    scheduleReconnect()
+                }
+
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
                     heartbeat?.cancel(false)
                     onStatus("disconnected: ${t.message ?: "WebSocket failure"}")
                     Log.e("CanvasEdge", "Core WebSocket failure", t)
-                    scheduler.schedule({ connect() }, 2, TimeUnit.SECONDS)
+                    scheduleReconnect()
                 }
             },
         )
     }
 
     fun close() {
+        closed = true
         heartbeat?.cancel(false)
         scheduler.shutdownNow()
         socket?.close(1000, "app stopped")
         socket = null
+    }
+
+    private fun scheduleReconnect() {
+        if (closed || scheduler.isShutdown) return
+        scheduler.schedule({ connect() }, 2, TimeUnit.SECONDS)
     }
 
     private fun hello(): JSONObject = JSONObject()

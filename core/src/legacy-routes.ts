@@ -31,6 +31,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { makeRequireAdmin } from './auth.js';
 import type { CoreConfig } from './config.js';
 import {
@@ -252,11 +253,33 @@ export function resetAudioState(): void {
  * media players are dispatched through the same hook. With no target the stream
  * is broadcast to every connected browser renderer (legacy behaviour).
  */
-function applyAudioPlayback(
+class PlaybackDestinationUnavailableError extends Error {}
+
+async function applyAudioPlayback(
   input: { url: string; title: string; source?: string; artwork?: string },
   target: PlaybackTarget | null,
   dispatch?: LegacyRoutesOptions['dispatchMediaToTarget'],
-): AudioState {
+): Promise<AudioState> {
+  if (target?.id) {
+    if (!dispatch) throw new PlaybackDestinationUnavailableError(`No dispatcher is available for ${target.kind}:${target.id}`);
+    try {
+      await dispatch(target, {
+        url: input.url,
+        title: input.title,
+        source: input.source ?? 'direct_audio',
+        artwork: input.artwork,
+      });
+    } catch (error) {
+      throw new PlaybackDestinationUnavailableError(
+        `Playback destination ${target.kind}:${target.id} is unavailable: ${errorText(error)}`,
+      );
+    }
+  } else {
+    broadcast(
+      { type: 'command', action: 'audio_play', payload: { url: input.url, title: input.title, artwork: input.artwork, volume: audioState.volume } },
+      'browser',
+    );
+  }
   audioState = {
     ...audioState,
     state: 'playing',
@@ -266,22 +289,6 @@ function applyAudioPlayback(
     source: input.source,
     artwork: input.artwork,
   };
-  if (target && target.id && dispatch) {
-    // Fire-and-forget: the HTTP response should not wait on the device round-trip.
-    void dispatch(target, {
-      url: input.url,
-      title: input.title,
-      source: input.source ?? 'direct_audio',
-      artwork: input.artwork,
-    }).catch((err) => {
-      console.warn(`[core][media] dispatch to ${target.kind}:${target.id} failed:`, err instanceof Error ? err.message : err);
-    });
-  } else {
-    broadcast(
-      { type: 'command', action: 'audio_play', payload: { url: input.url, title: input.title, artwork: input.artwork, volume: audioState.volume } },
-      'browser',
-    );
-  }
   return getAudioState();
 }
 
@@ -765,7 +772,7 @@ export async function registerLegacyRoutes(
   };
 
   const resolveCanvasPlaybackDevice = async (controllerDeviceId: string, mediaType: MediaType, explicitDeviceId = '') => {
-    if (!controllerDeviceId) return explicitDeviceId;
+    if (!controllerDeviceId) return explicitDeviceId ? resolveControllerDeviceId(explicitDeviceId) : '';
     const resolved = await effectivePlaybackTarget(pool, await resolveControllerDeviceId(controllerDeviceId), mediaType);
     return resolved.target.kind === 'canvas' ? resolved.target.id : '';
   };
@@ -784,6 +791,7 @@ export async function registerLegacyRoutes(
    * rows the broadcast fan-out uses).
    */
   const mediaDestinations = async (): Promise<Array<{ kind: PlaybackTargetKind; id: string; name: string; available: boolean }>> => {
+    const gatewayConnected = new Set(options.connectedDeviceIds?.() ?? []);
     const [canvasRows, players, outputs] = await Promise.all([
       pool.query<{ id: string; name: string | null; status: string | null }>(
         'SELECT id, name, status FROM devices WHERE revoked_at IS NULL ORDER BY name, id',
@@ -797,7 +805,7 @@ export async function registerLegacyRoutes(
     return [
       ...canvasRows.rows.map(row => ({
         kind: 'canvas' as const, id: String(row.id), name: String(row.name || row.id),
-        available: row.status === 'connected' || row.status === 'online',
+        available: gatewayConnected.has(String(row.id)) || hasConnectedBrowserClient(String(row.id)),
       })),
       ...players.map(player => ({
         kind: 'music_assistant' as const, id: player.id, name: player.name, available: player.available,
@@ -818,7 +826,7 @@ export async function registerLegacyRoutes(
     explicitDeviceId = '',
   ): Promise<PlaybackTarget | null> => {
     if (!controllerDeviceId) {
-      return explicitDeviceId ? { kind: 'canvas', id: explicitDeviceId } : null;
+      return explicitDeviceId ? { kind: 'canvas', id: await resolveControllerDeviceId(explicitDeviceId) } : null;
     }
     const canonical = await resolveControllerDeviceId(controllerDeviceId);
     const players = await maPlayers().catch(() => []);
@@ -1566,24 +1574,33 @@ export async function registerLegacyRoutes(
   // audio state (above) and is dispatched to connected display clients, matching
   // the /api/audio/* routes.
 
-  type SdrModule = { id: 'sdr1' | 'sdr2'; base: string; tuner: string; streamUrl: string };
+  type SdrModule = { id: 'sdr1' | 'sdr2'; base: string; tuner: string; streamUrl: string; playbackUrl: string };
+
+  const proxiedDabUrl = (id: SdrModule['id'], upstream: string) => {
+    const publicUrl = options.config?.publicUrl?.replace(/\/+$/, '');
+    return publicUrl ? `${publicUrl}/api/dab/stream/${id}` : upstream;
+  };
 
   const getSdrModules = async (): Promise<SdrModule[]> => {
     const firstBase = await mediaSetting(pool, options.config, 'sdr_radio_url');
     const secondBase = await mediaSetting(pool, options.config, 'sdr_radio_2_url');
     const modules: SdrModule[] = [];
-    if (firstBase) modules.push({
-      id: 'sdr1',
-      base: firstBase,
-      tuner: (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1',
-      streamUrl: await mediaSetting(pool, options.config, 'sdr_radio_stream_url'),
-    });
-    if (secondBase) modules.push({
-      id: 'sdr2',
-      base: secondBase,
-      tuner: (await mediaSetting(pool, options.config, 'sdr_radio_2_tuner')) || 'tuner1',
-      streamUrl: await mediaSetting(pool, options.config, 'sdr_radio_2_stream_url'),
-    });
+    if (firstBase) {
+      const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_stream_url');
+      modules.push({
+        id: 'sdr1', base: firstBase,
+        tuner: (await mediaSetting(pool, options.config, 'sdr_radio_tuner')) || 'tuner1',
+        streamUrl, playbackUrl: proxiedDabUrl('sdr1', streamUrl),
+      });
+    }
+    if (secondBase) {
+      const streamUrl = await mediaSetting(pool, options.config, 'sdr_radio_2_stream_url');
+      modules.push({
+        id: 'sdr2', base: secondBase,
+        tuner: (await mediaSetting(pool, options.config, 'sdr_radio_2_tuner')) || 'tuner1',
+        streamUrl, playbackUrl: proxiedDabUrl('sdr2', streamUrl),
+      });
+    }
     return modules;
   };
 
@@ -1609,6 +1626,14 @@ export async function registerLegacyRoutes(
       : station);
   };
 
+  const dabPlaybackUrl = async (module: SdrModule, target: PlaybackTarget | null): Promise<string> => {
+    if (target?.kind !== 'canvas') return module.streamUrl;
+    const result = await pool.query<{ architecture: string | null }>('SELECT architecture FROM devices WHERE id=$1', [target.id]);
+    return String(result.rows[0]?.architecture ?? '').toLowerCase() === 'android'
+      ? module.playbackUrl
+      : module.streamUrl;
+  };
+
   const resolveDabStation = async (requested: string) => {
     const stations = await getDabStations();
     const match = stations.find((station) => station.id === requested)
@@ -1629,8 +1654,9 @@ export async function registerLegacyRoutes(
         .filter((item) => item.name.length > 0);
       const index = stepTargetIndex(stations, audioState.title, direction);
       const station = stations[index];
-      const title = await tuneDabStation(station.moduleConfig.base, station.moduleConfig.tuner, station.name);
-      return applyAudioPlayback({ url: station.moduleConfig.streamUrl, title, source: 'dab', artwork: station.image_url }, target, options.dispatchMediaToTarget);
+      const title = await tuneDabStation(station.moduleConfig.base, station.moduleConfig.tuner, station.name, station.moduleConfig.streamUrl);
+      const playbackUrl = await dabPlaybackUrl(station.moduleConfig, target);
+      return await applyAudioPlayback({ url: playbackUrl, title, source: 'dab', artwork: station.image_url }, target, options.dispatchMediaToTarget);
     }
     if (source === 'dispatcharr') {
       const base = await mediaSetting(pool, options.config, 'dispatcharr_url');
@@ -1641,7 +1667,7 @@ export async function registerLegacyRoutes(
         .filter((item) => item.name.length > 0);
       const index = stepTargetIndex(channels, audioState.title, direction);
       const resolved = resolveDispatcharrChannel(channels, channels[index].name, channels[index].url);
-      return applyAudioPlayback(
+      return await applyAudioPlayback(
         { url: resolved.url, title: resolved.name, source: 'dispatcharr' },
         target,
         options.dispatchMediaToTarget,
@@ -1877,6 +1903,30 @@ export async function registerLegacyRoutes(
     return reply.code(result.rowCount ? 204 : 404).send(result.rowCount ? undefined : { error: 'Station logo not found' });
   });
 
+  // Android rejects cleartext traffic to the Core host. Relay the LAN-only
+  // Icecast source through Core's trusted HTTPS endpoint for edge players.
+  fastify.get<{ Params: { moduleId: string } }>('/api/dab/stream/:moduleId', async (req, reply) => {
+    const module = (await getSdrModules()).find(item => item.id === req.params.moduleId);
+    if (!module?.streamUrl) return reply.code(404).send({ error: 'DAB stream is not configured' });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    let upstream: Response;
+    try {
+      upstream = await fetch(module.streamUrl, { headers: { 'icy-metadata': '0' }, signal: controller.signal });
+    } catch (error) {
+      return reply.code(502).send({ error: `DAB stream unavailable: ${errorText(error)}` });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!upstream.ok || !upstream.body) {
+      return reply.code(upstream.status || 502).send({ error: `DAB stream unavailable: HTTP ${upstream.status}` });
+    }
+    return reply
+      .type(upstream.headers.get('content-type') || 'audio/mpeg')
+      .header('cache-control', 'no-store')
+      .send(Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream));
+  });
+
   // POST /api/dab/play { station, deviceId? } — deviceId targets one display
   fastify.post<{ Body: { station?: string; deviceId?: string; controllerDeviceId?: string } }>('/api/dab/play', {
     preHandler: adminPreHandler(options, ['admin', 'viewer'], false),
@@ -1888,12 +1938,13 @@ export async function registerLegacyRoutes(
     try {
       const resolved = await resolveDabStation(station);
       const stationId = String(resolved.id ?? station).replace(/^sdr[12]::/, '');
-      const title = await tuneDabStation(resolved.moduleConfig.base, resolved.moduleConfig.tuner, stationId);
+      const title = await tuneDabStation(resolved.moduleConfig.base, resolved.moduleConfig.tuner, stationId, resolved.moduleConfig.streamUrl);
       const artwork = 'image_url' in resolved ? resolved.image_url : undefined;
-      const state = applyAudioPlayback({ url: resolved.moduleConfig.streamUrl, title, source: 'dab', artwork }, target, options.dispatchMediaToTarget);
-      return { success: true, station: title, url: resolved.moduleConfig.streamUrl, state, ...(target ? { target } : {}) };
+      const playbackUrl = await dabPlaybackUrl(resolved.moduleConfig, target);
+      const state = await applyAudioPlayback({ url: playbackUrl, title, source: 'dab', artwork }, target, options.dispatchMediaToTarget);
+      return { success: true, station: title, url: playbackUrl, state, ...(target ? { target } : {}) };
     } catch (err) {
-      return reply.code(502).send({ error: `DAB+ tune failed: ${errorText(err)}` });
+      return reply.code(err instanceof PlaybackDestinationUnavailableError ? 503 : 502).send({ error: `DAB+ tune failed: ${errorText(err)}` });
     }
   });
 
@@ -1951,14 +2002,14 @@ export async function registerLegacyRoutes(
         const channels = await fetchDispatcharrChannels(base, apiKey || undefined);
         resolved = resolveDispatcharrChannel(channels, name, url);
       }
-      const state = applyAudioPlayback(
+      const state = await applyAudioPlayback(
         { url: resolved.url, title: resolved.name || resolved.url, source: 'dispatcharr' },
         target,
         options.dispatchMediaToTarget,
       );
       return { success: true, channel: resolved.name, url: resolved.url, state, ...(target ? { target } : {}) };
     } catch (err) {
-      return reply.code(502).send({ error: `Dispatcharr play failed: ${errorText(err)}` });
+      return reply.code(err instanceof PlaybackDestinationUnavailableError ? 503 : 502).send({ error: `Dispatcharr play failed: ${errorText(err)}` });
     }
   });
 
@@ -1982,67 +2033,76 @@ export async function registerLegacyRoutes(
       const deviceControl = deviceId && options.controlMediaOnDevice ? options.controlMediaOnDevice : undefined;
       const targetControl = target && target.kind !== 'canvas' && options.controlMediaOnTarget ? options.controlMediaOnTarget : undefined;
       const hasControl = !!(deviceControl || targetControl);
-      const sendControl = (controlAction: string, value?: number | boolean) => {
+      const sendControl = async (controlAction: string, value?: number | boolean) => {
+        if (target && !hasControl) {
+          throw new PlaybackDestinationUnavailableError(`No controller is available for ${target.kind}:${target.id}`);
+        }
         const promise = targetControl && target
           ? targetControl(target, controlAction, value)
           : deviceControl
             ? deviceControl(deviceId, controlAction, value)
             : Promise.resolve();
-        void promise.catch((err) => console.warn(`[core][media] device ${controlAction} failed:`, err instanceof Error ? err.message : err));
+        try {
+          await promise;
+        } catch (error) {
+          throw new PlaybackDestinationUnavailableError(
+            `Playback destination ${target?.kind ?? 'canvas'}:${target?.id ?? deviceId} is unavailable: ${errorText(error)}`,
+          );
+        }
       };
       try {
         switch (action) {
           case 'pause': {
             if (audioState.state !== 'playing') return reply.code(409).send({ error: 'Not playing' });
-            audioState.state = 'paused';
-            if (hasControl) {
-              sendControl('pause');
+            if (target) {
+              await sendControl('pause');
             } else {
               broadcast({ type: 'command', action: 'audio_pause', payload: {} }, 'browser');
             }
+            audioState.state = 'paused';
             return getAudioState();
           }
           case 'resume': {
             if (audioState.state !== 'paused') return reply.code(409).send({ error: 'Not paused' });
-            audioState.state = 'playing';
-            if (hasControl) {
-              sendControl('resume');
+            if (target) {
+              await sendControl('resume');
             } else {
               broadcast({ type: 'command', action: 'audio_resume', payload: {} }, 'browser');
             }
+            audioState.state = 'playing';
             return getAudioState();
           }
           case 'stop': {
-            audioState = { ...audioState, state: 'idle', url: '', title: '', source: undefined };
-            if (hasControl) {
-              sendControl('stop');
+            if (target) {
+              await sendControl('stop');
             } else {
               broadcast({ type: 'command', action: 'audio_stop', payload: {} }, 'browser');
             }
+            audioState = { ...audioState, state: 'idle', url: '', title: '', source: undefined };
             return getAudioState();
           }
           case 'volume': {
             const level = req.body?.level;
             if (level === undefined || level === null) return reply.code(400).send({ error: 'level is required' });
             const clamped = clampVolume(Number(level));
-            audioState.volume = clamped;
-            audioState.muted = false;
-            if (hasControl) {
-              sendControl('volume', clamped);
+            if (target) {
+              await sendControl('volume', clamped);
             } else {
               broadcast({ type: 'command', action: 'audio_volume', payload: { level: clamped } }, 'browser');
             }
+            audioState.volume = clamped;
+            audioState.muted = false;
             return getAudioState();
           }
           case 'mute': {
             const muted = req.body?.muted;
             if (muted === undefined) return reply.code(400).send({ error: 'muted is required' });
-            audioState.muted = !!muted;
-            if (hasControl) {
-              sendControl('mute', !!muted);
+            if (target) {
+              await sendControl('mute', !!muted);
             } else {
-              broadcast({ type: 'command', action: 'audio_mute', payload: { muted: audioState.muted } }, 'browser');
+              broadcast({ type: 'command', action: 'audio_mute', payload: { muted: !!muted } }, 'browser');
             }
+            audioState.muted = !!muted;
             return getAudioState();
           }
           case 'next':
@@ -2057,7 +2117,7 @@ export async function registerLegacyRoutes(
             return reply.code(400).send({ error: 'action must be one of pause, resume, stop, volume, mute, next, previous' });
         }
       } catch (err) {
-        return reply.code(502).send({ error: errorText(err) });
+        return reply.code(err instanceof PlaybackDestinationUnavailableError ? 503 : 502).send({ error: errorText(err) });
       }
     },
   );

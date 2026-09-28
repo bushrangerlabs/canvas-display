@@ -111,7 +111,7 @@ export async function fetchDispatcharrChannels(base: string, apiKey?: string): P
  * Tune a DAB+ station on the SDR tuner. Returns the tuned station name (as
  * reported by the tuner, falling back to the requested name).
  */
-export async function tuneDabStation(base: string, tuner: string, station: string): Promise<string> {
+export async function tuneDabStation(base: string, tuner: string, station: string, streamUrl?: string): Promise<string> {
   const res = await fetch(`${trimBase(base)}/api/tuners/${encodeURIComponent(tuner)}/play`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -122,8 +122,62 @@ export async function tuneDabStation(base: string, tuner: string, station: strin
     const detail = await res.text().catch(() => '');
     throw new Error(detail || `SDR tune failed: HTTP ${res.status}`);
   }
-  const tuned = (await res.json().catch(() => ({}))) as { station_name?: string };
+  const tuned = (await res.json().catch(() => ({}))) as { station_name?: string; state?: string };
+  if (tuned.state === 'starting') await waitForTunerReady(base, tuner);
+  if (streamUrl) await waitForStreamReady(streamUrl);
   return tuned.station_name ?? station;
+}
+
+/** Wait for the SDR worker to finish replacing the previous station pipeline. */
+export async function waitForTunerReady(base: string, tuner: string, timeoutMs = 20_000, retryMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastState = 'starting';
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const res = await fetch(`${trimBase(base)}/api/tuners/${encodeURIComponent(tuner)}/status`, {
+        signal: AbortSignal.timeout(Math.min(4_000, remaining)),
+      });
+      if (res.ok) {
+        const status = (await res.json().catch(() => ({}))) as { state?: string; error?: string };
+        lastState = status.state ?? lastState;
+        if (status.state === 'playing') return;
+        if (status.state === 'error') throw new Error(status.error || 'SDR playback pipeline failed');
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message !== 'The operation was aborted due to timeout') {
+        if (/SDR playback pipeline failed|playback pipeline/.test(error.message)) throw error;
+      }
+    }
+    const remainingAfterRequest = deadline - Date.now();
+    if (remainingAfterRequest > 0) await new Promise(resolve => setTimeout(resolve, Math.min(retryMs, remainingAfterRequest)));
+  }
+  throw new Error(`SDR tuner did not become ready (last state: ${lastState})`);
+}
+
+/** Wait for a newly tuned Icecast mount before dispatching it to one-shot players. */
+export async function waitForStreamReady(url: string, timeoutMs = 20_000, retryMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStatus: number | undefined;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const remaining = Math.max(1, deadline - Date.now());
+      const res = await fetch(url, {
+        headers: { range: 'bytes=0-0', 'icy-metadata': '0' },
+        signal: AbortSignal.timeout(Math.min(4_000, remaining)),
+      });
+      lastStatus = res.status;
+      await res.body?.cancel().catch(() => undefined);
+      if (res.ok) return;
+    } catch (error) {
+      lastError = error;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(retryMs, remaining)));
+  }
+  const detail = lastStatus ? `HTTP ${lastStatus}` : lastError instanceof Error ? lastError.message : 'unreachable';
+  throw new Error(`SDR stream did not become ready: ${detail}`);
 }
 
 /**

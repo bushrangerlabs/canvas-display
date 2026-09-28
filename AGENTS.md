@@ -31,6 +31,8 @@ This is the maintained working guide for **Canvas Display Hermes**. It applies t
 
 Core uses `core/Dockerfile` and `core/docker-compose.yml`. The root Dockerfile builds the Display server. Do not confuse the Core control plane, local Display sidecar, and native kiosk processes.
 
+Playback must remain functional without Home Assistant. Core talks directly to enrolled edges, DLNA renderers, SDR services and Music Assistant; the Canvas HA integration is an optional outward adapter that exposes edge players as HA entities. Use HA service calls only for explicitly selected HA entities or HA-specific/MCP operations.
+
 Consult component manifests for versions and commands. Components currently have different release versions; do not synchronize them without an agreed release policy.
 
 ## Safe changes

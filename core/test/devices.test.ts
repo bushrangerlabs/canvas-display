@@ -86,6 +86,18 @@ test('hello with valid invitation marks device paired; plain hello does not', as
   assert.equal(reuse.ok, false);
 });
 
+test('hello using the installation id preserves an existing friendly device name', async () => {
+  const { pool } = createTestDb();
+  const repo = new PgDeviceRepository(pool);
+  await recordDeviceHello(repo, { deviceId: 'android-1', name: 'Android Edge', architecture: 'android', protocolVersion: '1' });
+
+  const reconnected = await recordDeviceHello(repo, {
+    deviceId: 'android-1', name: 'android-1', architecture: 'android', protocolVersion: '1',
+  });
+
+  assert.equal(reconnected.name, 'Android Edge');
+});
+
 test('expired/unknown invitation is rejected', async () => {
   const { pool } = createTestDb();
   const repo = new PgDeviceRepository(pool);

@@ -178,7 +178,7 @@ export async function recordDeviceHello(
     `INSERT INTO devices (id, name, architecture, protocol_version, capabilities, paired, invitation_id, last_seen, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, now(), 'connected')
      ON CONFLICT (id) DO UPDATE SET
-       name = EXCLUDED.name,
+       name = CASE WHEN EXCLUDED.name = EXCLUDED.id THEN devices.name ELSE EXCLUDED.name END,
        architecture = EXCLUDED.architecture,
        protocol_version = EXCLUDED.protocol_version,
        capabilities = EXCLUDED.capabilities,
@@ -673,7 +673,8 @@ export async function registerDeviceRoutes(
       }
       if ((await deviceArchitecture(id)) === 'android') {
         if (!gateway?.isConnected(id)) {
-          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+          reply.code(503);
+          return { ok: false, error: 'device_unavailable', message: 'Device is not connected to the Core gateway.' };
         }
         try {
           const result = await gateway.requestAction(id, 'voice.test_cue', {
@@ -733,7 +734,8 @@ export async function registerDeviceRoutes(
           { id: 'hey_rhasspy', name: 'Hey Rhasspy' },
         ];
         if (!gateway?.isConnected(id)) {
-          return { microphones: [], speakers: [], wake_words: wakeWords, unsupported: true };
+          reply.code(503);
+          return { error: 'device_unavailable', message: 'Device is not connected to the Core gateway.', microphones: [], speakers: [], wake_words: wakeWords };
         }
         try {
           const result = await gateway.requestAction(id, 'audio.list_devices');
@@ -800,7 +802,8 @@ export async function registerDeviceRoutes(
 
       if ((await deviceArchitecture(id)) === 'android') {
         if (!gateway?.isConnected(id)) {
-          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+          reply.code(503);
+          return { ok: false, error: 'device_unavailable', message: 'Device is not connected to the Core gateway.' };
         }
         try {
           const result = await gateway.requestAction(id, 'audio.test_mic', {
@@ -854,7 +857,8 @@ export async function registerDeviceRoutes(
       const volume = Math.max(0, Math.min(100, Math.round(body.volume ?? Number(audioConfig?.speaker_volume ?? 90))));
       if ((await deviceArchitecture(id)) === 'android') {
         if (!gateway?.isConnected(id)) {
-          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+          reply.code(503);
+          return { ok: false, error: 'device_unavailable', message: 'Device is not connected to the Core gateway.' };
         }
         try {
           const result = await gateway.requestAction(id, 'audio.test_speaker', { volume }, 10_000);
@@ -906,7 +910,8 @@ export async function registerDeviceRoutes(
 
       if ((await deviceArchitecture(id)) === 'android') {
         if (!gateway?.isConnected(id)) {
-          return { ok: false, unsupported: true, message: 'Device is not connected.' };
+          reply.code(503);
+          return { ok: false, error: 'device_unavailable', message: 'Device is not connected to the Core gateway.' };
         }
         try {
           const result = await gateway.requestAction(id, 'voice.test_wakeword', {

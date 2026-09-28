@@ -88,6 +88,7 @@ class AndroidDlnaAdapter(
     private var volume = 75
     private var muted = false
     private var currentUrl: String? = null
+    private val playbackState = DeferredPlaybackState()
 
     init {
         // When Snapcast (or anything else) takes the sink, stop our playback.
@@ -112,6 +113,7 @@ class AndroidDlnaAdapter(
         releasePlayer()
         this.volume = volume.coerceIn(0, 100)
         currentUrl = url
+        playbackState.loading()
         runCatching {
             val created = MediaPlayer()
             created.setAudioAttributes(
@@ -122,26 +124,36 @@ class AndroidDlnaAdapter(
             )
             created.setDataSource(url)
             created.setOnPreparedListener { mp ->
+                if (player !== mp) return@setOnPreparedListener
                 mp.setVolume(effectiveVolume(), effectiveVolume())
-                mp.start()
-                onStarted()
+                if (playbackState.prepared()) {
+                    mp.start()
+                    DlnaLog.info("audio playback started")
+                    onStarted()
+                }
             }
             created.setOnCompletionListener { mp ->
-                if (player === mp) player = null
+                if (player !== mp) return@setOnCompletionListener
+                player = null
+                playbackState.stopped()
                 mp.release()
                 AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
                 onFinished(null)
             }
             created.setOnErrorListener { mp, what, extra ->
-                if (player === mp) player = null
+                if (player !== mp) return@setOnErrorListener true
+                player = null
+                playbackState.stopped()
                 mp.release()
                 AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
+                DlnaLog.warn("audio playback failed: MediaPlayer error $what/$extra")
                 onFinished(IllegalStateException("MediaPlayer error $what/$extra"))
                 true
             }
-            created.prepareAsync()
             player = created
+            created.prepareAsync()
         }.onFailure {
+            releasePlayer()
             AudioSinkArbiter.release(AudioSinkArbiter.Owner.MEDIA)
             DlnaLog.warn("dlna audio playback failed: ${it.message}")
             onFinished(it)
@@ -150,12 +162,14 @@ class AndroidDlnaAdapter(
 
     @Synchronized
     override fun pauseAudio() {
-        runCatching { player?.takeIf { it.isPlaying }?.pause() }
+        val canPause = playbackState.pause()
+        if (canPause) runCatching { player?.takeIf { it.isPlaying }?.pause() }
     }
 
     @Synchronized
     override fun resumeAudio() {
-        runCatching { player?.takeIf { !it.isPlaying }?.start() }
+        val canResume = playbackState.resume()
+        if (canResume) runCatching { player?.takeIf { !it.isPlaying }?.start() }
     }
 
     @Synchronized
@@ -202,10 +216,11 @@ class AndroidDlnaAdapter(
     private fun effectiveVolume(): Float = if (muted) 0f else volume / 100f
 
     private fun releasePlayer() {
+        val canStop = playbackState.stopped()
         val existing = player ?: return
         player = null
         currentUrl = null
-        runCatching { existing.stop() }
+        if (canStop) runCatching { existing.stop() }
         runCatching { existing.release() }
     }
 }

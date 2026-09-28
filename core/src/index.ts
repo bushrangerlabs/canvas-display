@@ -79,14 +79,23 @@ import { registerAiLogRoutes } from './ai-log.js';
 import { resolveYouTubeWatchUrl, resolveYouTubeQueue, buildYouTubePlaylistUrl, resolveYouTubeStreams as resolveYouTubeStreamsFn, type YouTubeSearchOptions } from './youtube.js';
 import { policyFromSettings } from './request-routing.js';
 import { clearMediaCaches, fetchDabStations, tuneDabStation } from './media-sources.js';
-import { clearMaTokenCache, clearMaRadioCache } from './music-assistant.js';
+import {
+  clearMaTokenCache,
+  clearMaRadioCache,
+  fetchMaPlayers,
+  maControl,
+  maPlayMedia,
+  maSearch,
+  type MaConnection,
+  type MaControlAction,
+} from './music-assistant.js';
 import { confirmationDigest, mcpCallRequiresConfirmation, normalizeToolArguments, resolveToolName, selectToolsForRequest } from './mcp-policy.js';
 import { FlowRepository, FlowExecutor, registerFlowRoutes } from './flows.js';
 import { migrateFlowAiDraftsTable, runAutomationGapDetection } from './flow-ai-drafts.js';
 import { advertiseCore } from './discovery.js';
 import { BroadcastStore, extensionForMime, type BroadcastClip } from './broadcast.js';
 import { BroadcastDeliveryService, discoverDlnaRenderers, type BroadcastKind, type BroadcastOutput } from './broadcast-delivery.js';
-import type { PlaybackTarget } from './playback-routing.js';
+import { effectivePlaybackTarget, type MediaType, type PlaybackTarget } from './playback-routing.js';
 import { CORE_VERSION } from './version.js';
 
 /**
@@ -204,6 +213,46 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  const musicAssistantConnection = async (): Promise<MaConnection> => {
+    const base = await mediaSetting(pool, config, 'music_assistant_url');
+    if (!base) throw new Error('Music Assistant is not configured');
+    const token = await mediaSetting(pool, config, 'music_assistant_token');
+    const username = await mediaSetting(pool, config, 'music_assistant_username');
+    const password = await mediaSetting(pool, config, 'music_assistant_password');
+    if (!token && (!username || !password)) {
+      throw new Error('Music Assistant needs an API token or username and password');
+    }
+    return {
+      base,
+      token: token || undefined,
+      username: username || undefined,
+      password: password || undefined,
+    };
+  };
+
+  const directMusicAssistantTarget = async (
+    deviceId: string,
+    mediaType: Extract<MediaType, 'music_assistant' | 'youtube_music'> = 'music_assistant',
+  ): Promise<{ connection: MaConnection; playerId: string }> => {
+    const connection = await musicAssistantConnection();
+    const players = await fetchMaPlayers(connection);
+    const firstPlayer = players.find(player => player.available)?.id ?? players[0]?.id ?? '';
+    const { target } = await effectivePlaybackTarget(pool, deviceId, mediaType, firstPlayer);
+    if (target.kind !== 'music_assistant' || !target.id) {
+      throw new Error(`The selected ${mediaType.replace('_', ' ')} destination is not a direct Music Assistant player`);
+    }
+    return { connection, playerId: target.id };
+  };
+
+  const resolveMusicAssistantUri = async (connection: MaConnection, query: string): Promise<string> => {
+    const results = await maSearch(connection, query, 10);
+    return results.tracks[0]?.uri
+      ?? results.radios[0]?.uri
+      ?? results.playlists[0]?.uri
+      ?? results.albums[0]?.uri
+      ?? '';
+  };
 
   const reloadRequestRoutingPolicy = async () => {
     const rows = await pool.query("SELECT key, value FROM settings WHERE key LIKE 'request_routing_%'");
@@ -1058,7 +1107,8 @@ async function main(): Promise<void> {
   };
 
   const refreshBroadcastOutputs = async () => {
-    await broadcastDelivery.markRoutesOffline(['edge', 'ha', 'dlna']);
+    await broadcastDelivery.markRoutesOffline(['edge', 'ha']);
+    await broadcastDelivery.markDiscoveredDlnaOffline();
     const devices = await pool.query(
       `SELECT id,name,status,architecture FROM devices WHERE revoked_at IS NULL ORDER BY name`,
     );
@@ -2333,7 +2383,8 @@ async function main(): Promise<void> {
       try {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-          await gateway.requestAction(deviceId, 'media.play', { source, url, title }, 20_000);
+          const result = await gateway.requestAction(deviceId, 'media.play', { source, url, title }, 20_000);
+          if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.play'));
         } else {
           await requestDeviceAction(deviceId, 'device_http', {
             path: '/api/media/play',
@@ -2359,7 +2410,8 @@ async function main(): Promise<void> {
       try {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-          await gateway.requestAction(deviceId, 'media.control', { source, action, value }, 10_000);
+          const result = await gateway.requestAction(deviceId, 'media.control', { source, action, value }, 10_000);
+          if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.control'));
         } else {
           await requestDeviceAction(deviceId, 'device_http', {
             path: '/api/media/control',
@@ -2490,34 +2542,16 @@ async function main(): Promise<void> {
         return { ok: false, message: 'I could not identify which display requested playback.' };
       }
       if (source === 'music_assistant') {
-        // Music Assistant resolves the query itself and streams to the device's MA
-        // player. MA's `hass_players` provider uses the HA entity_id as its player
-        // id, and the canvas_display component assigns a predictable entity_id per
-        // device (media_player.canvas_<slug>), so we can target it directly.
-        if (!ha) {
-          return { ok: false, message: 'Music Assistant playback needs Home Assistant to be configured.' };
-        }
-        const entityId = `media_player.canvas_${deviceId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
-        if (!ha.getEntities().some(entity => entity.entityId === entityId)) {
-          return {
-            ok: false,
-            message:
-              `Music Assistant is not set up for this display yet (no ${entityId}). ` +
-              'Deploy the Canvas Display Home Assistant integration in Core mode and enable ' +
-              'Music Assistant\'s "Home Assistant MediaPlayers" provider.',
-          };
-        }
         try {
-          await ha.callService('music_assistant', 'play_media', {
-            entity_id: entityId,
-            media_id: query,
-            media_type: 'track',
-          });
+          const { connection, playerId } = await directMusicAssistantTarget(deviceId);
+          const uri = await resolveMusicAssistantUri(connection, query);
+          if (!uri) return { ok: false, message: `Music Assistant could not find "${query}".` };
+          await maPlayMedia(connection, playerId, uri);
           mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: query, source: 'music_assistant' });
           return {
             ok: true,
             message: `Playing "${query}" from Music Assistant.`,
-            data: { device_id: deviceId, source, entity_id: entityId, playback_started: true },
+            data: { device_id: deviceId, source, player_id: playerId, playback_started: true },
           };
         } catch (error) {
           return {
@@ -2698,7 +2732,7 @@ async function main(): Promise<void> {
             mediaSetting(pool, config, 'sdr_radio_2_tuner'),
             mediaSetting(pool, config, 'sdr_radio_2_stream_url'),
           ]),
-        ])).map(([base, tuner, streamUrl]) => ({ base, tuner: tuner || 'tuner1', streamUrl }))
+        ])).map(([base, tuner, streamUrl], index) => ({ base, tuner: tuner || 'tuner1', streamUrl, moduleId: index === 0 ? 'sdr1' : 'sdr2' }))
           .filter(module => module.base);
         if (modules.length === 0) return { ok: false, message: 'DAB+ radio is not configured.' };
         const stationResults = await Promise.allSettled(
@@ -2715,20 +2749,23 @@ async function main(): Promise<void> {
           return { ok: false, message: `I could not find the DAB+ station "${name}".` };
         }
         const streamUrl = match.module.streamUrl;
-        await tuneDabStation(match.module.base, match.module.tuner, match.id);
+        const playbackUrl = `${config.publicUrl.replace(/\/+$/, '')}/api/dab/stream/${match.module.moduleId}`;
+        await tuneDabStation(match.module.base, match.module.tuner, match.id, streamUrl);
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [deviceId]);
-        if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
+        const android = String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android';
+        const devicePlaybackUrl = android ? playbackUrl : streamUrl;
+        if (android) {
           await gateway.requestAction(
-            deviceId, 'media.play', { source: 'direct_audio', url: streamUrl, title: match.name }, 20_000,
+            deviceId, 'media.play', { source: 'direct_audio', url: devicePlaybackUrl, title: match.name }, 20_000,
           );
         } else {
           await requestDeviceAction(deviceId, 'device_http', {
             path: '/api/media/play',
             http_method: 'POST',
-            body: { source: 'direct_audio', url: streamUrl, title: match.name },
+            body: { source: 'direct_audio', url: devicePlaybackUrl, title: match.name },
           }, 20_000);
         }
-        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.name ?? name, url: streamUrl, source: 'dab' });
+        mqttNavigation.updateMediaState(deviceId, { state: 'playing', title: match.name ?? name, url: devicePlaybackUrl, source: 'dab' });
         return {
           ok: true,
           message: `Tuning to ${match.name ?? name} on digital radio.`,
@@ -2827,36 +2864,18 @@ async function main(): Promise<void> {
         return { ok: false, message: 'I could not identify which display requested media control.' };
       }
       if (source === 'music_assistant') {
-        // Control the device's MA player. MA's hass_players player id is the HA
-        // entity_id, so HA's media_player services reach the same player.
-        if (!ha) {
-          return { ok: false, message: 'Music Assistant control needs Home Assistant to be configured.' };
-        }
-        const entityId = `media_player.canvas_${deviceId.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
-        const service = {
-          pause: 'media_pause',
-          resume: 'media_play',
-          stop: 'media_stop',
-          next: 'media_next_track',
-          previous: 'media_previous_track',
-          volume: 'volume_set',
-          mute: 'volume_mute',
-        }[action];
-        if (!service) {
+        const maAction = ({ resume: 'play' } as Record<string, string>)[action] ?? action;
+        if (!['play', 'pause', 'stop', 'next', 'previous', 'volume', 'mute'].includes(maAction)) {
           return { ok: false, message: `Music Assistant does not support "${action}".` };
         }
-        const data: Record<string, unknown> = { entity_id: entityId };
         if (action === 'volume') {
           if (typeof value !== 'number') {
             return { ok: false, message: 'A volume level is required.' };
           }
-          data.volume_level = Math.max(0, Math.min(1, value / 100));
-        }
-        if (action === 'mute') {
-          data.is_volume_muted = Boolean(value);
         }
         try {
-          await ha.callService('media_player', service, data);
+          const { connection, playerId } = await directMusicAssistantTarget(deviceId);
+          await maControl(connection, playerId, maAction as MaControlAction, value);
           const verb = {
             pause: 'Paused Music Assistant playback',
             resume: 'Resumed Music Assistant playback',
@@ -2866,7 +2885,7 @@ async function main(): Promise<void> {
             volume: 'Set the Music Assistant volume',
             mute: value ? 'Muted Music Assistant playback' : 'Unmuted Music Assistant playback',
           }[action] ?? 'Updated Music Assistant playback';
-          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, entity_id: entityId } };
+          return { ok: true, message: `${verb}.`, data: { device_id: deviceId, source, action, player_id: playerId } };
         } catch (error) {
           return {
             ok: false,
@@ -3356,7 +3375,8 @@ async function main(): Promise<void> {
       if (target.kind === 'canvas') {
         const archRow = await pool.query('SELECT architecture FROM devices WHERE id = $1', [target.id]);
         if (String(archRow.rows[0]?.architecture ?? '').toLowerCase() === 'android') {
-          await gateway.requestAction(target.id, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+          const result = await gateway.requestAction(target.id, 'media.play', { source: 'direct_audio', url, title }, 20_000);
+          if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.play'));
         } else {
           await requestDeviceAction(target.id, 'device_http', {
             path: '/api/media/play',
@@ -3385,8 +3405,7 @@ async function main(): Promise<void> {
         return;
       }
       if (target.kind === 'music_assistant') {
-        if (!ha) throw new Error('Home Assistant is not configured');
-        await ha.callService('music_assistant', 'play_media', { entity_id: target.id, media_id: url });
+        await maPlayMedia(await musicAssistantConnection(), target.id, url);
         return;
       }
       throw new Error(`Unsupported playback destination kind: ${target.kind}`);
@@ -3418,6 +3437,14 @@ async function main(): Promise<void> {
         else if (action === 'mute' && typeof value === 'boolean') await ha.callService('media_player', 'volume_mute', { entity_id: entityId, is_volume_muted: value });
         return;
       }
+      if (target.kind === 'music_assistant') {
+        const maAction = action === 'resume' ? 'play' : action;
+        if (!['play', 'pause', 'stop', 'next', 'previous', 'volume', 'mute'].includes(maAction)) {
+          throw new Error(`Unsupported Music Assistant control action: ${action}`);
+        }
+        await maControl(await musicAssistantConnection(), target.id, maAction as MaControlAction, value);
+        return;
+      }
       throw new Error(`Unsupported control destination kind: ${target.kind}`);
     },
     dispatchYoutubeToDevice: async (deviceId, value, title) => {
@@ -3431,7 +3458,8 @@ async function main(): Promise<void> {
         allowYtDlpFallback: true,
       }) ?? value;
       if (architecture === 'android') {
-        await gateway.requestAction(deviceId, 'media.play', { source: 'youtube', query: title, url, playlist: false }, 20_000);
+        const result = await gateway.requestAction(deviceId, 'media.play', { source: 'youtube', query: title, url, playlist: false }, 20_000);
+        if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.play'));
       } else {
         await requestDeviceAction(deviceId, 'device_http', {
           path: '/api/media/play', http_method: 'POST',
@@ -3446,7 +3474,8 @@ async function main(): Promise<void> {
         const payload: Record<string, unknown> = { action };
         if (action === 'volume' && typeof value === 'number') payload.value = value;
         if (action === 'mute' && typeof value === 'boolean') payload.value = value ? 1 : 0;
-        await gateway.requestAction(deviceId, 'media.control', payload, 20_000);
+        const result = await gateway.requestAction(deviceId, 'media.control', payload, 20_000);
+        if (result.ok === false) throw new Error(String(result.error ?? 'device rejected media.control'));
         return;
       }
       const body: Record<string, unknown> = { action };

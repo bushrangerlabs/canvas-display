@@ -8,8 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { createTestDb } from './db-helpers.js';
-import { registerLegacyRoutes, getAudioState, resetAudioState } from '../src/legacy-routes.js';
-import { clearMediaCaches } from '../src/media-sources.js';
+import { registerLegacyRoutes, getAudioState, resetAudioState, type LegacyRoutesOptions } from '../src/legacy-routes.js';
+import { clearMediaCaches, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
 import type { CoreConfig } from '../src/config.js';
 
 function makeConfig(overrides: Partial<CoreConfig> = {}): CoreConfig {
@@ -42,10 +42,10 @@ function makeConfig(overrides: Partial<CoreConfig> = {}): CoreConfig {
   };
 }
 
-async function buildServer(config = makeConfig()) {
+async function buildServer(config = makeConfig(), routeOverrides: Partial<LegacyRoutesOptions> = {}) {
   const { pool } = createTestDb();
   const fastify = Fastify({ logger: false });
-  await registerLegacyRoutes(fastify, { pool, config });
+  await registerLegacyRoutes(fastify, { pool, config, ...routeOverrides });
   await fastify.ready();
   return { fastify, pool };
 }
@@ -65,6 +65,34 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Response | Prom
 }
 
 // ─── DAB+ ────────────────────────────────────────────────────────────────────
+
+test('DAB stream readiness retries a missing Icecast mount before playback dispatch', async () => {
+  let attempts = 0;
+  const restore = stubFetch(() => {
+    attempts += 1;
+    return new Response('', { status: attempts < 3 ? 404 : 200 });
+  });
+  try {
+    await waitForStreamReady('http://sdr.test:8001/tuner1.mp3', 500, 1);
+    assert.equal(attempts, 3);
+  } finally {
+    restore();
+  }
+});
+
+test('DAB tuner readiness waits for the replacement pipeline to report playing', async () => {
+  let attempts = 0;
+  const restore = stubFetch(() => {
+    attempts += 1;
+    return jsonResponse({ state: attempts < 3 ? 'starting' : 'playing' });
+  });
+  try {
+    await waitForTunerReady('http://sdr.test:8088', 'tuner1', 500, 1);
+    assert.equal(attempts, 3);
+  } finally {
+    restore();
+  }
+});
 
 test('GET /api/dab/stations returns the SDR station list', async () => {
   clearMediaCaches();
@@ -159,6 +187,109 @@ test('POST /api/dab/play tunes the station and updates media state', async () =>
     assert.equal(getAudioState().title, 'BBC Radio 1');
     assert.equal(getAudioState().source, 'dab');
     assert.ok(calls.includes('POST http://sdr.test:8088/api/tuners/tuner1/play'));
+  } finally {
+    restore();
+  }
+});
+
+test('targeted DAB playback resolves an explicit device name and waits for dispatch success', async () => {
+  clearMediaCaches();
+  resetAudioState();
+  const dispatched: string[] = [];
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    dispatchMediaToTarget: async (target) => { dispatched.push(`${target.kind}:${target.id}`); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-canonical', 'kitchen-panel', 'android')");
+  const restore = stubFetch(() => jsonResponse({ station_name: 'BBC Radio 1' }));
+  try {
+    const res = await fastify.inject({
+      method: 'POST', url: '/api/dab/play', payload: { station: 'abc', deviceId: 'kitchen-panel' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(dispatched, ['canvas:device-canonical']);
+    assert.equal(res.json().target.id, 'device-canonical');
+    assert.equal(getAudioState().state, 'playing');
+  } finally {
+    restore();
+  }
+});
+
+test('targeted DAB playback uses the trusted Core stream proxy', async () => {
+  clearMediaCaches();
+  resetAudioState();
+  const urls: string[] = [];
+  const { fastify, pool } = await buildServer(makeConfig({ publicUrl: 'https://core.test:3100' }), {
+    dispatchMediaToTarget: async (_target, input) => { urls.push(input.url); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-android', 'Android Edge', 'android')");
+  const restore = stubFetch((url) => url.endsWith('/play')
+    ? jsonResponse({ station_name: 'BBC Radio 1' })
+    : jsonResponse({}));
+  try {
+    const res = await fastify.inject({
+      method: 'POST', url: '/api/dab/play', payload: { station: 'abc', deviceId: 'Android Edge' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(urls, ['https://core.test:3100/api/dab/stream/sdr1']);
+    assert.equal(res.json().url, 'https://core.test:3100/api/dab/stream/sdr1');
+  } finally {
+    restore();
+  }
+});
+
+test('destination catalog uses live Canvas connections instead of stale database status', async () => {
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    connectedDeviceIds: () => ['device-online'],
+  });
+  await pool.query("INSERT INTO devices (id, name, status) VALUES ('device-online', 'Online', 'offline'), ('device-stale', 'Stale', 'connected')");
+
+  const res = await fastify.inject({ method: 'GET', url: '/api/media/destinations/catalog' });
+  assert.equal(res.statusCode, 200);
+  const destinations = res.json().destinations as Array<{ id: string; available: boolean }>;
+  assert.equal(destinations.find(item => item.id === 'device-online')?.available, true);
+  assert.equal(destinations.find(item => item.id === 'device-stale')?.available, false);
+});
+
+test('targeted DAB playback reports an unavailable destination and leaves state idle', async () => {
+  clearMediaCaches();
+  resetAudioState();
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    dispatchMediaToTarget: async () => { throw new Error('device is not connected via gateway'); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-offline', 'bedroom-panel', 'android')");
+  const restore = stubFetch(() => jsonResponse({ station_name: 'BBC Radio 1' }));
+  try {
+    const res = await fastify.inject({
+      method: 'POST', url: '/api/dab/play', payload: { station: 'abc', deviceId: 'bedroom-panel' },
+    });
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().error, /device-offline.*not connected via gateway/);
+    assert.equal(getAudioState().state, 'idle');
+    assert.equal(getAudioState().url, '');
+  } finally {
+    restore();
+  }
+});
+
+test('targeted media control reports dispatch failure without changing playback state', async () => {
+  clearMediaCaches();
+  resetAudioState();
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    dispatchMediaToTarget: async () => {},
+    controlMediaOnDevice: async () => { throw new Error('device is not connected'); },
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-offline', 'bedroom-panel', 'android')");
+  const restore = stubFetch(() => jsonResponse({ station_name: 'BBC Radio 1' }));
+  try {
+    const play = await fastify.inject({ method: 'POST', url: '/api/dab/play', payload: { station: 'abc' } });
+    assert.equal(play.statusCode, 200);
+    assert.equal(getAudioState().state, 'playing');
+    const pause = await fastify.inject({
+      method: 'POST', url: '/api/media/control', payload: { action: 'pause', deviceId: 'bedroom-panel' },
+    });
+    assert.equal(pause.statusCode, 503);
+    assert.match(pause.json().error, /device-offline.*not connected/);
+    assert.equal(getAudioState().state, 'playing');
   } finally {
     restore();
   }

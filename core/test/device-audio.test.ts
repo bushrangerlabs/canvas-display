@@ -20,12 +20,18 @@ function makeConfig(): CoreConfig {
   };
 }
 
-async function buildServer(config: CoreConfig, deviceRepo: PgDeviceRepository, authRepo: PgAuthRepository) {
+async function buildServer(
+  config: CoreConfig,
+  deviceRepo: PgDeviceRepository,
+  authRepo: PgAuthRepository,
+  gateway?: { isConnected: (deviceId: string) => boolean; requestAction: (...args: any[]) => Promise<Record<string, unknown>> },
+) {
   const fastify = Fastify({ logger: false });
   const { requireAdmin } = await registerAuth(fastify, { config, repo: authRepo });
   await registerDeviceRoutes(fastify, {
     repo: deviceRepo,
     requireAdmin,
+    gateway: gateway as never,
     deviceAction: async (_deviceId, action, payload) => {
       if (action === 'device_http' && payload?.path === '/api/voice/wakeword-test') {
         return { ok: true, detected: false };
@@ -264,6 +270,28 @@ test('GET /api/admin/devices/:id/audio/devices returns the Edge device inventory
     speakers: [{ id: 'default', name: 'Default speaker' }],
     wake_words: [{ id: 'okay_nabu', name: 'okay nabu' }],
   });
+});
+
+test('Android audio inventory reports gateway disconnection as unavailable', async () => {
+  const { pool } = createTestDb();
+  const config = makeConfig();
+  const deviceRepo = new PgDeviceRepository(pool);
+  const authRepo = new PgAuthRepository(pool);
+  const fastify = await buildServer(config, deviceRepo, authRepo, {
+    isConnected: () => false,
+    requestAction: async () => ({ ok: true }),
+  });
+  const { cookies } = await adminSession(fastify, config, authRepo);
+  await recordDeviceHello(deviceRepo, { deviceId: 'android-1', name: 'Tablet', architecture: 'android', protocolVersion: '1' });
+
+  const res = await fastify.inject({
+    method: 'GET',
+    url: '/api/admin/devices/android-1/audio/devices',
+    headers: { cookie: cookies },
+  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().error, 'device_unavailable');
+  assert.equal(res.json().unsupported, undefined);
 });
 
 test('POST /api/admin/devices/:id/audio/test-mic returns captured device audio', async () => {

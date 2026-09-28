@@ -16,6 +16,21 @@ import org.junit.Test
 
 /** Unit tests for the Android DLNA renderer (pure JVM — no Android APIs). */
 class DlnaTest {
+    @Test
+    fun `pause and resume are deferred until asynchronous playback is prepared`() {
+        val state = com.bushrangerlabs.canvas_display_edge.dlna.DeferredPlaybackState()
+
+        state.loading()
+        assertFalse(state.pause())
+        assertFalse(state.resume())
+        assertTrue(state.prepared())
+
+        assertTrue(state.pause())
+        assertTrue(state.stopped())
+        assertFalse(state.resume())
+        assertFalse(state.stopped())
+    }
+
 
     // ─── XML helpers ──────────────────────────────────────────────────────────
 
