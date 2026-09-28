@@ -137,6 +137,7 @@ interface PendingCommand {
 }
 
 interface PendingAction {
+  deviceId: string;
   resolve: (result: DeviceActionResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
@@ -219,7 +220,7 @@ export class GatewayController {
         this.pendingActions.delete(requestId);
         reject(new Error(`device ${deviceId} did not respond to ${action} within ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pendingActions.set(requestId, { resolve, reject, timer });
+      this.pendingActions.set(requestId, { deviceId, resolve, reject, timer });
       connection.ws.send(JSON.stringify(envelope), (error) => {
         if (!error) return;
         clearTimeout(timer);
@@ -229,12 +230,13 @@ export class GatewayController {
     });
   }
 
-  observe(message: unknown): boolean {
+  observe(message: unknown, deviceId?: string): boolean {
     if (!message || typeof message !== 'object') return false;
     const envelope = message as { type?: unknown; payload?: unknown; correlation_id?: unknown; request_id?: unknown };
     if (envelope.type === 'device.action_result' && typeof envelope.request_id === 'string') {
       const waiting = this.pendingActions.get(envelope.request_id);
       if (!waiting) return false;
+      if (deviceId && waiting.deviceId !== deviceId) return false;
       clearTimeout(waiting.timer);
       this.pendingActions.delete(envelope.request_id);
       waiting.resolve((envelope.payload as DeviceActionResult) ?? { ok: false });
@@ -863,6 +865,12 @@ export function registerGateway(
         lastReceivedEdgeSequence = Math.max(lastReceivedEdgeSequence, sequence);
       }
 
+      // Action results are replies to a short-lived request sent on this same
+      // authenticated device connection. They intentionally use the lightweight
+      // gateway action envelope rather than durable state sequencing, so resolve
+      // them before authority checks for state/control protocol envelopes.
+      if (controller.observe(parsed, deviceId)) return;
+
       // --- Phase 8: authority mode enforcement ----------------------------------
       // If this device is in 'core' mode, reject legacy-format messages. A legacy
       // message is one that does not carry the current authority epoch or uses an
@@ -888,7 +896,6 @@ export function registerGateway(
 
       const messageType = (parsed as { type?: unknown }).type;
       if (
-        controller.observe(parsed) ||
         messageType === 'stream.ack' ||
         messageType === 'edge.heartbeat' ||
         messageType === 'state.reported'

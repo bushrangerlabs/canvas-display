@@ -145,6 +145,7 @@ export function useMediaPlay(kind: MediaKind) {
       const controllerDeviceId = targetDeviceId();
       const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBody(item), ...(controllerDeviceId ? { controllerDeviceId } : {}) });
       if (!result.ok) setError(result.error ?? 'Playback failed');
+      else window.dispatchEvent(new Event('canvas:media-state-changed'));
       return result.ok;
     },
     [kind],
@@ -156,6 +157,7 @@ export function useMediaPlay(kind: MediaKind) {
       const controllerDeviceId = targetDeviceId();
       const result = await postJson(SOURCES[kind].playUrl, { ...SOURCES[kind].buildPlayBodyByName(name), ...(controllerDeviceId ? { controllerDeviceId } : {}) });
       if (!result.ok) setError(result.error ?? 'Playback failed');
+      else window.dispatchEvent(new Event('canvas:media-state-changed'));
       return result.ok;
     },
     [kind],
@@ -270,15 +272,18 @@ export function useMediaAudio(pollMs: number, enabled = true) {
     };
     void poll();
     const id = window.setInterval(poll, pollMs);
+    window.addEventListener('canvas:media-state-changed', poll);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.removeEventListener('canvas:media-state-changed', poll);
     };
   }, [pollMs, enabled]);
 
   const run = useCallback(async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
     const result = await fn();
     setError(result.ok ? '' : result.error ?? 'Command failed');
+    if (result.ok) window.dispatchEvent(new Event('canvas:media-state-changed'));
     return result.ok;
   }, []);
 

@@ -181,9 +181,11 @@ export function useMaPlayerState(playerId: string, pollMs: number, enabled = tru
     };
     void load();
     const id = window.setInterval(load, pollMs);
+    window.addEventListener('canvas:ma-state-changed', load);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.removeEventListener('canvas:ma-state-changed', load);
     };
   }, [playerId, pollMs, enabled, mediaType]);
 
@@ -200,6 +202,7 @@ export function useMaControl(playerId: string, mediaType: 'music_assistant' | 'y
     async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
       const result = await fn();
       setError(result.ok ? '' : result.error ?? 'Command failed');
+      if (result.ok) window.dispatchEvent(new Event('canvas:ma-state-changed'));
       return result.ok;
     },
     [],
