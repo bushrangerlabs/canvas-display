@@ -1,6 +1,6 @@
 {
   "name": "@canvas-display/core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Canvas Core - centralized control plane, AI brain, and device gateway (Phase 2)",
   "type": "module",

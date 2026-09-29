@@ -1,6 +1,6 @@
 # Project status and session handover
 
-Last reviewed: 2026-09-28. This file records local checkout evidence, not deployment acceptance.
+Last reviewed: 2026-09-29. This file records local checkout evidence, not deployment acceptance.
 
 ## Start here
 
@@ -54,6 +54,43 @@ The uncommitted changes suggest several concurrent tracks:
 There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometry task is already implemented and historically reported device-verified; it is not evidence of the latest task.
 
 ## Work completed in this session
+
+### Core + Edge version bump to `0.3.2` and device-version display (2026-09-29, uncommitted)
+
+**Objective.** When Core and the Edge apps are compiled, each must carry a new version and Core must display it: Core's own version via `/health` (shown in the UI chrome) and every Edge device's installed software version as a column/row on the Core Devices page.
+
+**Version bumps (all `0.3.2`):**
+- Core: `core/package.json` and `core/src/version.ts` (`CORE_VERSION`, the `/health` runtime source).
+- Android Edge: `browser/android-native/app/build.gradle.kts` (`versionName` `0.3.2`, `versionCode` `3`→`4`; `buildConfig = true` enabled).
+- Edge Rust workspace: `edge/Cargo.toml` `[workspace.package] version` `0.3.0`→`0.3.2` (members inherit it; `Cargo.lock` updated by the build).
+
+**Version reporting / display plumbing (new `software_version` field, kept separate from `protocol_version`):**
+- `core/src/db.ts`: `devices.software_version TEXT` column (added by `addColumnIfNotExists`).
+- `core/src/devices.ts`: `DeviceRow.software_version`, `recordDeviceHello({ softwareVersion })`, upsert writes it and preserves the last known value on reconnect via `COALESCE(EXCLUDED.software_version, devices.software_version)`, `rowToDevice` maps it.
+- `core/src/gateway.ts`: gateway `edge.hello` populates `softwareVersion` from `parsed.agent?.version`.
+- `core/src/index.ts`: legacy `POST /api/devices/register` populates `softwareVersion` from `app_version`.
+- `web/src/api/client.ts`: `DeviceRow.software_version: string | null`.
+- `web/src/pages/DevicesPage.tsx`: new **Version** column in the devices table and a **Software version** row in the device detail dialog.
+- `web/src/components/AppLayout.tsx`: Core-version fallback `0.3.0`→`0.3.2` (still overwritten by the live `/health` value).
+- Android `CoreEdgeClient.kt`: removed the hardcoded `EDGE_APP_VERSION` const; the `edge.hello` `agent.version` and legacy `app_version` now read `BuildConfig.VERSION_NAME`.
+
+**Built:**
+- `web` → `web/dist` and copied to `core/public` (bundle `assets/index-Dsz29HQM.js`, which contains `software_version` and the `0.3.2` fallback).
+- `core` → `core/dist` (`dist/version.js` = `0.3.2`).
+- Android debug APK → `browser/android-native/app/build/outputs/apk/debug/app-debug.apk`; `aapt2 dump badging` confirms `versionName='0.3.2' versionCode='4'`.
+- Rust agent → `edge/target/release/canvas-edge-agentd`; `strings` shows the embedded `0.3.2` literal (source is `env!("CARGO_PKG_VERSION")`).
+
+**Deployed and verified (2026-09-29, owner-authorized):**
+- Core: `core/dist` + `core/public` were already rsynced to `spetchal@192.168.1.108:/home/spetchal/canvas-core/core/` (md5 of `dist/version.js`, `dist/index.js`, `dist/gateway.js`, `dist/devices.js`, `public/index.html`, `public/assets/index-Dsz29HQM.js` all match local; 95 files each side). The running container predated the sync, so it was rebuilt/recreated from the **canonical parent** Compose project: `cd /home/spetchal/canvas-core && docker compose up -d --build canvas-core`. Running from `core/` fails safely first because that compose file requires `CANVAS_CORE_TLS_DIR`; the parent compose hardcodes the TLS generation dir. `http://192.168.1.108:3101/health` now returns `version: 0.3.2`.
+- Rust agent (Pi `192.168.1.216`, arm64): synced `edge/` (excluding `target/`) to `/home/spetchal/build/canvas-edge`, built natively (`cargo build --release -p canvas-edge-agentd`, 32s), backed up the old binary, `sudo install -m 0755` to `/usr/bin/canvas-edge-agentd`, restarted the **system** unit `canvas-edge-agent.service` (active).
+- Android: `adb install -r browser/android-native/app/build/outputs/apk/debug/app-debug.apk` (Success, preserves the debug signing identity/enrollment); the app was not auto-relaunched, so `am start -n com.bushrangerlabs.canvas_display_edge/.MainActivity` was issued.
+- Live DB check (`docker exec canvas-core-canvas-core-1 node` + `pg`): `pi5-living-room` (arm64) and `Android Edge` (android) both report `software_version = 0.3.2`, `status = connected`. The served UI bundle `assets/index-Dsz29HQM.js` contains `software_version`, and `GET /api/admin/devices` → `listDevices` → `rowToDevice` returns it, so the new **Version** column renders `0.3.2` for both devices.
+
+**Validation run:** `cd core && npm run type-check` (clean); `npx tsx --test test/devices.test.ts` (8/8 pass, incl. the new `hello records software version separately from protocol version`). `bash scripts/check-versions.sh` lists all locations. Live `/health` + Devices-page check now run (see deployment above). Not run: Rust workspace tests, Android unit tests.
+
+**Tooling/doc updates:** `scripts/check-versions.sh` no longer greps the removed `EDGE_APP_VERSION` (now checks `BuildConfig.VERSION_NAME`) and now lists the Rust workspace version. `AGENTS.md` and `docs/CURRENT_ARCHITECTURE.md` version tables updated.
+
+**Known gaps.** The Linux kiosk (`browser/linux/`) is still `0.3.1` and its `useServerSocket.ts` reports a hardcoded `app_version: '0.3.1'`; that value is only a legacy `/ws` hello and is not persisted into `devices.software_version`, so the Pi device row in Core shows the **Rust agent** version, not the kiosk's — hence the kiosk was left out of this bump. The HA add-on (`config.yaml`) remains `0.2.66`. The version bump is a documented manual step (`AGENTS.md` "Versioning" + `scripts/check-versions.sh`), not automated by the build. Changes remain uncommitted.
 
 ### Edge audio regression + DLNA / HA media-player destinations (2026-09-28)
 

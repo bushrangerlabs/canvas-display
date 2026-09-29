@@ -150,7 +150,10 @@ Rules:
 * Always bump Android `versionCode` alongside `versionName`.
 * Keep `tauri.conf.json` and `src-tauri/Cargo.toml` in sync for the kiosk.
 * The Rust `edge/` workspace version is a single edit (members inherit it).
-* Components currently differ (Core/Linux/Android `0.3.1`, edge `0.3.0`, sidecar `0.1.1`, add-on `0.2.66`); do not normalize versions without an agreed release policy.
+* Components currently differ (Core/Android/edge `0.3.2`, Linux `0.3.1`, sidecar `0.1.1`, add-on `0.2.66`); do not normalize versions without an agreed release policy.
+* Every installable/deployable build must receive a new component version before compilation. Routine local typechecks and test-only compiles do not consume versions.
+* Keep Core's `core/package.json` and `core/src/version.ts` synchronized; `/health` is the runtime source displayed by the Core UI.
+* Edge builds must report their installed software version in the device hello/registration. Android reads `BuildConfig.VERSION_NAME`; Linux/Rust uses the package version. Confirm the Core Devices page shows the new version after deployment.
 
 ## Mandatory maintenance
 

@@ -745,6 +745,7 @@ export function registerGateway(
           name,
           architecture: parsed.agent?.architecture ?? 'unknown',
           protocolVersion,
+          softwareVersion: parsed.agent?.version,
           capabilities,
           invitationToken,
         });

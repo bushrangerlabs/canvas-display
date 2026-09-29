@@ -129,6 +129,7 @@ export interface DeviceRow {
   name: string;
   architecture: string;
   protocol_version: string;
+  software_version: string | null;
   group_name: string;
   capabilities: string;
   authority_mode: AuthorityMode;

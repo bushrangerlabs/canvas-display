@@ -75,6 +75,9 @@ export async function migrate(pool: pg.Pool): Promise<void> {
 
   await addColumnIfNotExists(pool, 'devices', 'group_name', "TEXT NOT NULL DEFAULT ''");
   await addColumnIfNotExists(pool, 'devices', 'capabilities', 'TEXT NOT NULL DEFAULT \'\'');
+  // Installed edge/application build version. Keep this separate from the wire
+  // protocol version so a gateway reconnect cannot hide the deployed version.
+  await addColumnIfNotExists(pool, 'devices', 'software_version', 'TEXT');
   await addColumnIfNotExists(pool, 'devices', 'authority_mode', "TEXT NOT NULL DEFAULT 'legacy'");
   await addColumnIfNotExists(pool, 'devices', 'cert_fingerprint', 'TEXT');
   await addColumnIfNotExists(pool, 'devices', 'cert_issued_at', 'TIMESTAMPTZ');

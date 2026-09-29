@@ -1952,6 +1952,7 @@ async function main(): Promise<void> {
       name: body.name?.trim() || deviceId,
       architecture: body.platform?.trim() || 'browser',
       protocolVersion: body.app_version?.trim() || 'legacy-browser',
+      softwareVersion: body.app_version?.trim() || undefined,
       capabilities: ['browser'],
       // Tauri browser clients use the legacy authenticated local WebSocket
       // channel and cannot complete the native Ed25519 enrollment handshake.

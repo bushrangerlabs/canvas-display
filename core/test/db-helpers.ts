@@ -15,6 +15,7 @@ export function createTestDb(): { db: Db; pool: Pool } {
       name            TEXT NOT NULL DEFAULT '',
       architecture    TEXT NOT NULL DEFAULT 'unknown',
       protocol_version TEXT NOT NULL DEFAULT '1',
+      software_version TEXT,
       paired_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
       last_seen       TIMESTAMPTZ NOT NULL DEFAULT now(),
       status          TEXT NOT NULL DEFAULT 'connected',

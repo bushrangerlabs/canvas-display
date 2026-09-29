@@ -200,6 +200,7 @@ export default function DevicesPage() {
                       <TableRow>
                         <TableCell>Name</TableCell>
                         <TableCell>Architecture</TableCell>
+                        <TableCell>Version</TableCell>
                         <TableCell>Status</TableCell>
                         <TableCell>Authority</TableCell>
                         <TableCell>Paired</TableCell>
@@ -210,7 +211,7 @@ export default function DevicesPage() {
                     <TableBody>
                       {devices.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={7} sx={{ color: 'text.secondary', py: 3 }}>
+                          <TableCell colSpan={8} sx={{ color: 'text.secondary', py: 3 }}>
                             No devices registered. Create an invitation and pair an Edge device.
                           </TableCell>
                         </TableRow>
@@ -227,6 +228,7 @@ export default function DevicesPage() {
                             <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', fontSize: 10 }}>{d.id}</Typography>
                           </TableCell>
                           <TableCell><Chip size="small" label={d.architecture || '—'} variant="outlined" sx={{ fontSize: 10 }} /></TableCell>
+                          <TableCell><Typography variant="caption" sx={{ fontFamily: 'monospace' }}>{d.software_version || '—'}</Typography></TableCell>
                           <TableCell>
                             <Chip
                               size="small"
@@ -785,6 +787,7 @@ function DeviceDetailDialog({ device, onClose, onRefresh }: { device: DeviceRow 
               <Stack spacing={1} sx={{ mt: 1 }}>
                 <DetailRow label="ID" value={device.id} mono />
                 <DetailRow label="Architecture" value={device.architecture || '—'} />
+                <DetailRow label="Software version" value={device.software_version || '—'} mono />
                 <DetailRow label="Protocol" value={device.protocol_version || '—'} />
                 <DetailRow label="Capabilities" value={device.capabilities || '—'} />
                 <DetailRow label="Authority mode" value={device.authority_mode} />

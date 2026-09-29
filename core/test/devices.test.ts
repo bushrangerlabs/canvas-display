@@ -98,6 +98,21 @@ test('hello using the installation id preserves an existing friendly device name
   assert.equal(reconnected.name, 'Android Edge');
 });
 
+test('hello records software version separately from protocol version', async () => {
+  const { pool } = createTestDb();
+  const repo = new PgDeviceRepository(pool);
+  const device = await recordDeviceHello(repo, {
+    deviceId: 'versioned-edge',
+    name: 'Versioned Edge',
+    architecture: 'android',
+    protocolVersion: '1',
+    softwareVersion: '0.3.2',
+  });
+
+  assert.equal(device.protocol_version, '1');
+  assert.equal(device.software_version, '0.3.2');
+});
+
 test('expired/unknown invitation is rejected', async () => {
   const { pool } = createTestDb();
   const repo = new PgDeviceRepository(pool);

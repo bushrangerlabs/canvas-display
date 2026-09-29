@@ -66,7 +66,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
 
   const [coreOk, setCoreOk] = useState<boolean | null>(null);
-  const [coreVersion, setCoreVersion] = useState('0.3.0');
+  const [coreVersion, setCoreVersion] = useState('0.3.2');
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);

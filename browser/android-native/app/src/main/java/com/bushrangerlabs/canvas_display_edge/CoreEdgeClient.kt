@@ -16,7 +16,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
-private const val EDGE_APP_VERSION = "0.3.1"
 
 class CoreEdgeClient(
     private val appContext: Context,
@@ -121,7 +120,7 @@ class CoreEdgeClient(
         .put("type", "edge.hello")
         .put("message_id", UUID.randomUUID().toString())
         .put("device_id", identity.installationId)
-        .put("agent", JSONObject().put("version", EDGE_APP_VERSION).put("platform", "android").put("architecture", "arm64"))
+        .put("agent", JSONObject().put("version", BuildConfig.VERSION_NAME).put("platform", "android").put("architecture", "arm64"))
         .put("protocol", JSONObject().put("minimum", 1).put("maximum", 1))
         .put("capabilities", JSONObject()
             .put("renderer", org.json.JSONArray()
@@ -317,7 +316,7 @@ class CoreEdgeClient(
                     .put("id", identity.installationId)
                     .put("name", config.deviceName)
                     .put("platform", "android")
-                    .put("app_version", EDGE_APP_VERSION)
+                    .put("app_version", BuildConfig.VERSION_NAME)
                     .put("screen_width", 1280)
                     .put("screen_height", 800)
                 val request = okhttp3.Request.Builder()

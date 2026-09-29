@@ -31,6 +31,7 @@ export interface DeviceRow {
   name: string;
   architecture: string;
   protocol_version: string;
+  software_version: string | null;
   group_name: string;
   capabilities: string;
   authority_mode: AuthorityMode;
@@ -156,6 +157,7 @@ export async function recordDeviceHello(
     name: string;
     architecture: string;
     protocolVersion: string;
+    softwareVersion?: string;
     capabilities?: string[];
     invitationToken?: string;
     /** P-003: explicitly mark the device paired (e.g. a completed enrollment). Overrides the
@@ -175,18 +177,19 @@ export async function recordDeviceHello(
 
   const capabilitiesJson = JSON.stringify(params.capabilities ?? []);
   await repo.query(
-    `INSERT INTO devices (id, name, architecture, protocol_version, capabilities, paired, invitation_id, last_seen, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, now(), 'connected')
+    `INSERT INTO devices (id, name, architecture, protocol_version, software_version, capabilities, paired, invitation_id, last_seen, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), 'connected')
      ON CONFLICT (id) DO UPDATE SET
        name = CASE WHEN EXCLUDED.name = EXCLUDED.id THEN devices.name ELSE EXCLUDED.name END,
        architecture = EXCLUDED.architecture,
        protocol_version = EXCLUDED.protocol_version,
+       software_version = COALESCE(EXCLUDED.software_version, devices.software_version),
        capabilities = EXCLUDED.capabilities,
        paired = CASE WHEN EXCLUDED.paired THEN true ELSE devices.paired END,
        invitation_id = COALESCE(EXCLUDED.invitation_id, devices.invitation_id),
        last_seen = now(),
        status = 'connected'`,
-    [params.deviceId, params.name, params.architecture, params.protocolVersion, capabilitiesJson, paired, invitationId],
+    [params.deviceId, params.name, params.architecture, params.protocolVersion, params.softwareVersion ?? null, capabilitiesJson, paired, invitationId],
   );
 
   const res = await repo.query('SELECT * FROM devices WHERE id = $1', [params.deviceId]);
@@ -275,6 +278,7 @@ function rowToDevice(row: any): DeviceRow {
     name: row.name,
     architecture: row.architecture,
     protocol_version: row.protocol_version,
+    software_version: row.software_version ?? null,
     group_name: row.group_name ?? '',
     capabilities: row.capabilities ?? '',
     authority_mode: (row.authority_mode ?? 'legacy') as AuthorityMode,

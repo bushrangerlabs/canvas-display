@@ -96,11 +96,11 @@ media/DLNA playback and Snapcast, resuming configured Snapcast playback when loc
 
 | Deliverable | Declared version | Meaning |
 | --- | --- | --- |
-| Core | `0.3.1` | `core/package.json` |
+| Core | `0.3.2` | `core/package.json` and `core/src/version.ts` |
 | Display server | `0.1.1` | `server/package.json` |
 | Linux kiosk | `0.3.1` | `browser/linux/package.json`, Tauri config and Cargo manifest |
-| Android native | `0.3.1` (`versionCode` 3) | `browser/android-native/app/build.gradle.kts` |
-| Edge Rust workspace | `0.3.0` | inherited from `edge/Cargo.toml` |
+| Android native | `0.3.2` (`versionCode` 4) | `browser/android-native/app/build.gradle.kts` |
+| Edge Rust workspace | `0.3.2` | inherited from `edge/Cargo.toml` |
 | HA add-on | `0.2.66` | `config.yaml` |
 | Admin web bundle | `0.0.0` | internal web package, not a separately deployed product |
 | Device protocol | v1 | schemas in `contracts/device/v1/` |
