@@ -240,7 +240,9 @@ class MainActivity : AppCompatActivity() {
         rendererContainer = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(rendererContainer, FrameLayout.LayoutParams(-1, -1))
         renderer = MultiPanelRenderer(rendererContainer) { clearRevertTimer() }
-        nativeVideoPlayer = NativeVideoPlayer(rendererContainer)
+        nativeVideoPlayer = NativeVideoPlayer(rendererContainer) {
+            client?.reportMediaState("idle")
+        }
         startDlnaRenderer()
         pageStore = EdgePageStore(this)
         status = TextView(this).apply {

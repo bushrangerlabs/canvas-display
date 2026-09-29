@@ -14,7 +14,10 @@ import androidx.media3.ui.PlayerView
 import com.bushrangerlabs.canvas_display_edge.dlna.AudioSinkArbiter
 
 /** Full-screen native IPTV/video player kept alive for fast channel changes. */
-class NativeVideoPlayer(private val container: FrameLayout) {
+class NativeVideoPlayer(
+    private val container: FrameLayout,
+    private val onUserExit: () -> Unit = {},
+) {
     private val player = ExoPlayer.Builder(container.context).build()
     private val playerView = PlayerView(container.context).apply {
         setBackgroundColor(Color.BLACK)
@@ -36,7 +39,10 @@ class NativeVideoPlayer(private val container: FrameLayout) {
         setBackgroundColor(Color.argb(190, 20, 20, 20))
         setPadding(28, 14, 28, 14)
         visibility = View.GONE
-        setOnClickListener { stop() }
+        setOnClickListener {
+            stop()
+            onUserExit()
+        }
     }
     var active: Boolean = false
         private set

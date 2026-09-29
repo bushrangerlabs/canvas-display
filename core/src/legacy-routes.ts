@@ -227,6 +227,7 @@ const DEFAULT_AUDIO_STATE: AudioState = {
 };
 
 let audioState: AudioState = { ...DEFAULT_AUDIO_STATE };
+let audioTarget: PlaybackTarget | null = null;
 
 /** Returns a copy of the current audio state. */
 export function getAudioState(): AudioState {
@@ -247,6 +248,19 @@ export function setAudioStateField<K extends keyof AudioState>(key: K, value: Au
 /** Reset audio state to defaults (used by tests). */
 export function resetAudioState(): void {
   audioState = { ...DEFAULT_AUDIO_STATE };
+  audioTarget = null;
+}
+
+/** Apply an unsolicited state transition only from the device currently playing. */
+export function reportDeviceMediaState(deviceId: string, state: 'idle' | 'playing' | 'paused'): boolean {
+  if (audioTarget?.kind !== 'canvas' || audioTarget.id !== deviceId) return false;
+  if (state === 'idle') {
+    audioState = { ...audioState, state, url: '', title: '', source: undefined, artwork: undefined };
+    audioTarget = null;
+  } else {
+    audioState.state = state;
+  }
+  return true;
 }
 
 /**
@@ -293,6 +307,7 @@ async function applyAudioPlayback(
     source: input.source,
     artwork: input.artwork,
   };
+  audioTarget = target;
   return getAudioState();
 }
 
@@ -2148,6 +2163,7 @@ export async function registerLegacyRoutes(
               broadcast({ type: 'command', action: 'audio_stop', payload: {} }, 'browser');
             }
             audioState = { ...audioState, state: 'idle', url: '', title: '', source: undefined };
+            audioTarget = null;
             return getAudioState();
           }
           case 'volume': {

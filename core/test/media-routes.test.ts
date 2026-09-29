@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import { createTestDb } from './db-helpers.js';
-import { registerLegacyRoutes, getAudioState, resetAudioState, type LegacyRoutesOptions } from '../src/legacy-routes.js';
+import { registerLegacyRoutes, getAudioState, reportDeviceMediaState, resetAudioState, type LegacyRoutesOptions } from '../src/legacy-routes.js';
 import { clearMediaCaches, externalDispatcharrPlaybackUrl, findDispatcharrAacOutputProfile, waitForStreamReady, waitForTunerReady } from '../src/media-sources.js';
 import type { CoreConfig } from '../src/config.js';
 
@@ -209,6 +209,26 @@ test('targeted DAB playback resolves an explicit device name and waits for dispa
     assert.deepEqual(dispatched, ['canvas:device-canonical']);
     assert.equal(res.json().target.id, 'device-canonical');
     assert.equal(getAudioState().state, 'playing');
+  } finally {
+    restore();
+  }
+});
+
+test('only the active Canvas destination can report local playback stopped', async () => {
+  clearMediaCaches();
+  resetAudioState();
+  const { fastify, pool } = await buildServer(makeConfig(), {
+    dispatchMediaToTarget: async () => undefined,
+  });
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-active', 'Active', 'android')");
+  const restore = stubFetch(() => jsonResponse({ station_name: 'BBC Radio 1' }));
+  try {
+    const play = await fastify.inject({ method: 'POST', url: '/api/dab/play', payload: { station: 'abc', deviceId: 'device-active' } });
+    assert.equal(play.statusCode, 200);
+    assert.equal(reportDeviceMediaState('device-other', 'idle'), false);
+    assert.equal(getAudioState().state, 'playing');
+    assert.equal(reportDeviceMediaState('device-active', 'idle'), true);
+    assert.deepEqual(getAudioState(), { state: 'idle', title: '', url: '', volume: 75, muted: false, source: undefined, artwork: undefined });
   } finally {
     restore();
   }

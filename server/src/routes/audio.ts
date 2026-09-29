@@ -20,6 +20,7 @@ import { writeFileSync }             from 'fs';
 import { acquireSink, releaseSink, getSinkOwner, registerSinkReleaser } from '../audio/arbiter';
 import { getSnapcastStatus, startSnapclient, stopSnapclient } from '../audio/snapcast';
 import { buildMpvArgs } from '../audio/mpv-options';
+import { config } from '../config';
 
 // ─── In-memory audio state ────────────────────────────────────────────────────
 
@@ -92,6 +93,20 @@ mp.enable_key_bindings('canvas-touch-exit', 'allow-hide-cursor')
 mp.register_event('file-loaded', draw_exit)
 mp.observe_property('osd-width', 'native', draw_exit)
 `;
+
+async function reportCoreMediaIdle(): Promise<void> {
+  if (!config.edgeDeviceId) return;
+  const { getCoreBridgeConfig } = await import('../voice/direct-wakeword');
+  const { baseUrl, token } = getCoreBridgeConfig();
+  if (!baseUrl || !token) return;
+  const response = await fetch(`${baseUrl}/api/edge/media/state`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ device_id: config.edgeDeviceId, state: 'idle' }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error(`Core media-state HTTP ${response.status}`);
+}
 
 function killMpv(opts?: { intentional?: boolean }) {
   if (opts?.intentional) {
@@ -188,6 +203,11 @@ function startMpv(gen: number) {
         _playbackWaiter = null;
       }
       void releaseSink('mpv');
+      if (_mpvVideo) {
+        void reportCoreMediaIdle().catch(error => {
+          console.warn('[audio] failed to report local video exit to Core:', error instanceof Error ? error.message : error);
+        });
+      }
       import('../mqtt/index').then(m => m.publishAudioState()).catch(() => {});
       return;
     }

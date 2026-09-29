@@ -69,7 +69,7 @@ import { ShadowModeRunner } from './shadow-mode.js';
 import { RolloutStrategy, InMemoryRolloutRepository, registerRolloutRoutes } from './rollout-strategy.js';
 import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
-import { registerLegacyRoutes, requestDeviceAction, sendCommand, hasConnectedBrowserClient, getDeviceIp, mediaSetting, broadcast } from './legacy-routes.js';
+import { registerLegacyRoutes, requestDeviceAction, sendCommand, hasConnectedBrowserClient, getDeviceIp, mediaSetting, broadcast, reportDeviceMediaState } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
@@ -814,6 +814,23 @@ async function main(): Promise<void> {
     if (presented.length !== expected.length) return false;
     return timingSafeEqual(Buffer.from(presented), Buffer.from(expected));
   }
+
+  // Edge players can stop locally from their touch UI, without a preceding Core
+  // command. Accept that state transition through the existing authenticated
+  // edge bridge so Core's now-playing widgets do not remain stale.
+  fastify.post('/api/edge/media/state', async (request, reply) => {
+    const presented = String(request.headers.authorization ?? '').replace(/^Bearer\s+/i, '').trim();
+    const expected = await resolveEdgeVoiceToken('');
+    if (!checkEdgeVoiceAuth(expected, presented)) return reply.code(401).send({ error: 'unauthorized' });
+    const body = (request.body ?? {}) as { device_id?: unknown; state?: unknown };
+    const deviceId = String(body.device_id ?? '').trim();
+    const state = String(body.state ?? '').trim();
+    if (!deviceId || !['idle', 'playing', 'paused'].includes(state)) {
+      return reply.code(400).send({ error: 'invalid_media_state' });
+    }
+    const applied = reportDeviceMediaState(deviceId, state as 'idle' | 'playing' | 'paused');
+    return { ok: true, applied };
+  });
 
   // Admin endpoint to view/reset the edge voice bridge token
   fastify.get('/api/admin/voice-bridge', {

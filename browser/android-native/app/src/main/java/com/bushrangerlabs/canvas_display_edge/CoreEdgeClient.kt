@@ -91,6 +91,27 @@ class CoreEdgeClient(
         socket = null
     }
 
+    /** Report a touch-initiated local playback transition to Core. */
+    fun reportMediaState(state: String) {
+        val token = config.edgeVoiceToken
+        if (token.isBlank() || config.coreUrl.isBlank()) return
+        Thread {
+            runCatching {
+                val body = JSONObject()
+                    .put("device_id", identity.installationId)
+                    .put("state", state)
+                val request = Request.Builder()
+                    .url("${config.coreUrl.trimEnd('/')}/api/edge/media/state")
+                    .header("Authorization", "Bearer $token")
+                    .post(body.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                http.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) error("media-state HTTP ${response.code}")
+                }
+            }.onFailure { Log.w("CanvasEdge", "Core media-state report failed", it) }
+        }.start()
+    }
+
     private fun scheduleReconnect() {
         if (closed || scheduler.isShutdown) return
         scheduler.schedule({ connect() }, 2, TimeUnit.SECONDS)
