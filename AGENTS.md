@@ -104,6 +104,7 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
 ### DLNA renderer + Snapcast (sidecar)
 
 * The sidecar hosts a UPnP/DLNA **MediaRenderer** (`server/src/dlna/`) so HA `dlna_dmr` and Music Assistant can push audio/video to a display. It listens on `CANVAS_DLNA_PORT` (default **49500**) and advertises over SSDP on UDP 1900. Audio uses headless mpv; video uses fullscreen mpv with its on-screen touch Exit target.
+* PipeWire/WirePlumber can restore a stale per-application mute on a new mpv sink input even when mpv and the selected sink both report unmuted. The sidecar clears the matching mpv sink-input mute after each spawn; inspect both `mpv`'s `mute` property and `pactl list sink-inputs` when diagnosing silence.
 * `server/src/audio/arbiter.ts` arbitrates the single audio sink between mpv and the Snapcast client (`server/src/audio/snapcast.ts`, systemd user unit `canvas-snapclient.service`). Config: `CANVAS_SNAPCLIENT_ENABLED`, `CANVAS_SNAPCLIENT_SERVICE`.
 * The Pi previously ran a `gmediarender` prototype (`canvas-dlna-renderer.service`, port 49494) that is **audio-only** and superseded — remove it and its manual HA `dlna_dmr` entry when deploying this renderer.
 * DLNA state is exposed at `GET /api/dlna/state`; Snapcast/sink state at `GET /api/audio/snapcast`.

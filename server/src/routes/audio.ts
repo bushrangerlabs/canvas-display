@@ -14,12 +14,12 @@
  */
 
 import type { FastifyInstance }     from 'fastify';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, execFileSync, execSync, ChildProcess } from 'child_process';
 import net                           from 'net';
 import { writeFileSync }             from 'fs';
 import { acquireSink, releaseSink, getSinkOwner, registerSinkReleaser } from '../audio/arbiter';
 import { getSnapcastStatus, startSnapclient, stopSnapclient } from '../audio/snapcast';
-import { buildMpvArgs } from '../audio/mpv-options';
+import { buildMpvArgs, findMpvSinkInputIndexes } from '../audio/mpv-options';
 import { config } from '../config';
 
 // ─── In-memory audio state ────────────────────────────────────────────────────
@@ -108,6 +108,23 @@ async function reportCoreMediaIdle(): Promise<void> {
   if (!response.ok) throw new Error(`Core media-state HTTP ${response.status}`);
 }
 
+function clearRestoredMpvStreamMute(processId: number, gen: number, attempt = 0): void {
+  if (gen !== _mpvGen || _mpv?.pid !== processId) return;
+  try {
+    const raw = execFileSync('pactl', ['-f', 'json', 'list', 'sink-inputs'], { timeout: 2_000, encoding: 'utf8' });
+    const indexes = findMpvSinkInputIndexes(JSON.parse(raw), processId);
+    if (indexes.length > 0) {
+      for (const index of indexes) {
+        execFileSync('pactl', ['set-sink-input-mute', String(index), '0'], { timeout: 2_000 });
+      }
+      return;
+    }
+  } catch (error) {
+    if (attempt >= 9) console.warn('[audio] failed to clear mpv stream mute:', error instanceof Error ? error.message : error);
+  }
+  if (attempt < 9) setTimeout(() => clearRestoredMpvStreamMute(processId, gen, attempt + 1), 200);
+}
+
 function killMpv(opts?: { intentional?: boolean }) {
   if (opts?.intentional) {
     _intentionalStop = true;
@@ -166,6 +183,7 @@ function startMpv(gen: number) {
   _mpv = mpv;
 
   mpv.on('spawn', () => {
+    if (mpv.pid) clearRestoredMpvStreamMute(mpv.pid, gen);
     if (_playbackWaiter?.gen !== gen || _playbackWaiter.started) return;
     _playbackWaiter.started = true;
     void Promise.resolve(_playbackWaiter.onStarted?.()).catch(error => {

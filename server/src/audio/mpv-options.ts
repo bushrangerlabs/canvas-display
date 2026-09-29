@@ -19,3 +19,15 @@ export function buildMpvArgs(input: {
   args.push(input.url);
   return args;
 }
+
+export function findMpvSinkInputIndexes(value: unknown, processId: number): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    const input = item as { index?: unknown; properties?: Record<string, unknown> };
+    const pid = Number(input.properties?.['application.process.id']);
+    const name = String(input.properties?.['application.name'] ?? '').toLowerCase();
+    const index = Number(input.index);
+    return Number.isInteger(index) && (pid === processId || (!Number.isFinite(pid) && name === 'mpv')) ? [index] : [];
+  });
+}
