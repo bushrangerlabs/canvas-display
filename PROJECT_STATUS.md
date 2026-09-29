@@ -1074,3 +1074,23 @@ Reported symptom: Linux mpv rendered Dispatcharr video without audible sound. Li
 The sidecar now identifies the sink input created by the current mpv PID using `pactl -f json list sink-inputs` and explicitly clears that stream mute after every spawn, retrying briefly while PipeWire creates the node. It never unmutes a different process's identified stream. `server/src/audio/mpv-options.test.ts` covers PID matching and the fallback for PipeWire records that omit a PID.
 
 Validation: `cd server && npm test && npx tsc --noEmit` PASS, 49/49 tests and typecheck. Built the arm64 sidecar natively on the Pi with the documented tsc/esbuild/pkg path, installed it and restarted both sidecars. A fresh production Dispatcharr play created sink input 11036 on the configured UGREEN sink with `Mute: no`; a three-second capture of its monitor measured non-silent audio (peak about -25.2 dBFS, RMS about -39.0 dBFS). Playback was left running for owner confirmation.
+
+## Linux video Exit restored an obsolete local page (2026-09-29)
+
+Reported symptom: pressing the Linux mpv **Exit** control stopped video but revealed an `example.com` placeholder instead of the Core dashboard. A live Wayland capture at `/tmp/canvas-linux-current-screen.png` confirmed the placeholder. mpv had exited correctly and Core media state was idle; the wrong page already existed underneath the player.
+
+Root cause and fix:
+
+- The Tauri-embedded sidecar uses `CANVAS_DEVICE_SERVICES_ENABLED=false` and acts as the kiosk's local command bridge, while Core owns the device page. Despite that split, `server/src/ws/index.ts` unconditionally pushed its own SQLite `active_page_id` to every browser on WebSocket hello. Its old local database still selected `Radio Overlay Verify 2`, whose full-screen panel URL is `https://example.com`, so this stale page overwrote the kiosk's cached Core page after a restart.
+- `initWss` now accepts `pushLocalActivePageOnBrowserHello`. The composition root enables that behavior only for a standalone/device-services sidecar. The embedded kiosk sidecar still acknowledges the browser and publishes device state, but leaves page restoration to the kiosk's Core-page cache.
+
+Validation and deployment:
+
+- `cd server && npm test` — PASS, 49/49 tests.
+- `cd server && npx tsc --noEmit` — PASS.
+- `git diff --check` — PASS.
+- Built the arm64 sidecar natively on the Pi with the documented TypeScript/esbuild/pkg sequence, backed up and installed `/usr/bin/canvas-display-server`, and restarted the kiosk. The expected two instances are healthy: the system owner on ports 8099/49500 and the embedded command bridge on 3100 with device services disabled.
+- The already-poisoned browser cache required one Core active-page reload. `POST /api/devices/:deviceId/page/reload` returned `delivered: true` for the active **Dispatcharr Controls Demo** page. `/tmp/canvas-linux-restored-dashboard.png` shows the restored dashboard.
+- Restarted the kiosk once more. The service remained active and `/tmp/canvas-linux-restart-persistence.png` shows the Dispatcharr dashboard persisted; the obsolete local SQLite page was not pushed again.
+
+Current live state: the Linux display is on the Dispatcharr Controls Demo dashboard and media state is idle. No Android or Core binary changed for this fix.

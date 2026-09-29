@@ -76,6 +76,7 @@ const pendingLocalActions = new Map<string, {
   timer: NodeJS.Timeout;
 }>();
 let wss: WebSocketServer;
+let pushLocalActivePageOnBrowserHello = true;
 
 export interface RenderResult {
   ok: boolean;
@@ -84,7 +85,11 @@ export interface RenderResult {
   error?: string;
 }
 
-export function initWss(server: any): WebSocketServer {
+export function initWss(
+  server: any,
+  options: { pushLocalActivePageOnBrowserHello?: boolean } = {},
+): WebSocketServer {
+  pushLocalActivePageOnBrowserHello = options.pushLocalActivePageOnBrowserHello ?? true;
   wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
@@ -146,8 +151,12 @@ function handleMessage(ws: WebSocket, msg: any): void {
       console.log(`[ws] Hello from ${client.clientType}${client.deviceId ? ` (${client.deviceId})` : ''}`);
       send(ws, { type: 'hello_ack', server_version: '0.1.0' });
 
-      // For browser clients, push the currently active page immediately
-      if (client.clientType === 'browser') {
+      // A standalone Display server owns its local page state and restores it on
+      // browser reconnect. The Tauri-embedded sidecar is only a local command
+      // bridge: Core owns the page, and the kiosk restores Core's last page from
+      // its browser cache. Pushing this sidecar's old SQLite page here would
+      // overwrite that Core page after every kiosk restart.
+      if (client.clientType === 'browser' && pushLocalActivePageOnBrowserHello) {
         try {
           const db = getDb();
           const row = db.prepare(`SELECT value FROM server_settings WHERE key = 'active_page_id'`).get() as any;
@@ -163,6 +172,8 @@ function handleMessage(ws: WebSocket, msg: any): void {
         } catch (err) {
           console.warn('[ws] Failed to push active page on hello:', err);
         }
+      }
+      if (client.clientType === 'browser') {
         // Publish updated device state to MQTT
         publishDeviceState(client.deviceId ?? 'local');
       }

@@ -225,7 +225,9 @@ async function main() {
 
   // ── HTTP server + WebSocket ───────────────────────────────────────────────
   await app.ready();
-  initWss(app.server);
+  initWss(app.server, {
+    pushLocalActivePageOnBrowserHello: config.deviceServicesEnabled,
+  });
 
   // ── Start ─────────────────────────────────────────────────────────────────
   try {
