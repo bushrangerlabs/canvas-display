@@ -1094,3 +1094,7 @@ Validation and deployment:
 - Restarted the kiosk once more. The service remained active and `/tmp/canvas-linux-restart-persistence.png` shows the Dispatcharr dashboard persisted; the obsolete local SQLite page was not pushed again.
 
 Current live state: the Linux display is on the Dispatcharr Controls Demo dashboard and media state is idle. No Android or Core binary changed for this fix.
+
+## Documentation reconciliation after Linux page-authority fix (2026-09-29)
+
+Reviewed `AGENTS.md`, `PROJECT_STATUS.md` and `docs/CURRENT_ARCHITECTURE.md` against the current source, manifests and deployed Pi topology. Updated the architecture review date, component versions, Android native edge description, Linux mpv/Dispatcharr behavior, Core-owned page restoration, and the two-sidecar split (`:3100` embedded command bridge; `:8099` system device-services owner). Corrected the sidecar deployment check in `AGENTS.md`: two server processes are expected on this Pi, while exactly one embedded instance must own port 3100. Documentation-only validation used `git diff --check` and targeted source/manifest comparisons; runtime tests were not needed for these edits.

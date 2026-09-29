@@ -98,7 +98,7 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
     3. `npx pkg dist/bundle.js --target node20-linux-arm64 --compress GZip --no-bytecode --public --public-packages "*" --output canvas-display-server`
     4. `sudo install -m 0755 canvas-display-server /usr/bin/canvas-display-server` then `systemctl --user restart canvas-display-browser.service` (the kiosk respawns its sidecar).
   * The native `better_sqlite3.node` is resolved at runtime from `NATIVE_BINDING_DIR` (via `pkg-native-patch.ts` + `bindings-shim.ts`, which the `--alias:bindings` above wires in) — never bundle it into the snapshot.
-  * After replacing the sidecar, confirm only one `canvas-display-server` process is running (a stale PID keeps port 3100 bound and the new sidecar can't bind).
+  * After replacing the sidecar, confirm exactly one embedded instance owns `127.0.0.1:3100`. A second process is expected when the system sidecar is enabled on `0.0.0.0:8099`; distinguish them by port and `CANVAS_DEVICE_SERVICES_ENABLED` rather than process count. A stale second owner of port 3100 prevents the new embedded sidecar from binding.
   * Sidecar tests: `cd server && npm test` (`tsx --test` over `src/audio/*.test.ts`, `src/dlna/*.test.ts`, `src/services/*.test.ts`). `npx tsc --noEmit` for types. If `better-sqlite3` fails to load locally with `NODE_MODULE_VERSION`, run `npm rebuild better-sqlite3`.
 
 ### DLNA renderer + Snapcast (sidecar)

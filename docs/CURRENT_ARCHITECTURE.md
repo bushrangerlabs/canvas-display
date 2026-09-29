@@ -1,11 +1,11 @@
 # Current Canvas Core and Edge architecture
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-09-29
 
 ## System shape
 
 Canvas is an Echo Show-like application split between a central Core and each end device.
-The three Pi-side programs are used together; they are not three alternative products.
+The Linux programs are used together; Android uses the native application instead.
 
 ```text
 Browser administrator
@@ -18,7 +18,11 @@ Canvas Core (Docker, PostgreSQL, admin UI, AI/providers)
 Raspberry Pi
   +-- Canvas Edge Agent (identity, durable state, hardware and command execution)
   +-- Canvas Display kiosk (Tauri/WebKit user interface and Core control channel)
-  `-- Canvas Display server (local rendering, audio, microphone and wake-word services)
+  +-- Embedded Display sidecar :3100 (kiosk-local API/command bridge)
+  `-- System Display sidecar :8099 (DLNA, audio arbitration and delivery workers)
+
+Android tablet
+  `-- Native Kotlin edge app (Core gateway, native media, DLNA and Snapcast)
 ```
 
 ### Canvas Core
@@ -42,20 +46,28 @@ unchanged. Its container must be healthy before Core starts.
 ### Canvas Display kiosk
 
 `browser/linux/` is the visible Pi application. Tauri hosts the WebKit interface and launches
-the bundled local Display server. The kiosk uses its local server for rendering and device-local
-audio/voice work, while a separate Core control WebSocket receives remote actions and
-diagnostics. `CANVAS_CORE_CONTROL_URL` and `CANVAS_CORE_DEVICE_ID` identify that control path.
+an embedded Display sidecar on `127.0.0.1:3100`. The kiosk uses that sidecar for allowlisted local
+commands, while its Core control WebSocket receives remote actions and diagnostics.
+`CANVAS_CORE_CONTROL_URL` and `CANVAS_CORE_DEVICE_ID` identify that control path.
+
+Core owns the Linux device's active and default page. The kiosk caches the last complete Core
+page for restart/offline recovery. Because the embedded sidecar sets
+`CANVAS_DEVICE_SERVICES_ENABLED=false`, it does not push its legacy SQLite `active_page_id` when
+the browser reconnects; doing so would overwrite the Core page with obsolete local state.
 
 ### Canvas Display server
 
-`server/` supplies the kiosk's local HTTP/WebSocket compatibility API, rendered content,
-audio-device discovery and tests, microphone capture, speaker playback, and direct wake-word
-loop. It is currently required. The active instance is the server embedded by the kiosk.
+`server/` supplies the local HTTP/WebSocket compatibility API, audio-device discovery and tests,
+microphone capture, speaker playback, media playback and direct wake-word loop. It is currently
+required. The deployed Pi runs two instances of the same binary with separate data directories:
+the embedded command bridge on port 3100 and the system sidecar on port 8099.
 
-Some installations also have a system-level Display server. Only one process may own the
-microphone/wake detector. The active voice service claims a PID-checked lock in the user's runtime
-directory; a second direct or Home Assistant voice path fails closed, while stale locks are
-recovered. `CANVAS_DISABLE_DIRECT_WAKEWORD=1` can explicitly disable a non-owning instance.
+The system sidecar is the canonical owner of DLNA (port 49500), Snapcast arbitration and durable
+Core broadcast polling. The embedded sidecar sets `CANVAS_DEVICE_SERVICES_ENABLED=false`, so it
+does not start those workers. Only one process may own the microphone/wake detector. The active
+voice service claims a PID-checked lock in the user's runtime directory; a second direct or Home
+Assistant voice path fails closed, while stale locks are recovered.
+`CANVAS_DISABLE_DIRECT_WAKEWORD=1` can explicitly disable a non-owning instance.
 
 The server still contains legacy MQTT, Home Assistant, and local-admin surfaces. They are
 compatibility paths, not the preferred authority for new features.
@@ -72,14 +84,24 @@ local actions through this IPC boundary.
 rollback primitives, and rollout policy exist, but production network rollout is not yet
 considered complete; see the roadmap.
 
+### Native Android edge
+
+`browser/android-native/` is the Kotlin Android client. It enrolls and connects directly to the
+Core gateway, renders Core scenes in its WebView, plays Dispatcharr video with Media3, and plays
+direct audio with Android `MediaPlayer`. It also exposes a DLNA MediaRenderer on port 49500 and
+contains the Snapcast client. `AudioSinkArbiter` transfers the single audio sink between native
+media/DLNA playback and Snapcast, resuming configured Snapcast playback when local media ends.
+
 ## Versions
 
 | Deliverable | Declared version | Meaning |
 | --- | --- | --- |
-| Core | `0.1.0` | `core/package.json` |
-| Display server | `0.1.0` | `server/package.json` |
-| Linux kiosk | `0.1.0` | `browser/linux/package.json` |
-| Edge Rust workspace | `0.0.0` | inherited from `edge/Cargo.toml`; development workspace version |
+| Core | `0.3.1` | `core/package.json` |
+| Display server | `0.1.1` | `server/package.json` |
+| Linux kiosk | `0.3.1` | `browser/linux/package.json`, Tauri config and Cargo manifest |
+| Android native | `0.3.1` (`versionCode` 3) | `browser/android-native/app/build.gradle.kts` |
+| Edge Rust workspace | `0.3.0` | inherited from `edge/Cargo.toml` |
+| HA add-on | `0.2.66` | `config.yaml` |
 | Admin web bundle | `0.0.0` | internal web package, not a separately deployed product |
 | Device protocol | v1 | schemas in `contracts/device/v1/` |
 
@@ -197,6 +219,12 @@ from the assigned page's published scenes, transforms widget geometry through it
 panels, and sends exactly that many ranked results and layout definitions to the requesting Pi.
 Missing, deleted, unpublished or empty assignments fall back to the built-in three-choice selector.
 
+Dispatcharr playback follows the same device-specific rule. Android uses its native Media3
+player; Linux uses fullscreen mpv with an on-screen touch Exit control. Audio-only Linux mpv is
+headless. Local player Exit reports idle state back to Core, then reveals the cached Core scene.
+For external television/DLNA targets, Core prepares an AAC/fMP4-compatible stream rather than
+silently treating IPTV video as direct audio.
+
 The same originating-device route is used for YouTube playback controls. Voice requests and
 administrative callers use `POST /api/media/control` with `pause`, `resume`, `next`, or `stop`;
 the kiosk applies that command to the Pi's managed YouTube player rather than to the browser
@@ -227,8 +255,10 @@ Core MQTT commands use `canvas/devices/<deviceId>/commands/media` with a JSON pa
 
 - Core: PostgreSQL plus the configured asset directory.
 - Edge Agent: SQLite and checkpoint material under its data directory.
-- Display server: local compatibility/settings store and rendered assets.
-- Kiosk: presentation preferences needed by the local UI.
+- Display server: per-instance local compatibility/settings stores and rendered assets; these do
+  not supersede Core's page authority on an enrolled kiosk.
+- Kiosk: presentation preferences plus the last complete Core page needed for offline recovery.
+- Android: enrolled identity/configuration and native player state required by the edge app.
 
 Back up Core's database, enrollment seed, configuration/secrets, and asset storage together.
 Losing or rotating the enrollment seed can invalidate device credentials.
