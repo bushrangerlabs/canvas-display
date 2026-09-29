@@ -27,7 +27,7 @@ import { appRoutes } from './routes/app';
 import { dlnaRoutes } from './routes/dlna';
 import { connectMqtt, disconnectMqtt } from './mqtt/index';
 import { broadcast } from './ws/index';
-import { startDlna, stopDlna, videoWrapperUrl } from './dlna/index';
+import { startDlna, stopDlna } from './dlna/index';
 import type { DlnaPlaybackAdapter } from './dlna/renderer';
 import { acquireSink, registerSinkReleaser, setSinkIdleListener } from './audio/arbiter';
 import {
@@ -86,7 +86,6 @@ async function initAudioArbiter(): Promise<void> {
 
 // ─── DLNA MediaRenderer ───────────────────────────────────────────────────────
 
-let dlnaBaseUrl = '';
 
 function readSetting(key: string): string {
   try {
@@ -139,22 +138,14 @@ async function startDlnaRenderer(): Promise<void> {
     setMute: async (muted) => { await setAudioMute(muted); },
     getVolume: () => getAudioState().volume,
     getMuted: () => getAudioState().muted,
-    // Video is rendered by the kiosk's floating WebView; the wrapper page gives
-    // it a full-screen <video> element with native controls.
-    playVideo: (url, title) => {
-      if (!dlnaBaseUrl) return;
-      broadcast(
-        { type: 'command', action: 'show_floating', payload: { url: videoWrapperUrl(dlnaBaseUrl, url, title) } },
-        'browser',
-      );
+    playVideo: async (url, title) => {
+      await playAudio({ url, title, source: 'dlna', video: true });
     },
-    stopVideo: () => {
-      broadcast({ type: 'command', action: 'hide_floating', payload: {} }, 'browser');
-    },
+    stopVideo: async () => { await stopAudio(); },
   };
 
   try {
-    const handle = await startDlna({
+    await startDlna({
       enabled: config.dlnaEnabled,
       port: config.dlnaPort,
       uuid: resolveDlnaUuid(),
@@ -165,7 +156,6 @@ async function startDlnaRenderer(): Promise<void> {
       host: config.dlnaHost || undefined,
       adapter,
     });
-    if (handle) dlnaBaseUrl = handle.baseUrl;
   } catch (err) {
     console.warn('[dlna] failed to start renderer:', err instanceof Error ? err.message : err);
   }

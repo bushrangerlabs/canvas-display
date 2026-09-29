@@ -1773,6 +1773,23 @@ export async function mediaRoutes(app: FastifyInstance) {
       };
     }
 
+    if (source === 'dispatcharr') {
+      const url = body.url?.trim();
+      if (!url) return reply.code(400).send({ error: 'url is required for dispatcharr source' });
+      try {
+        const state = await playAudio({
+          url,
+          title: body.title,
+          volume: body.volume,
+          source,
+          video: true,
+        });
+        return { success: true, source, backend: 'mpv-video', state };
+      } catch (err: any) {
+        return reply.code(500).send({ error: err.message });
+      }
+    }
+
     if (source === 'radio_browser') {
       const lookup = normalizeLookupText(body.url ?? body.title);
       if (!lookup) return reply.code(400).send({ error: 'url or title is required for radio_browser source' });

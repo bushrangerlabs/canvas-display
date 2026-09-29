@@ -632,6 +632,11 @@ export default function KioskScreen({ config, onResetConfig }: Props) {
                   await openFloatingUrl(playerUrl, true);
                 } else if (backend === 'mpv') {
                   await openFloatingUrl('http://127.0.0.1:3100/api/media/radio/now-playing.html', false);
+                } else if (backend === 'mpv-video') {
+                  // mpv owns the full-screen video surface and supplies its own
+                  // touch Exit control. Keep panel webviews behind it intact.
+                  await invoke('close_webview', { label: 'floating' }).catch(() => {});
+                  floatingOpenRef.current = false;
                 }
               }
               if (path === '/api/media/control') {

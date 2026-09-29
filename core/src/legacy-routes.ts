@@ -1593,8 +1593,8 @@ export async function registerLegacyRoutes(
     if (!target) return url;
     if (target.kind !== 'canvas') return dispatcharrExternalPlaybackUrl(url);
     const result = await pool.query<{ architecture: string | null }>('SELECT architecture FROM devices WHERE id=$1', [target.id]);
-    if (String(result.rows[0]?.architecture ?? '').toLowerCase() !== 'android') return url;
     const compatibleUrl = await dispatcharrExternalPlaybackUrl(url);
+    if (String(result.rows[0]?.architecture ?? '').toLowerCase() !== 'android') return compatibleUrl;
     const streamId = dispatcharrStreamId(compatibleUrl);
     const publicUrl = options.config?.publicUrl?.replace(/\/+$/, '');
     if (!streamId || !publicUrl) return compatibleUrl;

@@ -16,8 +16,10 @@
 import type { FastifyInstance }     from 'fastify';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import net                           from 'net';
+import { writeFileSync }             from 'fs';
 import { acquireSink, releaseSink, getSinkOwner, registerSinkReleaser } from '../audio/arbiter';
 import { getSnapcastStatus, startSnapclient, stopSnapclient } from '../audio/snapcast';
+import { buildMpvArgs } from '../audio/mpv-options';
 
 // ─── In-memory audio state ────────────────────────────────────────────────────
 
@@ -45,6 +47,7 @@ let _state: AudioState = {
 let _mpv: ChildProcess | null = null;
 let _mpvUrl = '';
 let _mpvVolume = 75;
+let _mpvVideo = false;
 let _intentionalStop = false;
 let _retryCount = 0;
 let _mpvGen = 0;
@@ -71,6 +74,24 @@ export function setAudioStateField<K extends keyof AudioState>(key: K, value: Au
 // ─── mpv management ──────────────────────────────────────────────────────────
 
 const MPV_SOCK = '/tmp/mpv-canvas.sock';
+const MPV_TOUCH_SCRIPT = '/tmp/canvas-mpv-touch.lua';
+const MPV_TOUCH_SCRIPT_BODY = String.raw`
+local assdraw = require 'mp.assdraw'
+local function draw_exit()
+  local w, h = mp.get_osd_size()
+  if not w or w == 0 then return end
+  local ass = assdraw.ass_new()
+  ass:new_event()
+  ass:pos(w - 24, 24)
+  ass:append('{\\an9\\fs30\\bord3\\shad1\\1c&HFFFFFF&\\3c&H111111&}✕  EXIT')
+  mp.set_osd_ass(w, h, ass.text)
+  mp.set_mouse_area(math.max(0, w - 240), 0, w, 120, 'canvas-touch-exit')
+end
+mp.set_key_bindings({{'MBTN_LEFT', function() mp.commandv('quit') end}}, 'canvas-touch-exit')
+mp.enable_key_bindings('canvas-touch-exit', 'allow-hide-cursor')
+mp.register_event('file-loaded', draw_exit)
+mp.observe_property('osd-width', 'native', draw_exit)
+`;
 
 function killMpv(opts?: { intentional?: boolean }) {
   if (opts?.intentional) {
@@ -90,7 +111,7 @@ function killMpv(opts?: { intentional?: boolean }) {
   try { require('fs').unlinkSync(MPV_SOCK); } catch { /* doesn't exist */ }
 }
 
-function spawnMpv(url: string, volume: number): number {
+function spawnMpv(url: string, volume: number, video = false): number {
   const nextGen = _mpvGen + 1;
   if (_playbackWaiter && _playbackWaiter.gen !== nextGen) {
     _playbackWaiter.reject(new Error('playback superseded'));
@@ -99,6 +120,7 @@ function spawnMpv(url: string, volume: number): number {
   _mpvGen = nextGen;
   _mpvUrl = url;
   _mpvVolume = volume;
+  _mpvVideo = video;
   _intentionalStop = false;
   _retryCount = 0;
   killMpv();
@@ -107,13 +129,14 @@ function spawnMpv(url: string, volume: number): number {
 }
 
 function startMpv(gen: number) {
-  const args = [
-    '--no-video',
-    '--really-quiet',
-    `--input-ipc-server=${MPV_SOCK}`,
-    `--volume=${_mpvVolume}`,
-    _mpvUrl,
-  ];
+  if (_mpvVideo) writeFileSync(MPV_TOUCH_SCRIPT, MPV_TOUCH_SCRIPT_BODY, { mode: 0o600 });
+  const args = buildMpvArgs({
+    url: _mpvUrl,
+    volume: _mpvVolume,
+    socketPath: MPV_SOCK,
+    video: _mpvVideo,
+    touchScriptPath: MPV_TOUCH_SCRIPT,
+  });
 
   const mpv = spawn('mpv', args, { detached: false, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderrBuf = '';
@@ -240,13 +263,13 @@ function setSystemMute(muted: boolean): void {
   }
 }
 
-export async function playAudio(input: { url: string; title?: string; volume?: number; source?: string }): Promise<AudioState> {
+export async function playAudio(input: { url: string; title?: string; volume?: number; source?: string; video?: boolean }): Promise<AudioState> {
   // Local mpv playback takes the audio sink; this stops the Snapcast client if
   // it currently owns the output so the two never play over each other.
   await acquireSink('mpv');
   const volume = Math.max(0, Math.min(100, input.volume ?? _state.volume));
   setSystemVolume(volume);
-  spawnMpv(input.url, volume);
+  spawnMpv(input.url, volume, input.video === true);
   _state = {
     ..._state,
     state: 'playing',

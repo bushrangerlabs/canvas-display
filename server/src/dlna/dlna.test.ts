@@ -196,7 +196,7 @@ test('SetAVTransportURI + Play routes audio to the adapter', async () => {
   assert.match(transport, /<CurrentTransportState>PLAYING<\/CurrentTransportState>/);
 });
 
-test('video media is routed to the kiosk floating WebView, not mpv', async () => {
+test('video media is routed through the adapter video path', async () => {
   const { adapter, calls } = makeAdapter();
   const renderer = new DlnaRenderer(adapter);
 

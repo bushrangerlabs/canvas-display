@@ -1041,3 +1041,26 @@ Validation:
 - The first live iteration exposed indefinite buffering: Core's timeout covered the continuous body and pause retained the upstream. The final relay/player lifecycle changes above fixed it. The player also retries up to twice when a live fMP4 open remains buffering for eight seconds or lands between fragments. A fresh play after installing this final build recovered automatically and `/tmp/canvas-android-native-video-autoretry-final.png` shows live video.
 
 Current live state: ABC News was left playing on the Android tablet for owner confirmation. Linux and television binaries were not changed by this Android-native player work.
+
+## Native video touch exit on Android and Linux (2026-09-29)
+
+Implemented and deployed (owner-authorized):
+
+- Android's Media3 `NativeVideoPlayer` now renders a large persistent **✕ Exit** button in the top-right corner. Pressing it stops/releases the player, releases the audio arbiter owner and immediately reveals the Canvas scene.
+- Linux Dispatcharr playback now uses the sidecar's supervised mpv process as a real fullscreen video player rather than a WebKit `<video>` surface. Audio-only mpv remains headless. Video mpv enables its OSC and loads a generated Lua overlay with a 240×120 top-right touch target labelled **✕ EXIT**; activating it quits mpv, returns the arbiter to idle and reveals the kiosk scene. DLNA video uses the same mpv video path.
+- The kiosk recognizes `backend: mpv-video` and leaves its existing panel WebViews behind mpv instead of covering video with the radio now-playing WebView.
+- Linux playback initially failed because Core preserved Dispatcharr's `theserver.localdomain` URL, which the Pi cannot resolve. Core now gives Linux Canvas targets the same LAN-resolved AAC/fMP4-compatible URL preparation used for standalone receivers; Android continues through Core's strict-HTTPS relay.
+
+Validation and live acceptance:
+
+- `cd server && npm test && npx tsc --noEmit` — PASS, 48/48 tests and typecheck. New tests distinguish headless audio mpv args from fullscreen video + touch-script args.
+- `cd browser/linux && npm run build` — PASS (existing Vite dynamic-import warning only).
+- `cd browser/android-native && <cached Gradle 8.14.3> --offline :app:testDebugUnitTest :app:assembleDebug` — PASS.
+- `cd core && npx tsx --test test/media-routes.test.ts && npm run build` — PASS, 45/45 tests and build, including Linux LAN-resolvable Dispatcharr URL coverage.
+- Android final APK installed in place. Live ABC News rendered with the Exit button (`/tmp/android-video-touch-exit.png`); an ADB touch at the button stopped Media3 (`active=false`) and restored the scene (`/tmp/android-video-after-touch-exit.png`).
+- Built the arm64 sidecar natively on the Pi using the documented `tsc` → esbuild → `pkg --no-bytecode` path, backed up and installed `/usr/bin/canvas-display-server`, then restarted the system sidecar and kiosk. Both sidecars run the updated binary.
+- Built the arm64 kiosk natively on the Pi with rustup Rust and `npx tauri build --no-bundle`, backed up and installed `/usr/bin/canvas-display-browser-linux`, then restarted its user service. Both services report active.
+- Synced Core `dist/`, rebuilt/recreated `canvas-core`, and confirmed production dispatch now sends the Pi `192.168.1.108:9191`, output profile 2 and fMP4.
+- Live Pi screenshot `/tmp/canvas-linux-mpv-touch-final.png` shows fullscreen ABC News through mpv with the visible **✕ EXIT** target. PipeWire reported an active 48 kHz stereo mpv sink input. Sending mpv's quit command stopped the process with code 0, released playback and revealed the scene (`/tmp/canvas-linux-after-exit.png`). Physical contact with the Pi touchscreen's Exit target remains the owner acceptance check because no remote touch-injection tool is installed.
+
+Known behavior: a local touch exit immediately stops the edge player, but Core's global now-playing card can continue to show the last dispatched state until the next Core control/media-state update. Edge-to-Core spontaneous playback-state reporting is a separate protocol enhancement.

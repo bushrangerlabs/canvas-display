@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.Button
 import android.widget.TextView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -28,6 +29,15 @@ class NativeVideoPlayer(private val container: FrameLayout) {
         setBackgroundColor(Color.argb(150, 0, 0, 0))
         visibility = View.GONE
     }
+    private val exitButton = Button(container.context).apply {
+        text = "✕  Exit"
+        textSize = 18f
+        setTextColor(Color.WHITE)
+        setBackgroundColor(Color.argb(190, 20, 20, 20))
+        setPadding(28, 14, 28, 14)
+        visibility = View.GONE
+        setOnClickListener { stop() }
+    }
     var active: Boolean = false
         private set
     private var currentItem: MediaItem? = null
@@ -36,6 +46,10 @@ class NativeVideoPlayer(private val container: FrameLayout) {
     init {
         container.addView(playerView, FrameLayout.LayoutParams(-1, -1))
         container.addView(message, FrameLayout.LayoutParams(-1, -2).apply { gravity = Gravity.TOP })
+        container.addView(exitButton, FrameLayout.LayoutParams(-2, -2).apply {
+            gravity = Gravity.TOP or Gravity.END
+            setMargins(0, 20, 20, 0)
+        })
         AudioSinkArbiter.registerReleaser(AudioSinkArbiter.Owner.VIDEO) { stop() }
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -94,6 +108,8 @@ class NativeVideoPlayer(private val container: FrameLayout) {
         playerView.visibility = View.VISIBLE
         playerView.bringToFront()
         message.bringToFront()
+        exitButton.visibility = View.VISIBLE
+        exitButton.bringToFront()
         showMessage(if (title.isBlank()) "Buffering…" else "$title\nBuffering…")
         currentItem = MediaItem.fromUri(url)
         consecutiveOpenFailures = 0
@@ -130,6 +146,7 @@ class NativeVideoPlayer(private val container: FrameLayout) {
         consecutiveOpenFailures = 0
         playerView.visibility = View.GONE
         message.visibility = View.GONE
+        exitButton.visibility = View.GONE
         AudioSinkArbiter.release(AudioSinkArbiter.Owner.VIDEO)
     }
 
@@ -138,6 +155,7 @@ class NativeVideoPlayer(private val container: FrameLayout) {
         player.release()
         container.removeView(playerView)
         container.removeView(message)
+        container.removeView(exitButton)
     }
 
     private fun showMessage(text: String) {

@@ -109,7 +109,7 @@ async function playDispatcharrChannel(name: string, url?: string): Promise<Audio
     if (!match?.URL) throw new Error(`Channel "${name}" not found`);
     streamUrl = match.URL;
   }
-  return playAudio({ url: streamUrl, title: name || streamUrl, source: 'dispatcharr' });
+  return playAudio({ url: streamUrl, title: name || streamUrl, source: 'dispatcharr', video: true });
 }
 
 /**
