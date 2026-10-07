@@ -1,0 +1,15 @@
+[ae] conn role=0 authed
+
+[ae] sending mic frame 0
+
+[ae] writes 0 0 0 sndbuf=6549
+
+[ae] sending mic frame 1
+
+[ae] writes 0 0 0 sndbuf=6549
+
+[ae] status mic=0 play=0 raw=7849 frames=2 ck=0 ws=0
+
+[ae] conn role=0 authed
+
+[ae] sending mic frame 2

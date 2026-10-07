@@ -1,0 +1,3535 @@
+[ae] ACCEPT session=1 pcb=20029CA8
+
+[ae] RX HELLO session=1 role=0
+
+[ae] MIC ENABLE session=1 pcb=20029CA8
+
+[ae] AUTH OK session=1 role=0
+
+[ae] sending mic frame 0
+
+[ae] PUMP SEND session=1 len=5131 err=0 sndbuf=6544 qlen=5
+
+[ae] tcp_sent session=1 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=1 len=1460 sndbuf=8009 qlen=3
+
+[ae] sending mic frame 1
+
+[ae] PUMP SEND session=1 len=5131 err=0 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=1 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=1 len=1460 sndbuf=8718 qlen=3
+
+[ae] sending mic frame 2
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=1 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=1 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=1 pcb=20029CA8
+
+[ae] CLOSE session=1 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=2 pcb=20029CA8
+
+[ae] RX HELLO session=2 role=0
+
+[ae] MIC ENABLE session=2 pcb=20029CA8
+
+[ae] AUTH OK session=2 role=0
+
+[ae] tcp_sent session=2 len=5 sndbuf=6549 qlen=4
+
+[ae] PUMP SKIP session=2 pcb=20029CA8 reason=sndbuf sndbuf=1418 qlen=9
+
+[ae] tcp_sent session=2 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=2 len=2920 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=2 len=1460 sndbuf=2127 qlen=8
+
+[ae] tcp_sent session=2 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=2 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=2 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=2 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=2 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=2 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=2 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=2 pcb=20029CA8
+
+[ae] CLOSE session=2 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=3 pcb=20029BD0
+
+[ae] RX HELLO session=3 role=0
+
+[ae] MIC ENABLE session=3 pcb=20029BD0
+
+[ae] AUTH OK session=3 role=0
+
+[ae] tcp_sent session=3 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=3 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=3 len=1460 sndbuf=2127 qlen=8
+
+[ae] tcp_sent session=3 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=3 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=3 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=3 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=3 len=1460 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=3 len=2920 sndbuf=7216 qlen=4
+
+[ae] RX FIN session=3 pcb=20029BD0
+
+[ae] CLOSE session=3 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=4 pcb=20029CA8
+
+[ae] RX HELLO session=4 role=0
+
+[ae] MIC ENABLE session=4 pcb=20029CA8
+
+[ae] AUTH OK session=4 role=0
+
+[ae] tcp_sent session=4 len=1465 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=4 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=4 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=4 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=4 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=4 len=1460 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=4 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=4 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=4 len=1460 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=4 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=4 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=4 pcb=20029CA8
+
+[ae] CLOSE session=4 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=5 pcb=20029BD0
+
+[ae] RX HELLO session=5 role=0
+
+[ae] MIC ENABLE session=5 pcb=20029BD0
+
+[ae] AUTH OK session=5 role=0
+
+[ae] tcp_sent session=5 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=5 len=2920 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=5 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=5 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=5 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=5 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=5 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=5 len=2920 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=5 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=5 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=5 pcb=20029BD0
+
+[ae] CLOSE session=5 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=6 pcb=20029CA8
+
+[ae] RX HELLO session=6 role=0
+
+[ae] MIC ENABLE session=6 pcb=20029CA8
+
+[ae] AUTH OK session=6 role=0
+
+[ae] tcp_sent session=6 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=6 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=6 len=2920 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=6 len=1460 sndbuf=2127 qlen=8
+
+[ae] tcp_sent session=6 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=6 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=6 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=6 len=4380 sndbuf=10887 qlen=1
+
+[ae] tcp_sent session=6 len=793 sndbuf=6549 qlen=4
+
+[ae] RX FIN session=6 pcb=20029CA8
+
+[ae] CLOSE session=6 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=7 pcb=20029BD0
+
+[ae] RX HELLO session=7 role=0
+
+[ae] MIC ENABLE session=7 pcb=20029BD0
+
+[ae] AUTH OK session=7 role=0
+
+[ae] tcp_sent session=7 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=7 len=1460 sndbuf=2878 qlen=8
+
+[ae] status mic=1 play=0 raw=163997 frames=47 ck=0 ws=1 pws=0 pdma=1386
+
+[ae] tcp_sent session=7 len=2920 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=7 len=1460 sndbuf=2127 qlen=8
+
+[ae] tcp_sent session=7 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=7 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=7 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=7 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=7 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=7 len=1460 sndbuf=10887 qlen=1
+
+[ae] tcp_sent session=7 len=793 sndbuf=6549 qlen=4
+
+[ae] RX FIN session=7 pcb=20029BD0
+
+[ae] CLOSE session=7 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=8 pcb=20029CA8
+
+[ae] RX HELLO session=8 role=0
+
+[ae] MIC ENABLE session=8 pcb=20029CA8
+
+[ae] AUTH OK session=8 role=0
+
+[ae] tcp_sent session=8 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=8 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=8 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=8 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=8 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=8 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=8 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=8 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=8 len=2920 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=8 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=8 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=8 pcb=20029CA8
+
+[ae] CLOSE session=8 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=9 pcb=20029BD0
+
+[ae] RX HELLO session=9 role=0
+
+[ae] MIC ENABLE session=9 pcb=20029BD0
+
+[ae] AUTH OK session=9 role=0
+
+[ae] tcp_sent session=9 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=9 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=9 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=9 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=9 len=2920 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=9 len=2920 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=9 len=2920 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=9 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=9 len=1460 sndbuf=2085 qlen=8
+
+[ae] RX FIN session=9 pcb=20029BD0
+
+[ae] CLOSE session=9 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=10 pcb=20029CA8
+
+[ae] RX HELLO session=10 role=0
+
+[ae] MIC ENABLE session=10 pcb=20029CA8
+
+[ae] AUTH OK session=10 role=0
+
+[ae] tcp_sent session=10 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=10 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=10 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=10 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=10 len=1460 sndbuf=2127 qlen=8
+
+[ae] tcp_sent session=10 len=2920 sndbuf=5047 qlen=6
+
+[ae] PUMP WAIT session=10 raw=178530 consumed=69
+
+[ae] tcp_sent session=10 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=10 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=10 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=10 len=1460 sndbuf=10887 qlen=1
+
+[ae] tcp_sent session=10 len=793 sndbuf=6549 qlen=4
+
+[ae] RX FIN session=10 pcb=20029CA8
+
+[ae] CLOSE session=10 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=11 pcb=20029BD0
+
+[ae] RX HELLO session=11 role=0
+
+[ae] MIC ENABLE session=11 pcb=20029BD0
+
+[ae] AUTH OK session=11 role=0
+
+[ae] tcp_sent session=11 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=11 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=11 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=11 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=11 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=11 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=11 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=11 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=11 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=11 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=11 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=11 pcb=20029BD0
+
+[ae] CLOSE session=11 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=12 pcb=20029CA8
+
+[ae] RX HELLO session=12 role=0
+
+[ae] MIC ENABLE session=12 pcb=20029CA8
+
+[ae] AUTH OK session=12 role=0
+
+[ae] tcp_sent session=12 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=12 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=12 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=12 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=12 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=12 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=12 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=12 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=12 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=12 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=12 pcb=20029CA8
+
+[ae] CLOSE session=12 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=13 pcb=20029BD0
+
+[ae] RX HELLO session=13 role=0
+
+[ae] MIC ENABLE session=13 pcb=20029BD0
+
+[ae] AUTH OK session=13 role=0
+
+[ae] tcp_sent session=13 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=13 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=13 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=13 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=13 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=13 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=13 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=13 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=13 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=13 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=13 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=13 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=13 pcb=20029BD0
+
+[ae] CLOSE session=13 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=14 pcb=20029CA8
+
+[ae] RX HELLO session=14 role=0
+
+[ae] MIC ENABLE session=14 pcb=20029CA8
+
+[ae] AUTH OK session=14 role=0
+
+[ae] tcp_sent session=14 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=14 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=14 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=14 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=14 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=14 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=14 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=14 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=14 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=14 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=14 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=14 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=14 pcb=20029CA8
+
+[ae] CLOSE session=14 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=15 pcb=20029BD0
+
+[ae] RX HELLO session=15 role=0
+
+[ae] MIC ENABLE session=15 pcb=20029BD0
+
+[ae] AUTH OK session=15 role=0
+
+[ae] tcp_sent session=15 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=15 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=15 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=15 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=15 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=15 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=15 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=15 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=15 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=15 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=15 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=15 pcb=20029BD0
+
+[ae] CLOSE session=15 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=16 pcb=20029CA8
+
+[ae] RX HELLO session=16 role=0
+
+[ae] MIC ENABLE session=16 pcb=20029CA8
+
+[ae] AUTH OK session=16 role=0
+
+[ae] tcp_sent session=16 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=16 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=16 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=16 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=16 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=16 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=16 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=16 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=16 raw=225891 consumed=88
+
+[ae] tcp_sent session=16 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=16 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=16 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=16 pcb=20029CA8
+
+[ae] CLOSE session=16 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=17 pcb=20029BD0
+
+[ae] RX HELLO session=17 role=0
+
+[ae] MIC ENABLE session=17 pcb=20029BD0
+
+[ae] AUTH OK session=17 role=0
+
+[ae] tcp_sent session=17 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=17 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=17 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=17 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=17 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=17 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=17 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=17 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=17 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=17 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=17 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=17 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=17 pcb=20029BD0
+
+[ae] CLOSE session=17 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=18 pcb=20029BD0
+
+[ae] RX HELLO session=18 role=0
+
+[ae] MIC ENABLE session=18 pcb=20029BD0
+
+[ae] AUTH OK session=18 role=0
+
+[ae] tcp_sent session=18 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=18 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=18 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=18 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=18 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=18 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=18 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=18 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=18 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=18 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=18 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=18 pcb=20029BD0
+
+[ae] CLOSE session=18 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=19 pcb=20029CA8
+
+[ae] RX HELLO session=19 role=0
+
+[ae] MIC ENABLE session=19 pcb=20029CA8
+
+[ae] AUTH OK session=19 role=0
+
+[ae] tcp_sent session=19 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=19 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=19 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=19 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=19 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=19 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=19 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=19 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=19 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=19 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=19 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=19 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=19 pcb=20029CA8
+
+[ae] CLOSE session=19 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=20 pcb=20029BD0
+
+[ae] RX HELLO session=20 role=0
+
+[ae] MIC ENABLE session=20 pcb=20029BD0
+
+[ae] AUTH OK session=20 role=0
+
+[ae] tcp_sent session=20 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=20 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=20 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=20 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=20 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=20 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=20 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=20 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=20 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=20 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=20 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=20 pcb=20029BD0
+
+[ae] CLOSE session=20 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=21 pcb=20029CA8
+
+[ae] RX HELLO session=21 role=0
+
+[ae] MIC ENABLE session=21 pcb=20029CA8
+
+[ae] AUTH OK session=21 role=0
+
+[ae] tcp_sent session=21 len=5 sndbuf=11680 qlen=0
+
+[ae] sending mic frame 100
+
+[ae] tcp_sent session=21 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=21 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=21 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=21 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=21 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=21 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=21 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=21 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=21 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=21 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=21 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=21 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=21 pcb=20029CA8
+
+[ae] CLOSE session=21 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=22 pcb=20029BD0
+
+[ae] RX HELLO session=22 role=0
+
+[ae] MIC ENABLE session=22 pcb=20029BD0
+
+[ae] AUTH OK session=22 role=0
+
+[ae] tcp_sent session=22 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=22 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=22 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=22 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=22 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=22 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=22 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=22 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=22 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=22 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=22 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=22 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=22 pcb=20029BD0
+
+[ae] CLOSE session=22 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=23 pcb=20029BD0
+
+[ae] RX HELLO session=23 role=0
+
+[ae] MIC ENABLE session=23 pcb=20029BD0
+
+[ae] AUTH OK session=23 role=0
+
+[ae] tcp_sent session=23 len=5 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=23 raw=273135 consumed=106
+
+[ae] tcp_sent session=23 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=23 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=23 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=23 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=23 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=23 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=23 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=23 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=23 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=23 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=23 pcb=20029BD0
+
+[ae] CLOSE session=23 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=24 pcb=20029CA8
+
+[ae] RX HELLO session=24 role=0
+
+[ae] MIC ENABLE session=24 pcb=20029CA8
+
+[ae] AUTH OK session=24 role=0
+
+[ae] tcp_sent session=24 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=24 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=24 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=24 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=24 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=24 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=24 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=24 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=24 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=24 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=24 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=24 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=24 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=24 pcb=20029CA8
+
+[ae] CLOSE session=24 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=25 pcb=20029BD0
+
+[ae] RX HELLO session=25 role=0
+
+[ae] MIC ENABLE session=25 pcb=20029BD0
+
+[ae] AUTH OK session=25 role=0
+
+[ae] tcp_sent session=25 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=25 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=25 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=25 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=25 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=25 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=25 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=25 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=25 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=25 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=25 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=25 pcb=20029BD0
+
+[ae] CLOSE session=25 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=26 pcb=20029CA8
+
+[ae] RX HELLO session=26 role=0
+
+[ae] MIC ENABLE session=26 pcb=20029CA8
+
+[ae] AUTH OK session=26 role=0
+
+[ae] tcp_sent session=26 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=26 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=26 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=26 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=26 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=26 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=26 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=26 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=26 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=26 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=26 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=26 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=26 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=26 pcb=20029CA8
+
+[ae] CLOSE session=26 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=27 pcb=20029BD0
+
+[ae] RX HELLO session=27 role=0
+
+[ae] MIC ENABLE session=27 pcb=20029BD0
+
+[ae] AUTH OK session=27 role=0
+
+[ae] tcp_sent session=27 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=27 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=27 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=27 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=27 len=2920 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=27 len=42 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=27 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=27 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=27 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=27 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=27 pcb=20029BD0
+
+[ae] CLOSE session=27 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=28 pcb=20029CA8
+
+[ae] RX HELLO session=28 role=0
+
+[ae] MIC ENABLE session=28 pcb=20029CA8
+
+[ae] AUTH OK session=28 role=0
+
+[ae] tcp_sent session=28 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=28 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=28 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=28 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=28 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=28 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP SEND session=28 len=5131 err=0 sndbuf=6549 qlen=4
+
+[ae] PUMP WAIT session=28 raw=318317 consumed=124
+
+[ae] tcp_sent session=28 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=28 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=28 pcb=20029CA8
+
+[ae] CLOSE session=28 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=29 pcb=20029BD0
+
+[ae] RX HELLO session=29 role=0
+
+[ae] MIC ENABLE session=29 pcb=20029BD0
+
+[ae] AUTH OK session=29 role=0
+
+[ae] tcp_sent session=29 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=29 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=29 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=29 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=29 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=29 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=29 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=29 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=29 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=29 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=29 pcb=20029BD0
+
+[ae] CLOSE session=29 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=30 pcb=20029CA8
+
+[ae] RX HELLO session=30 role=0
+
+[ae] MIC ENABLE session=30 pcb=20029CA8
+
+[ae] AUTH OK session=30 role=0
+
+[ae] tcp_sent session=30 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=30 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=30 len=4380 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=30 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=30 len=1460 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=30 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=30 len=42 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=30 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=30 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=30 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=30 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=30 pcb=20029CA8
+
+[ae] CLOSE session=30 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=31 pcb=20029BD0
+
+[ae] RX HELLO session=31 role=0
+
+[ae] MIC ENABLE session=31 pcb=20029BD0
+
+[ae] AUTH OK session=31 role=0
+
+[ae] tcp_sent session=31 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=31 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=31 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=31 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=31 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=31 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=31 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=31 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=31 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=31 pcb=20029BD0
+
+[ae] CLOSE session=31 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=32 pcb=20029BD0
+
+[ae] RX HELLO session=32 role=0
+
+[ae] MIC ENABLE session=32 pcb=20029BD0
+
+[ae] AUTH OK session=32 role=0
+
+[ae] tcp_sent session=32 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=32 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=32 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=32 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=32 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=32 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=32 len=1460 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=32 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=32 len=42 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=32 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=32 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=32 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=32 pcb=20029BD0
+
+[ae] CLOSE session=32 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=33 pcb=20029BD0
+
+[ae] RX HELLO session=33 role=0
+
+[ae] MIC ENABLE session=33 pcb=20029BD0
+
+[ae] AUTH OK session=33 role=0
+
+[ae] tcp_sent session=33 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=33 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=33 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=33 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=33 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=33 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=33 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=33 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=33 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=33 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=33 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=33 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=33 pcb=20029BD0
+
+[ae] CLOSE session=33 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=34 pcb=20029CA8
+
+[ae] RX HELLO session=34 role=0
+
+[ae] MIC ENABLE session=34 pcb=20029CA8
+
+[ae] AUTH OK session=34 role=0
+
+[ae] tcp_sent session=34 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=34 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=34 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=34 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=34 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=34 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=34 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=34 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=34 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=34 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=34 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=34 pcb=20029CA8
+
+[ae] CLOSE session=34 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=35 pcb=20029BD0
+
+[ae] RX HELLO session=35 role=0
+
+[ae] MIC ENABLE session=35 pcb=20029BD0
+
+[ae] AUTH OK session=35 role=0
+
+[ae] tcp_sent session=35 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=35 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=35 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=35 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=35 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=35 raw=372457 consumed=145
+
+[ae] tcp_sent session=35 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=35 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=35 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=35 len=751 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=35 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=35 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=35 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=35 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=35 pcb=20029BD0
+
+[ae] CLOSE session=35 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=36 pcb=20029CA8
+
+[ae] RX HELLO session=36 role=0
+
+[ae] MIC ENABLE session=36 pcb=20029CA8
+
+[ae] AUTH OK session=36 role=0
+
+[ae] tcp_sent session=36 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=36 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=36 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=36 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=36 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=36 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=36 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=36 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=36 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=36 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=36 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=36 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=36 pcb=20029CA8
+
+[ae] CLOSE session=36 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=37 pcb=20029BD0
+
+[ae] RX HELLO session=37 role=0
+
+[ae] MIC ENABLE session=37 pcb=20029BD0
+
+[ae] AUTH OK session=37 role=0
+
+[ae] tcp_sent session=37 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=37 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=37 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=37 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=37 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=37 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=37 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=37 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=37 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=37 pcb=20029BD0
+
+[ae] CLOSE session=37 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=38 pcb=20029CA8
+
+[ae] RX HELLO session=38 role=0
+
+[ae] MIC ENABLE session=38 pcb=20029CA8
+
+[ae] AUTH OK session=38 role=0
+
+[ae] tcp_sent session=38 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=38 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=38 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=38 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=38 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=38 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=38 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=38 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=38 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=38 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=38 pcb=20029CA8
+
+[ae] CLOSE session=38 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=39 pcb=20029BD0
+
+[ae] RX HELLO session=39 role=0
+
+[ae] MIC ENABLE session=39 pcb=20029BD0
+
+[ae] AUTH OK session=39 role=0
+
+[ae] tcp_sent session=39 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=39 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=39 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=39 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=39 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=39 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=39 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=39 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=39 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=39 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=39 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=39 pcb=20029BD0
+
+[ae] CLOSE session=39 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=40 pcb=20029CA8
+
+[ae] RX HELLO session=40 role=0
+
+[ae] MIC ENABLE session=40 pcb=20029CA8
+
+[ae] AUTH OK session=40 role=0
+
+[ae] tcp_sent session=40 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=40 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=40 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=40 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=40 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=40 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=40 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=40 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=40 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=40 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=40 pcb=20029CA8
+
+[ae] CLOSE session=40 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=41 pcb=20029CA8
+
+[ae] RX HELLO session=41 role=0
+
+[ae] MIC ENABLE session=41 pcb=20029CA8
+
+[ae] AUTH OK session=41 role=0
+
+[ae] tcp_sent session=41 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=41 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=41 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=41 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=41 raw=419508 consumed=163
+
+[ae] tcp_sent session=41 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=41 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=41 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=41 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=41 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=41 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=41 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=41 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=41 pcb=20029CA8
+
+[ae] CLOSE session=41 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=42 pcb=20029CA8
+
+[ae] RX HELLO session=42 role=0
+
+[ae] MIC ENABLE session=42 pcb=20029CA8
+
+[ae] AUTH OK session=42 role=0
+
+[ae] tcp_sent session=42 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=42 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=42 len=4380 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=42 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=42 len=42 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=42 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=42 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=42 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=42 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=42 pcb=20029CA8
+
+[ae] CLOSE session=42 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=43 pcb=20029BD0
+
+[ae] RX HELLO session=43 role=0
+
+[ae] MIC ENABLE session=43 pcb=20029BD0
+
+[ae] AUTH OK session=43 role=0
+
+[ae] tcp_sent session=43 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=43 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=43 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=43 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=43 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=43 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=43 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=43 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=43 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=43 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=43 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=43 pcb=20029BD0
+
+[ae] CLOSE session=43 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=44 pcb=20029CA8
+
+[ae] RX HELLO session=44 role=0
+
+[ae] MIC ENABLE session=44 pcb=20029CA8
+
+[ae] AUTH OK session=44 role=0
+
+[ae] tcp_sent session=44 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=44 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=44 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=44 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=44 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=44 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=44 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=44 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=44 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=44 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=44 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=44 pcb=20029CA8
+
+[ae] CLOSE session=44 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=45 pcb=20029BD0
+
+[ae] RX HELLO session=45 role=0
+
+[ae] MIC ENABLE session=45 pcb=20029BD0
+
+[ae] AUTH OK session=45 role=0
+
+[ae] tcp_sent session=45 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=45 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=45 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=45 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=45 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=45 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=45 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=45 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=45 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=45 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=45 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=45 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=45 pcb=20029BD0
+
+[ae] CLOSE session=45 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=46 pcb=20029CA8
+
+[ae] RX HELLO session=46 role=0
+
+[ae] MIC ENABLE session=46 pcb=20029CA8
+
+[ae] AUTH OK session=46 role=0
+
+[ae] tcp_sent session=46 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=46 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=46 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=46 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=46 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=46 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=46 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=46 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=46 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=46 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=46 len=1460 sndbuf=10929 qlen=1
+
+[ae] PUMP WAIT session=46 raw=464996 consumed=181
+
+[ae] tcp_sent session=46 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=46 pcb=20029CA8
+
+[ae] CLOSE session=46 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=47 pcb=20029BD0
+
+[ae] RX HELLO session=47 role=0
+
+[ae] MIC ENABLE session=47 pcb=20029BD0
+
+[ae] AUTH OK session=47 role=0
+
+[ae] tcp_sent session=47 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=47 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=47 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=47 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=47 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=47 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=47 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=47 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=47 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=47 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=47 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=47 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=47 pcb=20029BD0
+
+[ae] CLOSE session=47 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=48 pcb=20029CA8
+
+[ae] RX HELLO session=48 role=0
+
+[ae] MIC ENABLE session=48 pcb=20029CA8
+
+[ae] AUTH OK session=48 role=0
+
+[ae] tcp_sent session=48 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=48 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=48 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=48 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=48 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=48 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=48 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=48 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=48 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=48 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=48 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=48 pcb=20029CA8
+
+[ae] CLOSE session=48 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=49 pcb=20029CA8
+
+[ae] RX HELLO session=49 role=0
+
+[ae] MIC ENABLE session=49 pcb=20029CA8
+
+[ae] AUTH OK session=49 role=0
+
+[ae] tcp_sent session=49 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=49 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=49 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=49 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=49 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=49 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=49 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=49 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=49 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=49 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=49 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=49 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=49 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=49 pcb=20029CA8
+
+[ae] CLOSE session=49 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=50 pcb=20029BD0
+
+[ae] RX HELLO session=50 role=0
+
+[ae] MIC ENABLE session=50 pcb=20029BD0
+
+[ae] AUTH OK session=50 role=0
+
+[ae] tcp_sent session=50 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=50 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=50 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=50 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=50 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=50 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=50 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=50 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=50 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=50 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=50 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=50 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=50 pcb=20029BD0
+
+[ae] CLOSE session=50 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=51 pcb=20029CA8
+
+[ae] RX HELLO session=51 role=0
+
+[ae] MIC ENABLE session=51 pcb=20029CA8
+
+[ae] AUTH OK session=51 role=0
+
+[ae] tcp_sent session=51 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=51 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=51 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=51 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=51 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=51 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=51 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=51 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=51 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=51 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=51 pcb=20029CA8
+
+[ae] CLOSE session=51 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=52 pcb=20029BD0
+
+[ae] RX HELLO session=52 role=0
+
+[ae] MIC ENABLE session=52 pcb=20029BD0
+
+[ae] AUTH OK session=52 role=0
+
+[ae] tcp_sent session=52 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=52 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=52 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=52 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=52 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=52 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=52 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=52 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=52 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=52 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=52 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=52 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=52 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=52 pcb=20029BD0
+
+[ae] CLOSE session=52 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=53 pcb=20029CA8
+
+[ae] RX HELLO session=53 role=0
+
+[ae] MIC ENABLE session=53 pcb=20029CA8
+
+[ae] AUTH OK session=53 role=0
+
+[ae] tcp_sent session=53 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=53 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=53 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=53 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=53 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=53 raw=513639 consumed=200
+
+[ae] sending mic frame 200
+
+[ae] tcp_sent session=53 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=53 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=53 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=53 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=53 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=53 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=53 pcb=20029CA8
+
+[ae] CLOSE session=53 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=54 pcb=20029BD0
+
+[ae] RX HELLO session=54 role=0
+
+[ae] MIC ENABLE session=54 pcb=20029BD0
+
+[ae] AUTH OK session=54 role=0
+
+[ae] tcp_sent session=54 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=54 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=54 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=54 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=54 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=54 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=54 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=54 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=54 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=54 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=54 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=54 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=54 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=54 pcb=20029BD0
+
+[ae] CLOSE session=54 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=55 pcb=20029CA8
+
+[ae] RX HELLO session=55 role=0
+
+[ae] MIC ENABLE session=55 pcb=20029CA8
+
+[ae] AUTH OK session=55 role=0
+
+[ae] tcp_sent session=55 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=55 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=55 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=55 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=55 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=55 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=55 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=55 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=55 len=1460 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=55 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=55 len=42 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=55 pcb=20029CA8
+
+[ae] CLOSE session=55 pcb=20029CA8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=56 pcb=20029BD0
+
+[ae] RX HELLO session=56 role=0
+
+[ae] MIC ENABLE session=56 pcb=20029BD0
+
+[ae] AUTH OK session=56 role=0
+
+[ae] tcp_sent session=56 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=56 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=56 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=56 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=56 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=56 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=56 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=56 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=56 len=751 sndbuf=11680 qlen=0
+
+[ae] status mic=1 play=0 raw=540565 frames=211 ck=0 ws=1 pws=0 pdma=1539
+
+[ae] tcp_sent session=56 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=56 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=56 pcb=20029BD0
+
+[ae] CLOSE session=56 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=57 pcb=20029AF8
+
+[ae] RX HELLO session=57 role=0
+
+[ae] MIC ENABLE session=57 pcb=20029AF8
+
+[ae] AUTH OK session=57 role=0
+
+[ae] tcp_sent session=57 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=57 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=57 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=57 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=57 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=57 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=57 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=57 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=57 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=57 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=57 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=57 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=57 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=57 pcb=20029AF8
+
+[ae] CLOSE session=57 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=58 pcb=20029BD0
+
+[ae] RX HELLO session=58 role=0
+
+[ae] MIC ENABLE session=58 pcb=20029BD0
+
+[ae] AUTH OK session=58 role=0
+
+[ae] tcp_sent session=58 len=5 sndbuf=1418 qlen=9
+
+[ae] tcp_sent session=58 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=58 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=58 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=58 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=58 len=1460 sndbuf=3587 qlen=7
+
+[ae] tcp_sent session=58 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=58 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=58 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=58 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=58 len=1460 sndbuf=10887 qlen=1
+
+[ae] tcp_sent session=58 len=793 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=58 pcb=20029BD0
+
+[ae] CLOSE session=58 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=59 pcb=20029AF8
+
+[ae] RX HELLO session=59 role=0
+
+[ae] MIC ENABLE session=59 pcb=20029AF8
+
+[ae] AUTH OK session=59 role=0
+
+[ae] tcp_sent session=59 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=59 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=59 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=59 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=59 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=59 raw=564858 consumed=220
+
+[ae] tcp_sent session=59 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=59 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=59 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=59 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=59 pcb=20029AF8
+
+[ae] CLOSE session=59 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=60 pcb=20029BD0
+
+[ae] RX HELLO session=60 role=0
+
+[ae] MIC ENABLE session=60 pcb=20029BD0
+
+[ae] AUTH OK session=60 role=0
+
+[ae] tcp_sent session=60 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=60 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=60 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=60 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=60 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=60 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=60 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP SEND session=60 len=5131 err=0 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=60 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=60 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=60 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=60 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=60 pcb=20029BD0
+
+[ae] CLOSE session=60 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=61 pcb=20029AF8
+
+[ae] RX HELLO session=61 role=0
+
+[ae] MIC ENABLE session=61 pcb=20029AF8
+
+[ae] AUTH OK session=61 role=0
+
+[ae] tcp_sent session=61 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=61 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=61 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=61 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=61 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=61 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=61 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=61 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=61 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=61 pcb=20029AF8
+
+[ae] CLOSE session=61 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=62 pcb=20029BD0
+
+[ae] RX HELLO session=62 role=0
+
+[ae] MIC ENABLE session=62 pcb=20029BD0
+
+[ae] AUTH OK session=62 role=0
+
+[ae] tcp_sent session=62 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=62 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=62 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=62 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=62 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=62 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=62 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=62 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=62 pcb=20029BD0
+
+[ae] CLOSE session=62 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=63 pcb=20029AF8
+
+[ae] RX HELLO session=63 role=0
+
+[ae] MIC ENABLE session=63 pcb=20029AF8
+
+[ae] AUTH OK session=63 role=0
+
+[ae] tcp_sent session=63 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=63 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=63 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=63 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=63 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=63 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=63 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=63 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=63 len=4380 sndbuf=10929 qlen=1
+
+[ae] PUMP WAIT session=63 raw=608570 consumed=237
+
+[ae] tcp_sent session=63 len=751 sndbuf=1418 qlen=9
+
+[ae] RX FIN session=63 pcb=20029AF8
+
+[ae] CLOSE session=63 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=64 pcb=20029BD0
+
+[ae] RX HELLO session=64 role=0
+
+[ae] MIC ENABLE session=64 pcb=20029BD0
+
+[ae] AUTH OK session=64 role=0
+
+[ae] tcp_sent session=64 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=64 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=64 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=64 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=64 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=64 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=64 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=64 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=64 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=64 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=64 pcb=20029BD0
+
+[ae] CLOSE session=64 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=65 pcb=20029AF8
+
+[ae] RX HELLO session=65 role=0
+
+[ae] MIC ENABLE session=65 pcb=20029AF8
+
+[ae] AUTH OK session=65 role=0
+
+[ae] tcp_sent session=65 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=65 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=65 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=65 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=65 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=65 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=65 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=65 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=65 len=1460 sndbuf=7967 qlen=3
+
+[ae] tcp_sent session=65 len=1460 sndbuf=9427 qlen=2
+
+[ae] tcp_sent session=65 len=1460 sndbuf=10887 qlen=1
+
+[ae] tcp_sent session=65 len=793 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=65 pcb=20029AF8
+
+[ae] CLOSE session=65 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=66 pcb=20029BD0
+
+[ae] RX HELLO session=66 role=0
+
+[ae] MIC ENABLE session=66 pcb=20029BD0
+
+[ae] AUTH OK session=66 role=0
+
+[ae] tcp_sent session=66 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=66 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=66 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=66 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=66 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=66 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=66 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=66 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=66 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=66 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=66 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=66 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=66 pcb=20029BD0
+
+[ae] CLOSE session=66 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=67 pcb=20029AF8
+
+[ae] RX HELLO session=67 role=0
+
+[ae] MIC ENABLE session=67 pcb=20029AF8
+
+[ae] AUTH OK session=67 role=0
+
+[ae] tcp_sent session=67 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=67 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=67 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=67 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=67 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=67 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=67 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=67 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=67 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=67 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=67 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=67 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=67 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=67 pcb=20029AF8
+
+[ae] CLOSE session=67 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=68 pcb=20029BD0
+
+[ae] RX HELLO session=68 role=0
+
+[ae] MIC ENABLE session=68 pcb=20029BD0
+
+[ae] AUTH OK session=68 role=0
+
+[ae] tcp_sent session=68 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=68 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=68 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=68 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=68 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=68 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=68 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=68 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=68 pcb=20029BD0
+
+[ae] CLOSE session=68 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=69 pcb=20029AF8
+
+[ae] RX HELLO session=69 role=0
+
+[ae] MIC ENABLE session=69 pcb=20029AF8
+
+[ae] AUTH OK session=69 role=0
+
+[ae] tcp_sent session=69 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=69 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=69 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=69 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=69 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=69 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=69 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=69 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=69 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=69 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=69 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=69 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=69 pcb=20029AF8
+
+[ae] CLOSE session=69 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=70 pcb=20029BD0
+
+[ae] RX HELLO session=70 role=0
+
+[ae] MIC ENABLE session=70 pcb=20029BD0
+
+[ae] AUTH OK session=70 role=0
+
+[ae] tcp_sent session=70 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=70 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=70 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=70 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=70 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=70 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=70 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=70 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=70 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=70 raw=662335 consumed=258
+
+[ae] tcp_sent session=70 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=70 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=70 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=70 pcb=20029BD0
+
+[ae] CLOSE session=70 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=71 pcb=20029AF8
+
+[ae] RX HELLO session=71 role=0
+
+[ae] MIC ENABLE session=71 pcb=20029AF8
+
+[ae] AUTH OK session=71 role=0
+
+[ae] tcp_sent session=71 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=71 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=71 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=71 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=71 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=71 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=71 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=71 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=71 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=71 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=71 len=1460 sndbuf=7258 qlen=4
+
+[ae] RX FIN session=71 pcb=20029AF8
+
+[ae] CLOSE session=71 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=72 pcb=20029AF8
+
+[ae] RX HELLO session=72 role=0
+
+[ae] MIC ENABLE session=72 pcb=20029AF8
+
+[ae] AUTH OK session=72 role=0
+
+[ae] tcp_sent session=72 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=72 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=72 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=72 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=72 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=72 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=72 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=72 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=72 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=72 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=72 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=72 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=72 pcb=20029AF8
+
+[ae] CLOSE session=72 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=73 pcb=20029BD0
+
+[ae] RX HELLO session=73 role=0
+
+[ae] MIC ENABLE session=73 pcb=20029BD0
+
+[ae] AUTH OK session=73 role=0
+
+[ae] tcp_sent session=73 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=73 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=73 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=73 len=4380 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=73 len=42 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=73 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=73 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=73 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=73 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=73 pcb=20029BD0
+
+[ae] CLOSE session=73 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=74 pcb=20029AF8
+
+[ae] RX HELLO session=74 role=0
+
+[ae] MIC ENABLE session=74 pcb=20029AF8
+
+[ae] AUTH OK session=74 role=0
+
+[ae] tcp_sent session=74 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=74 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=74 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=74 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=74 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=74 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=74 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=74 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=74 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=74 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=74 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=74 pcb=20029AF8
+
+[ae] CLOSE session=74 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=75 pcb=20029BD0
+
+[ae] RX HELLO session=75 role=0
+
+[ae] MIC ENABLE session=75 pcb=20029BD0
+
+[ae] AUTH OK session=75 role=0
+
+[ae] tcp_sent session=75 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=75 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=75 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=75 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=75 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=75 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=75 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=75 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=75 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=75 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=75 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=75 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=75 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=75 pcb=20029BD0
+
+[ae] CLOSE session=75 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=76 pcb=20029AF8
+
+[ae] RX HELLO session=76 role=0
+
+[ae] MIC ENABLE session=76 pcb=20029AF8
+
+[ae] AUTH OK session=76 role=0
+
+[ae] tcp_sent session=76 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=76 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=76 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=76 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=76 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=76 raw=708021 consumed=276
+
+[ae] tcp_sent session=76 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=76 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=76 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=76 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=76 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=76 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=76 pcb=20029AF8
+
+[ae] CLOSE session=76 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=77 pcb=20029BD0
+
+[ae] RX HELLO session=77 role=0
+
+[ae] MIC ENABLE session=77 pcb=20029BD0
+
+[ae] AUTH OK session=77 role=0
+
+[ae] tcp_sent session=77 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=77 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=77 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=77 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=77 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=77 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=77 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=77 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=77 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=77 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=77 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=77 pcb=20029BD0
+
+[ae] CLOSE session=77 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=78 pcb=20029AF8
+
+[ae] RX HELLO session=78 role=0
+
+[ae] MIC ENABLE session=78 pcb=20029AF8
+
+[ae] AUTH OK session=78 role=0
+
+[ae] tcp_sent session=78 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=78 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=78 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=78 len=1460 sndbuf=8718 qlen=3
+
+[ae] tcp_sent session=78 len=1460 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=78 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=78 len=42 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=78 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=78 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=78 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=78 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=78 pcb=20029AF8
+
+[ae] CLOSE session=78 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=79 pcb=20029AF8
+
+[ae] RX HELLO session=79 role=0
+
+[ae] MIC ENABLE session=79 pcb=20029AF8
+
+[ae] AUTH OK session=79 role=0
+
+[ae] tcp_sent session=79 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=79 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=79 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=79 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=79 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=79 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=79 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=79 len=4380 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=79 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=79 pcb=20029AF8
+
+[ae] CLOSE session=79 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=80 pcb=20029BD0
+
+[ae] RX HELLO session=80 role=0
+
+[ae] MIC ENABLE session=80 pcb=20029BD0
+
+[ae] AUTH OK session=80 role=0
+
+[ae] tcp_sent session=80 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=80 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=80 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=80 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=80 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=80 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=80 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=80 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=80 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=80 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=80 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=80 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=80 pcb=20029BD0
+
+[ae] CLOSE session=80 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=81 pcb=20029AF8
+
+[ae] RX HELLO session=81 role=0
+
+[ae] MIC ENABLE session=81 pcb=20029AF8
+
+[ae] AUTH OK session=81 role=0
+
+[ae] tcp_sent session=81 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=81 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=81 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=81 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=81 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=81 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=81 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=81 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=81 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=81 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=81 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=81 pcb=20029AF8
+
+[ae] CLOSE session=81 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=82 pcb=20029BD0
+
+[ae] RX HELLO session=82 role=0
+
+[ae] MIC ENABLE session=82 pcb=20029BD0
+
+[ae] AUTH OK session=82 role=0
+
+[ae] tcp_sent session=82 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=82 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=82 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=82 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=82 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=82 raw=754738 consumed=294
+
+[ae] tcp_sent session=82 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=82 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=82 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=82 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=82 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=82 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=82 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=82 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=82 pcb=20029BD0
+
+[ae] CLOSE session=82 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=83 pcb=20029AF8
+
+[ae] RX HELLO session=83 role=0
+
+[ae] MIC ENABLE session=83 pcb=20029AF8
+
+[ae] AUTH OK session=83 role=0
+
+[ae] tcp_sent session=83 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=83 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=83 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=83 len=2211 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=83 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=83 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=83 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=83 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=83 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=83 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=83 pcb=20029AF8
+
+[ae] CLOSE session=83 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=84 pcb=20029BD0
+
+[ae] RX HELLO session=84 role=0
+
+[ae] MIC ENABLE session=84 pcb=20029BD0
+
+[ae] AUTH OK session=84 role=0
+
+[ae] tcp_sent session=84 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=84 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=84 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=84 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=84 len=751 sndbuf=11680 qlen=0
+
+[ae] sending mic frame 300
+
+[ae] tcp_sent session=84 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=84 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=84 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=84 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=84 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=84 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=84 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=84 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=84 pcb=20029BD0
+
+[ae] CLOSE session=84 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=85 pcb=20029AF8
+
+[ae] RX HELLO session=85 role=0
+
+[ae] MIC ENABLE session=85 pcb=20029AF8
+
+[ae] AUTH OK session=85 role=0
+
+[ae] tcp_sent session=85 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=85 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=85 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=85 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=85 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=85 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=85 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=85 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=85 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=85 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=85 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=85 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=85 pcb=20029AF8
+
+[ae] CLOSE session=85 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=86 pcb=20029BD0
+
+[ae] RX HELLO session=86 role=0
+
+[ae] MIC ENABLE session=86 pcb=20029BD0
+
+[ae] AUTH OK session=86 role=0
+
+[ae] tcp_sent session=86 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=86 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=86 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=86 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=86 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=86 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=86 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=86 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=86 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=86 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=86 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=86 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=86 pcb=20029BD0
+
+[ae] CLOSE session=86 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=87 pcb=20029AF8
+
+[ae] RX HELLO session=87 role=0
+
+[ae] MIC ENABLE session=87 pcb=20029AF8
+
+[ae] AUTH OK session=87 role=0
+
+[ae] tcp_sent session=87 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=87 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=87 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=87 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=87 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=87 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=87 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=87 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=87 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=87 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=87 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=87 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=87 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=87 pcb=20029AF8
+
+[ae] CLOSE session=87 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=88 pcb=20029BD0
+
+[ae] RX HELLO session=88 role=0
+
+[ae] MIC ENABLE session=88 pcb=20029BD0
+
+[ae] AUTH OK session=88 role=0
+
+[ae] tcp_sent session=88 len=5 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=88 raw=801233 consumed=312
+
+[ae] tcp_sent session=88 len=4380 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=88 len=4380 sndbuf=10178 qlen=2
+
+[ae] tcp_sent session=88 len=1460 sndbuf=11638 qlen=1
+
+[ae] tcp_sent session=88 len=42 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=88 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=88 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=88 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=88 pcb=20029BD0
+
+[ae] CLOSE session=88 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=89 pcb=20029AF8
+
+[ae] RX HELLO session=89 role=0
+
+[ae] MIC ENABLE session=89 pcb=20029AF8
+
+[ae] AUTH OK session=89 role=0
+
+[ae] tcp_sent session=89 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=89 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=89 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=89 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=89 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=89 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=89 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=89 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=89 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=89 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=89 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=89 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=89 len=751 sndbuf=6549 qlen=4
+
+[ae] RX FIN session=89 pcb=20029AF8
+
+[ae] CLOSE session=89 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=90 pcb=20029BD0
+
+[ae] RX HELLO session=90 role=0
+
+[ae] MIC ENABLE session=90 pcb=20029BD0
+
+[ae] AUTH OK session=90 role=0
+
+[ae] tcp_sent session=90 len=5 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=90 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=90 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=90 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=90 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=90 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=90 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=90 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=90 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=90 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=90 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=90 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=90 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=90 pcb=20029BD0
+
+[ae] CLOSE session=90 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=91 pcb=20029AF8
+
+[ae] RX HELLO session=91 role=0
+
+[ae] MIC ENABLE session=91 pcb=20029AF8
+
+[ae] AUTH OK session=91 role=0
+
+[ae] tcp_sent session=91 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=91 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=91 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=91 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=91 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=91 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=91 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=91 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=91 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=91 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=91 pcb=20029AF8
+
+[ae] CLOSE session=91 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=92 pcb=20029BD0
+
+[ae] RX HELLO session=92 role=0
+
+[ae] MIC ENABLE session=92 pcb=20029BD0
+
+[ae] AUTH OK session=92 role=0
+
+[ae] tcp_sent session=92 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=92 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=92 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=92 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP SEND session=92 len=5131 err=0 sndbuf=6549 qlen=4
+
+[ae] tcp_sent session=92 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=92 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=92 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=92 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=92 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=92 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=92 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=92 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=92 pcb=20029BD0
+
+[ae] CLOSE session=92 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=93 pcb=20029AF8
+
+[ae] RX HELLO session=93 role=0
+
+[ae] MIC ENABLE session=93 pcb=20029AF8
+
+[ae] AUTH OK session=93 role=0
+
+[ae] tcp_sent session=93 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=93 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=93 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=93 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=93 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=93 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=93 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=93 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=93 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=93 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=93 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=93 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=93 pcb=20029AF8
+
+[ae] CLOSE session=93 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=94 pcb=20029BD0
+
+[ae] RX HELLO session=94 role=0
+
+[ae] MIC ENABLE session=94 pcb=20029BD0
+
+[ae] AUTH OK session=94 role=0
+
+[ae] tcp_sent session=94 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=94 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=94 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=94 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=94 len=751 sndbuf=11680 qlen=0
+
+[ae] PUMP WAIT session=94 raw=849322 consumed=331
+
+[ae] tcp_sent session=94 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=94 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=94 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=94 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=94 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=94 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=94 pcb=20029BD0
+
+[ae] CLOSE session=94 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=95 pcb=20029BD0
+
+[ae] RX HELLO session=95 role=0
+
+[ae] MIC ENABLE session=95 pcb=20029BD0
+
+[ae] AUTH OK session=95 role=0
+
+[ae] tcp_sent session=95 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=95 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=95 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=95 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=95 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=95 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=95 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=95 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=95 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=95 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=95 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=95 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=95 pcb=20029BD0
+
+[ae] CLOSE session=95 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=96 pcb=20029BD0
+
+[ae] RX HELLO session=96 role=0
+
+[ae] MIC ENABLE session=96 pcb=20029BD0
+
+[ae] AUTH OK session=96 role=0
+
+[ae] tcp_sent session=96 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=96 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=96 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=96 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=96 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=96 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=96 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=96 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=96 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=96 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=96 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=96 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=96 pcb=20029BD0
+
+[ae] CLOSE session=96 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=97 pcb=20029AF8
+
+[ae] RX HELLO session=97 role=0
+
+[ae] MIC ENABLE session=97 pcb=20029AF8
+
+[ae] AUTH OK session=97 role=0
+
+[ae] tcp_sent session=97 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=97 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=97 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=97 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=97 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=97 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=97 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=97 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=97 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=97 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=97 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=97 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=97 pcb=20029AF8
+
+[ae] CLOSE session=97 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=98 pcb=20029BD0
+
+[ae] RX HELLO session=98 role=0
+
+[ae] MIC ENABLE session=98 pcb=20029BD0
+
+[ae] AUTH OK session=98 role=0
+
+[ae] tcp_sent session=98 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=98 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=98 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=98 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=98 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=98 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=98 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=98 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=98 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=98 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=98 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=98 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=98 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=98 pcb=20029BD0
+
+[ae] CLOSE session=98 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=99 pcb=20029AF8
+
+[ae] RX HELLO session=99 role=0
+
+[ae] MIC ENABLE session=99 pcb=20029AF8
+
+[ae] AUTH OK session=99 role=0
+
+[ae] tcp_sent session=99 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=99 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=99 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=99 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=99 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=99 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=99 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=99 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=99 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=99 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=99 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=99 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=99 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=99 pcb=20029AF8
+
+[ae] CLOSE session=99 pcb=20029AF8 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=100 pcb=20029BD0
+
+[ae] RX HELLO session=100 role=0
+
+[ae] MIC ENABLE session=100 pcb=20029BD0
+
+[ae] AUTH OK session=100 role=0
+
+[ae] tcp_sent session=100 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=100 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=100 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=100 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=100 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=100 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=100 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=100 len=1460 sndbuf=10929 qlen=1
+
+[ae] PUMP WAIT session=100 raw=896719 consumed=350
+
+[ae] tcp_sent session=100 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=100 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=100 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=100 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=100 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=100 pcb=20029BD0
+
+[ae] CLOSE session=100 pcb=20029BD0 wasMic=1 wasPlay=0
+
+[ae] ACCEPT session=101 pcb=20029AF8
+
+[ae] RX HELLO session=101 role=0
+
+[ae] MIC ENABLE session=101 pcb=20029AF8
+
+[ae] AUTH OK session=101 role=0
+
+[ae] tcp_sent session=101 len=5 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=101 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=101 len=1460 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=101 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=101 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=101 len=1460 sndbuf=8009 qlen=3
+
+[ae] tcp_sent session=101 len=2920 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=101 len=751 sndbuf=11680 qlen=0
+
+[ae] tcp_sent session=101 len=2920 sndbuf=9469 qlen=2
+
+[ae] tcp_sent session=101 len=1460 sndbuf=10929 qlen=1
+
+[ae] tcp_sent session=101 len=751 sndbuf=11680 qlen=0
+
+[ae] RX FIN session=101 pcb=20029AF8
+
+[ae] CLOSE session=101 pcb=20029AF8 wasMic=1 wasPlay=0

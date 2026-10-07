@@ -28,6 +28,8 @@ export interface SatelliteSettings {
   name: string;
   friendlyName: string;
   micDevice: string;
+  /** Assigned Pico audio endpoint as "host:port:token" (empty = local mic). */
+  remoteEndpoint: string;
   wakeWord: string;
   ttsVolume: number;
   wakeAckEnabled: boolean;
@@ -72,6 +74,8 @@ import json
 import logging
 import os
 import re
+import socket
+import struct
 import sys
 import threading
 import time
@@ -302,6 +306,189 @@ def _get_soundcard_mic(device_id: str):
     _LOGGER.warning("Mic '%s' not found in soundcard — using default", device_id)
     return sc.default_microphone()
 
+# ── Remote audio endpoint (Pico) client ───────────────────────────────────────
+# Implements the Canvas audio-endpoint wire protocol (see firmware protocol.h):
+#   [u16 payload_len LE][u8 type][payload ...]
+# Two TCP connections: mic (endpoint -> us, 8ch interleaved S16LE @ 16 kHz,
+# 20 ms frames) and playback (us -> endpoint, mono PCM16 at a negotiated rate).
+
+class RemoteEndpointClient:
+    MSG_HELLO = 1
+    MSG_HELLO_ACK = 2
+    MSG_CONFIG = 3
+    MSG_AUDIO = 4
+    ROLE_MIC = 0
+    ROLE_PLAYBACK = 1
+    CHANNELS = 8
+    RATE = 16000
+    FRAME_SAMPLES = 320  # 20 ms
+    FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2
+
+    def __init__(self, host: str, port: int, token: str, device_id: str):
+        self.host = host
+        self.port = port
+        self.token = token.encode("utf-8")
+        self.device_id = device_id.encode("utf-8")
+        self._mic: Optional[socket.socket] = None
+        self._play: Optional[socket.socket] = None
+        self._mic_buf = bytearray()
+        self._play_buf = bytearray()
+        self._play_rate = 22050
+
+    @staticmethod
+    def _frame(msg_type: int, payload: bytes) -> bytes:
+        total = len(payload) + 1
+        return bytes((total & 0xFF, (total >> 8) & 0xFF, msg_type)) + payload
+
+    def _hello(self, role: int) -> bytes:
+        p = bytes((role, len(self.token))) + self.token + bytes((len(self.device_id),)) + self.device_id
+        return self._frame(self.MSG_HELLO, p)
+
+    def _connect(self, role: int) -> "socket.socket":
+        s = socket.create_connection((self.host, self.port), timeout=5)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.sendall(self._hello(role))
+        # Wait for HELLO_ACK.
+        buf = bytearray()
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            buf.extend(chunk)
+            while len(buf) >= 3:
+                total = buf[0] | (buf[1] << 8)
+                if len(buf) < 2 + total:
+                    break
+                mtype = buf[2]
+                payload = bytes(buf[3:2 + total])
+                del buf[:2 + total]
+                if mtype == self.MSG_HELLO_ACK:
+                    if len(payload) >= 2 and payload[1] != 0:
+                        raise ConnectionError("endpoint rejected token")
+                    return s
+        raise ConnectionError("no HELLO_ACK from endpoint")
+
+    def connect_mic(self) -> None:
+        if self._mic is None:
+            self._mic = self._connect(self.ROLE_MIC)
+            self._mic_buf = bytearray()
+
+    def connect_playback(self) -> None:
+        if self._play is None:
+            self._play = self._connect(self.ROLE_PLAYBACK)
+            self._play_buf = bytearray()
+            cfg = struct.pack("<IBB", self._play_rate, 1, 0)  # rate, ch, PCM16
+            self._play.sendall(self._frame(self.MSG_CONFIG, cfg))
+
+    def read_mic_frame(self) -> "Optional[bytes]":
+        """Return one 8-channel frame (FRAME_BYTES) or None if not ready."""
+        if self._mic is None:
+            return None
+        try:
+            chunk = self._mic.recv(4096)
+        except (socket.timeout, BlockingIOError):
+            return None
+        if not chunk:
+            raise ConnectionError("mic connection closed")
+        self._mic_buf.extend(chunk)
+        while len(self._mic_buf) >= 3:
+            total = self._mic_buf[0] | (self._mic_buf[1] << 8)
+            if len(self._mic_buf) < 2 + total:
+                break
+            mtype = self._mic_buf[2]
+            payload = bytes(self._mic_buf[3:2 + total])
+            del self._mic_buf[:2 + total]
+            if mtype == self.MSG_AUDIO and len(payload) >= 8 + self.FRAME_BYTES:
+                return payload[8:8 + self.FRAME_BYTES]
+        return None
+
+    def play(self, pcm: bytes) -> None:
+        """Send mono PCM16 to the endpoint (playback connection)."""
+        if self._play is None:
+            return
+        try:
+            self._play.sendall(self._frame(self.MSG_AUDIO, pcm))
+        except OSError:
+            self._play = None
+
+    def set_play_rate(self, rate: int) -> None:
+        if rate == self._play_rate:
+            return
+        self._play_rate = rate
+        if self._play is not None:
+            try:
+                cfg = struct.pack("<IBB", rate, 1, 0)
+                self._play.sendall(self._frame(self.MSG_CONFIG, cfg))
+            except OSError:
+                self._play = None
+
+    def close(self) -> None:
+        for s in (self._mic, self._play):
+            if s:
+                try:
+                    s.close()
+                except OSError:
+                    pass
+        self._mic = None
+        self._play = None
+
+    def reconnect_later(self) -> None:
+        self.close()
+
+
+# ── Remote mic DSP: beamformer + NS + AGC (feature 5 seam) ────────────────────
+# Channel map (verified against the Sipeed R6+1 schematic):
+#   0/1 = D0 L/R (mic0/mic1), 2/3 = D1 (mic2/mic3), 4/5 = D2 (mic4/mic5),
+#   6/7 = D3 (unused / centre). Centre mic is ch 7; ch 6 reads ~0.
+# On this board mics 2 (ch2) and 5 (ch5) are silent, so the beamformer uses
+# the live channels 0, 1, 3, 4, 7.
+
+_LIVE_MIC_CHANNELS = (0, 1, 3, 4, 7)
+
+class RemoteMicDsp:
+    """Delay-and-sum style beamformer + noise gate + AGC for the remote mic."""
+
+    def __init__(self) -> None:
+        self._noise_rms = 0.0
+        self._agc_gain = 1.0
+        self._target_rms = 2400.0  # ~ -22 dBFS
+
+    def process(self, frame: bytes) -> bytes:
+        arr = np.frombuffer(frame, dtype="<i2").reshape(-1, 8).astype(np.float32)
+        # Sum the live channels (centre weighted 2x — it is the reference mic).
+        beam = arr[:, 7] * 2.0
+        for ch in _LIVE_MIC_CHANNELS:
+            if ch != 7:
+                beam += arr[:, ch]
+        beam /= float(len(_LIVE_MIC_CHANNELS) + 1)
+
+        rms = float(np.sqrt(np.mean(beam * beam)) + 1e-9)
+        # Noise gate: track the noise floor, suppress below it with a soft knee.
+        if rms < self._noise_rms:
+            self._noise_rms = 0.9 * self._noise_rms + 0.1 * rms
+        else:
+            self._noise_rms = 0.999 * self._noise_rms + 0.001 * rms
+        gate = max(0.0, min(1.0, (rms - 1.5 * self._noise_rms) / (4.0 * self._noise_rms + 1e-9)))
+        beam *= gate
+
+        # AGC: slow attack/release toward the target RMS.
+        if rms > 1e-6:
+            target = self._target_rms / rms
+            self._agc_gain += 0.05 * (target - self._agc_gain)
+            self._agc_gain = max(0.1, min(8.0, self._agc_gain))
+        beam *= self._agc_gain
+
+        return np.clip(beam, -32768.0, 32767.0).astype("<i2").tobytes()
+
+
+def _downmix_remote_frame(frame: bytes, dsp: "Optional[RemoteMicDsp]") -> bytes:
+    """8ch interleaved S16LE -> mono S16LE (beamformer when dsp is given)."""
+    if dsp is None:
+        arr = np.frombuffer(frame, dtype="<i2").reshape(-1, 8)
+        return arr[:, 7].astype("<i2").tobytes()
+    return dsp.process(frame)
+
 def _enc_varuint(value: int) -> bytes:
     buf = bytearray()
     while True:
@@ -354,6 +541,7 @@ class VoiceSatellite(asyncio.Protocol):
         self._mic_thread: Optional[threading.Thread] = None
         self._wake_word_active = True
         self._active_wake_word = config.wake_word
+        self._remote: Optional[RemoteEndpointClient] = None
 
     # ── asyncio.Protocol ───────────────────────────────────────────────────────
 
@@ -562,6 +750,9 @@ class VoiceSatellite(asyncio.Protocol):
         sound = self.config.good_intent_sound if good else self.config.no_intent_sound
         if not bool(enabled) or not sound:
             return
+        if self._remote_enabled():
+            self._play_wav_remote(sound)
+            return
         try:
             _sp.run(
                 ["mpv", "--no-video", "--really-quiet", "--volume=100", sound],
@@ -577,6 +768,12 @@ class VoiceSatellite(asyncio.Protocol):
         _LOGGER.info("Announce: %s", urls)
 
         def _play() -> None:
+            if self._remote_enabled():
+                for url in urls:
+                    self._play_audio_url_remote(url)
+                if self._loop:
+                    self._loop.call_soon_threadsafe(lambda: self._send(VoiceAssistantAnnounceFinished()))
+                return
             vol = self.config.tts_volume
             for url in urls:
                 p = subprocess.Popen(
@@ -604,12 +801,19 @@ class VoiceSatellite(asyncio.Protocol):
         Uses soundcard library (PulseAudio/PipeWire native) for reliable audio
         capture, matching the OHF-Voice/linux-voice-assistant reference approach.
         Wake word detection priority: MicroWakeWord → pyopen_wakeword → raw OWW.
+        When a remote audio endpoint (Pico) is assigned, the mic comes from it
+        over TCP instead (see _mic_loop_remote).
         """
         result = _load_wake_model(self.config.wake_word)
         if not result:
             _LOGGER.error("No wake word model available — voice detection disabled")
             return
         model_kind, model, features = result
+
+        if (self.config.remote_endpoint or "").strip():
+            _LOGGER.info("Using remote audio endpoint mic: %s", self.config.remote_endpoint)
+            self._mic_loop_remote(model_kind, model, features)
+            return
 
         if not _SC_OK:
             _LOGGER.error("soundcard not installed — mic capture disabled. "
@@ -700,6 +904,170 @@ class VoiceSatellite(asyncio.Protocol):
         finally:
             _LOGGER.info("Mic loop exited (chunks=%d)", chunk_count)
 
+    def _remote_client(self) -> "Optional[RemoteEndpointClient]":
+        """Lazily build the endpoint client from --remote-endpoint host:port:token."""
+        spec = (self.config.remote_endpoint or "").strip()
+        if not spec:
+            return None
+        if self._remote is not None:
+            return self._remote
+        parts = spec.split(":")
+        if len(parts) != 3:
+            _LOGGER.error("Invalid --remote-endpoint '%s' (expected host:port:token)", spec)
+            return None
+        host, port_str, token = parts
+        try:
+            port = int(port_str)
+        except ValueError:
+            _LOGGER.error("Invalid remote endpoint port '%s'", port_str)
+            return None
+        self._remote = RemoteEndpointClient(host, port, token, self.config.name)
+        return self._remote
+
+    def _mic_loop_remote(self, model_kind: str, model, features) -> None:
+        """Mic capture from the assigned Pico audio endpoint over TCP."""
+        dsp = RemoteMicDsp()
+        chunk_count    = 0
+        silence_warned = False
+
+        while self._wake_word_active or self._streaming:
+            client = self._remote_client()
+            if client is None:
+                time.sleep(2.0)
+                continue
+            try:
+                client.connect_mic()
+                frame = client.read_mic_frame()
+                if frame is None:
+                    time.sleep(0.005)
+                    continue
+            except Exception as e:
+                _LOGGER.warning("Remote endpoint mic error: %s", e)
+                client.reconnect_later()
+                time.sleep(2.0)
+                continue
+
+            audio_bytes = _downmix_remote_frame(frame, dsp)
+            chunk_count += 1
+
+            # Silence diagnostic after ~2 s
+            if not silence_warned and chunk_count == 25:
+                amp = np.abs(np.frombuffer(audio_bytes, dtype="<i2")).max()
+                if amp < 5:
+                    _LOGGER.error(
+                        "Remote endpoint mic is silent (max_amp=%d). "
+                        "Check the Pico mic array and assignment.",
+                        amp,
+                    )
+                    silence_warned = True
+
+            # Stream to HA during STT phase
+            if self._streaming:
+                self._send_from_thread(VoiceAssistantAudio(data=audio_bytes))
+
+            # Wake word detection
+            if not (self._wake_word_active and not self._pipeline_active):
+                continue
+
+            activated = False
+            try:
+                if model_kind == "micro":
+                    micro_inputs = features.process_streaming(audio_bytes)
+                    for micro_input in micro_inputs:
+                        if model.process_streaming(micro_input):
+                            _LOGGER.info("Wake word detected: %s (MicroWakeWord)",
+                                         self.config.wake_word)
+                            activated = True
+                            break
+
+                elif model_kind == "oww_streaming":
+                    oww_inputs = features.process_streaming(audio_bytes)
+                    for oww_input in oww_inputs:
+                        for prob in model.process_streaming(oww_input):
+                            if prob >= 0.35:
+                                _LOGGER.info("Wake word detected: %s (%.3f)",
+                                             self.config.wake_word, prob)
+                                activated = True
+                                break
+
+                else:  # oww_raw batch predict fallback
+                    audio_i16 = np.frombuffer(audio_bytes, dtype=np.int16)
+                    preds = model.predict(audio_i16)
+                    if chunk_count % 200 == 0:
+                        best = max(preds.values()) if preds else 0.0
+                        _LOGGER.info("OWW chunk=%d best_score=%.3f",
+                                     chunk_count, best)
+                    for ww_name, score in preds.items():
+                        if score >= 0.35:
+                            _LOGGER.info("Wake word detected: %s (%.3f)",
+                                         ww_name, score)
+                            model.reset()
+                            activated = True
+                            break
+
+            except Exception as e:
+                _LOGGER.warning("Wake word inference error: %s", e)
+
+            if activated:
+                self._on_wake_word(self.config.wake_word)
+
+    def _remote_enabled(self) -> bool:
+        return bool((self.config.remote_endpoint or "").strip())
+
+    def _play_audio_url_remote(self, url: str) -> None:
+        """Download + decode a URL to mono PCM16 and stream it to the endpoint."""
+        def _play() -> None:
+            client = self._remote_client()
+            if client is None:
+                return
+            try:
+                client.connect_playback()
+                client.set_play_rate(22050)
+                proc = subprocess.Popen(
+                    ["ffmpeg", "-v", "error", "-i", url,
+                     "-f", "s16le", "-ac", "1", "-ar", "22050", "-"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                assert proc.stdout is not None
+                while True:
+                    chunk = proc.stdout.read(4096)
+                    if not chunk:
+                        break
+                    client.play(chunk)
+                proc.wait()
+            except Exception as e:
+                _LOGGER.warning("Remote TTS playback failed: %s", e)
+
+        threading.Thread(target=_play, daemon=True).start()
+
+    def _play_wav_remote(self, wav_path: str) -> None:
+        """Decode a local audio file to mono PCM16 and stream it to the endpoint."""
+        def _play() -> None:
+            client = self._remote_client()
+            if client is None:
+                return
+            try:
+                client.connect_playback()
+                client.set_play_rate(22050)
+                proc = subprocess.Popen(
+                    ["ffmpeg", "-v", "error", "-i", wav_path,
+                     "-f", "s16le", "-ac", "1", "-ar", "22050", "-"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                assert proc.stdout is not None
+                while True:
+                    chunk = proc.stdout.read(4096)
+                    if not chunk:
+                        break
+                    client.play(chunk)
+                proc.wait()
+            except Exception as e:
+                _LOGGER.warning("Remote cue playback failed: %s", e)
+
+        threading.Thread(target=_play, daemon=True).start()
+
     def _on_wake_word(self, ww_name: str) -> None:
         """Called from mic thread — triggers the HA pipeline."""
         if self._pipeline_active or self._transport is None:
@@ -736,6 +1104,10 @@ class VoiceSatellite(asyncio.Protocol):
         if not sound:
             return
 
+        if self._remote_enabled():
+            self._play_wav_remote(sound)
+            return
+
         def _play() -> None:
             if self._wake_ack_proc:
                 try:
@@ -761,6 +1133,9 @@ class VoiceSatellite(asyncio.Protocol):
     # ── TTS playback ───────────────────────────────────────────────────────────
 
     def _play_tts(self, url: str) -> None:
+        if self._remote_enabled():
+            self._play_audio_url_remote(url)
+            return
         import subprocess as _sp
         vol = self.config.tts_volume
 
@@ -822,6 +1197,8 @@ def main() -> None:
     ap.add_argument("--friendly-name", default="Canvas Display")
     ap.add_argument("--mac",           default="")
     ap.add_argument("--mic-device",    default="default")
+    ap.add_argument("--remote-endpoint", default="",
+                    help="Assigned Pico audio endpoint as host:port:token (empty = local mic)")
     ap.add_argument("--wake-word",     default="okay_nabu")
     ap.add_argument("--tts-volume",    type=int, default=80)
     ap.add_argument("--wake-ack-enabled", type=lambda v: str(v).lower() in ("1", "true", "yes", "on"), default=False)
@@ -922,6 +1299,7 @@ export class VoiceSatelliteProcess extends EventEmitter {
       '--name',          safeName,
       '--friendly-name', s.friendlyName || safeName,
       '--mic-device',    s.micDevice,
+      '--remote-endpoint', s.remoteEndpoint || '',
       '--wake-word',     s.wakeWord,
       '--tts-volume',    String(s.ttsVolume),
             '--wake-ack-enabled', s.wakeAckEnabled ? '1' : '0',

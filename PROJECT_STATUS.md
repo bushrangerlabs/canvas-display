@@ -1,6 +1,608 @@
 # Project status and session handover
 
-Last reviewed: 2026-09-29. This file records local checkout evidence, not deployment acceptance.
+Last reviewed: 2026-10-07. Deployment acceptance is scoped to the explicitly recorded tests below; historical notes are not current proof.
+
+## Five 16 kHz raw-I2S captures analyzed; phase varies across starts (2026-10-07)
+
+The diagnostic remains a separate opt-in target. Production source, TCP/lwIP,
+packet format, playback, DSP, VAD, ASR and Profile A were not changed. Five
+independent v4 captures `start-01-v4.txt` through `start-05-v4.txt` and the
+combined decoder report `five-start-analysis-v4-final.json` are archived under
+`artifacts/audio-endpoint-baseline/captures/pico-raw/i2s-diagnostic/`. Each has
+8192 observations and 128 WS transitions. CK phase mismatches total 1 high-phase
+sample out of 20480; all low-phase samples matched CK-low.
+
+Best-supported Philips-I2S slot interpretation: the first high-phase sample at
+the WS transition is a zero delay bit; positions 1..24 are sample bits 23..0;
+positions 25..31 are padding. Offset 0 has zero delay ones and zero padding ones
+in all captures. Offsets -2/-1 also have zero padding/delay because low sample
+bits are zero, but reconstruct only nonnegative values; offset +1 places nonzero
+sample bits in the delay position; offset +2 produces padding ones. Thus offset 0
+is the strongest combined interpretation, though padding alone is not unique.
+
+The production-style first-16-bit window began at WS-relative CK positions
+[3,2,4,2,2]. With the slot model above this selects bits 21..6, 22..7, 20..5,
+22..7, 22..7 respectively—not bits 23..8 or delay+23..9. This is class D:
+receiver start phase varied across the five runs, consistent with production's
+input PIO starting independently of WS. The v4 250-ms clock warm-up differs from
+the precise production call timing; it preserves nominal integral frame periods
+but does not prove identical per-boot timing. Source-level startup remains
+unsynchronized. The external `moefh/pico-i2s-mic` integrates clock/WS generation
+and sampling in one PIO program and extracts bits 23..8 after its delay bit.
+
+For DATA edge: within each CK period, high- and low-phase DATA snapshots agreed;
+DATA changes were observed between the low-phase observation and the next
+high-phase observation (per capture: D0 914..1251, D1 880..1018, D2 860..1014,
+D3 386..608 changes). Since the samples are only a few PIO instructions after
+wait detects each level, this brackets changes but cannot establish precise
+setup/hold or whether the electrical transition is on the expected edge. High
+samples reconstruct a coherent 1-kHz component in starts 2..5 (per-channel
+mean-removed R² about 0.94..0.99); start 1 did not. Several decoded channel-slot
+streams are strongly DC-biased/one-sided (e.g. D0 WS0 is positive-only and D0
+WS1 negative-only in starts 2..5), so correctly centered signed waveform behavior
+is not established from tone coherence alone.
+
+Recommendation: do not use the existing unsynchronized production extraction
+as a stable bits-23..8 capture. The smallest correction direction is WS-synchronous
+slot framing followed by an explicit extraction of sample bits 23..8. Do not
+implement it yet: the DATA-edge and per-channel sign/DC caveats warrant review and,
+if needed, a centered-phase timing probe. No 24-kHz, distance, or voice testing was
+run. Pico remains on diagnostic firmware; recovery UF2 is the separate
+source-based `build-production-recovery/canvas_audio_endpoint.uf2` (not claimed
+byte-identical to the previous flashed image). Six decoder/collector tests,
+Python compilation, and diagnostic builds pass. Await owner review before returning
+to production firmware.
+
+## Pre-push credential cleanup (2026-10-07)
+
+Removed the Pico Wi-Fi SSID/password, enrollment-secret and Core IP defaults
+from source; production credentials are now local CMake cache inputs and the
+README uses placeholders. The firmware handoff's live deployment block was
+redacted, Android's Core fallback comes from local Gradle property/environment,
+and mic/play diagnostic scripts require local `AE_HOST`/`AE_TOKEN`. The 12 MB
+`firmware/audio-endpoint.zip` is excluded: it bundles a pre-redaction build tree;
+the sanitized source tree is included separately. Build directories, local
+artifacts/captures, `.env` files and signing material remain ignored. A fresh
+credential-free production source build and focused server tests passed; the full
+Core suite still has the pre-existing Whisper/intelligence/intent-router failures.
+
+## Active milestone: Pico network sound card -> Linux native edge baseline
+
+User accepted the Pico TCP transport and lifecycle as stable. Confirmed root
+cause of prior lwIP send-queue corruption: application raw-API calls lacked
+`cyw43_arch_lwip_begin()/end()` under the background networking implementation.
+Synchronization-only validation passed 101/101 sessions; subsequent lifecycle
+validation passed 131/131, including 30 queued-audio closes. Assertions and
+watchdog remain enabled. Actual returned-close-ERR_MEM retry handling is
+implemented but not live-exercised; no artificial memory-pressure work requested.
+Evidence is preserved under `firmware/audio-endpoint/TCP_DIAGNOSIS.md` and logs.
+
+Linux baseline integration is now deployed natively on Pi `.216`. Its actual
+voice owner is the kiosk embedded sidecar (device services disabled, separate DB
+from system :8099). Initial code incorrectly wired remote audio only to the HA
+satellite. Core-direct now uses authenticated remote capture, unchanged DSP math,
+existing wake/VAD/Core services, and paced/serialized remote output. Assignment
+polling now runs in that embedded owner; canonical enrolled environment identity
+outranks legacy SQLite device_id. No local capture process remains, both Pico
+sockets authenticate, and edge restart recovery was observed. No AEC or channel
+selection changes were made.
+
+Raw frame/DSP diagnostics and quiet-room measurements are recorded, but no
+confirmed human speech/wake event or complete conversation was obtained. Thus
+near/far speech, actual ASR utterance, audible edge TTS, TTS/mic coexistence,
+physical Pico reboot recovery, and repeated conversation acceptance remain
+pending operator-assisted acoustic tests. A synthetic acoustic prompt produced
+no wake event; its audibility/distance were unverified, so no algorithm tuning
+was performed. Sequence-number gaps are recorded as application-frame gaps,
+not mislabeled as TCP loss. The logging-only reduced-verbosity firmware builds
+but was NOT flashed; the running transport remains the accepted lifecycle build.
+
+See `firmware/audio-endpoint/EDGE_BASELINE.md` and
+`artifacts/audio-endpoint-baseline/edge-observations.json` for phase status,
+measurements, deployment backups and next test procedure. Local server typecheck,
+focused remote/VAD/startup tests passed; the normal server test script now
+includes them and passed 76/76 (previous 49-test suite also passed). Pi native
+TypeScript/esbuild/pkg build and service startup passed. No commit/release done.
+
+Next step: monitor the Pi while the operator says 'Hey Jarvis', pauses, then
+'What time is it?' at the Pico. Correlate raw/DSP levels, wake detection,
+VAD/capture, transcription and remote playback before changing DSP or firmware.
+
+## Raw-centre capture accepted one correct Big Ben turn (2026-10-06)
+
+Operator retry after VAD relaxation: journal shows first turn `What time is it?`
+transcribed correctly, then three captures reached capture activity but were
+rejected by containsLikelySpeech gate, followed by successful capture of
+`How tall is Big Ben?` at 16:51:34. Correct transcript and reply logged at
+16:51:48; software total 16.249s, first playback 5.636s, playback estimate
+10.609s, capture 2580ms. Wake -> raw centre mic -> relaxed VAD -> pre-emphasis/
+normalization -> Core ASR/conversation -> response is functionally demonstrated.
+VAD rejects are still frequent because end-of-speech detector may mark speech
+ended but containsLikelySpeech requires peak>=1200 and RMS>=120; intermediate
+turns had peak 967-1180 and RMS 137-166. Successful sample activity RMS184
+peak1405. This is the next reliability issue; don't infer every request was
+heard. Last voice-debug saved files retained on Pi; remove debug env drop-in
+when diagnosis is complete. Operator confirms the spoken response was clear audio from the Pico-connected speaker. Accepted raw and enhanced Big Ben WAVs copied to `artifacts/audio-endpoint-baseline/captures/accepted/`. Removed temporary `voice-debug.conf` capture-save drop-in; restarted kiosk at 16:53:02, both Pico sockets authenticated, detector listening at 16:53:05 (PID 158736). Routine capture WAV saving is now off. Baseline complete-turn success is established; repeatability, near/far sensitivity, and sustained speech recognition remain open.
+
+## Raw-capture no-speech VAD fix deployed; retest pending (2026-10-06)
+
+Operator says wake triggers but speaking the request returns dim blue. Journal
+confirms five wake triggers but each command capture immediately ends
+`no-speech` at 2500 ms; no turn reaches ASR. Saved latest failed WAV: 2.5s,
+overall RMS 162, peak 1432; 20-ms window maximum RMS 500. Learned threshold
+356. VAD required >=350-418 RMS for 240ms contiguous, so quiet raw centre-mic
+speech is rejected. Direct-edge VAD profile changed: no-speech wait 4s (from
+2.5), trailing silence 1000ms, min speech 120ms (from 240), threshold
+max(120, noise*1.5+50) (previous max(350, noise*1.8+120)). Defaults unchanged
+for other users. Added options and regression for 170 RMS noise -> 500 RMS quiet
+speech. Typecheck and 79/79 tests PASS. Deployed at 16:50:20; both Pico sockets
+ready, listening at 16:50:22, PID 158456. Capture diagnostics debug env remains.
+Next operator test, then inspect transcription and remove debug drop-in.
+
+## Remote speech playback treble EQ trial deployed (2026-10-06)
+
+Operator confirms accepted Big Ben turn's playback sounded clear; asks improve
+playback quality. Controlled Piper direct vs Pico speaker+mic capture showed
+speaker-acoustic path rolls off speech upper band (Piper original 1-3k 7.5%,
+3-8k 5%; via speaker+mic ch7 1-3k 2%, 3-8k ~0). Added RBJ high-shelf EQ to
+RemoteEndpoint playback, default +6 dB above ~1.8 kHz, bounded -6..+9 dB with
+clipping saturation and env override CANVAS_VOICE_TREBLE_DB (0 bypass). Applied
+before the existing 15% volume; samples chunked remain PCM. Test verifies 3kHz
+boost, exact 0dB bypass and no clipping. Typecheck and 80/80 tests PASS.
+Deployed at 21:22:44; both Pico sockets ready, wake listening at 21:22:46,
+PID 160925. Backups /usr/bin/canvas-display-server.before-playback-eq-20261006
+and bundled equivalent. Need operator A/B listener validation: Hey Jarvis / ask
+time; report whether clearer, harsh/distorted, or too loud. At 15% volume absolute
+loudness still limited; adjust volume separately only after user's preference.
+Revert filter immediately with CANVAS_VOICE_TREBLE_DB=0 if disliked.
+
+## Per-audio-endpoint Core controls deployed (2026-10-06)
+
+Deployment approved by user. Core + web built and deployed to .108; live Core
+health ok version 0.3.2. Browser/admin GET endpoint verified over authenticated
+API: assigned <audio-endpoint-id> online with settings 15% volume, +6dB treble,
+1x mic capture gain, 0.95 pre-emphasis. Core migration log says migrations
+applied. First compose attempt without CANVAS_CORE_TLS_DIR failed before build;
+reran with the existing `<local-home>/canvas-core/core/tls` path and rebuilt
+only canvas-core (TLS proxy not rebuilt). Backups on Core:
+`<local-home>/canvas-core/core/dist.before-audio-controls-20261006` and
+`public.before-audio-controls-20261006`.
+
+Linux edge sidecar rebuilt natively and deployed; backup tar `<local-home>/build/canvas-server-before-audio-controls-20261006.tar.gz` and binaries `/usr/bin/canvas-display-server.before-audio-controls-20261006` plus bundle equivalent. Existing pkg warning `Cannot resolve resolvedPath` remains. Embedded kiosk restarted at 22:09:55; logs show assignment auto-applied (credentials redacted), MIC + playback ready; wake listening 22:09:58, PID 161615. Verified edge DB stores the exact same settings returned by Core. Core role confirms full roundtrip control propagation. No audio/firmware changes.
+
+Validation before deploy: Core build/typecheck; focused Core audio tests 8/8; web build; server typecheck and 80/80 tests. Full Core suite has the previously noted unrelated Whisper transcription and intent-router failures. Remaining acceptance: use Core controls to change e.g. playback volume/EQ, save, wait at most 10s, listen/test on Pico; then restore desired values. Not yet browser-click/on-device-tested the settings form interaction.
+
+## Per-audio-endpoint Core controls implemented locally (2026-10-06)
+
+Added Core persisted JSONB audio_endpoints.settings with migration/defaults and
+validated admin PUT `/api/admin/audio-endpoints/:id/settings`. Settings are
+returned by endpoint list, included in edge assignment and pushed to assigned
+edge desired-state when saved. Web Settings -> Audio endpoints now renders
+per-endpoint playback volume (0-100%), treble EQ (-6..+9 dB), mic ASR capture
+gain (0.5..8), and pre-emphasis (0..0.99), alongside existing assignment,
+mic-level and speaker tests. Edge assignment poller validates/persists controls;
+settings changes restart the active owner. Runtime applies endpoint playback
+volume/EQ and raw capture normalization/pre-emphasis. Wake-word DSP stays
+unchanged. Defaults match accepted setup (15% volume, +6 dB treble, 1x capture
+gain, 0.95 preemphasis). Changes apply after edge's <=10 s Core poll.
+
+Validation: Core build PASS; focused `npx tsx --test test/audio-endpoints.test.ts`
+8/8 PASS; Core typecheck PASS; web production build PASS; server typecheck and
+80/80 tests PASS. Full Core test run has two pre-existing unrelated failures:
+WhisperTranscription.transcribe and intent-router media_play assertion; this
+session's focused audio-endpoints tests are green. `git diff --check` PASS.
+Not deployed: project deployment guidance requires explicit deployment approval.
+After deployment, test each control on assigned Pico; volume/EQ by listening,
+mic gain/preemphasis with saved capture and transcription. Revisit adding bass
+EQ or configurable VAD/wake sensitivity only from operator feedback.
+
+## Profile A restored; normal sanity turn succeeded (2026-10-06)
+
+User requested Profile A restore; called exactly the deployed Restore Profile A
+API operation (browser connector unavailable; no other settings modified). Core
+readback is 15/+6dB/1x/.95. Edge control cache updated 11:48:13; Core heartbeat
+11:48:13Z and online at .27. Authenticated MIC and playback socket ACKs logged
+22:48:13 AEDT, wake listening 22:48:15, PID 162523. Diagnostic env unset, no
+capture files. User performed normal sanity; at 22:49:28 wake triggered,
+capture speech-ended 2240ms (VAD RMS47, floor57, threshold136), capture activity
+RMS123 peak1498; Core ASR transcript `What time is it?`, reply `It is 10:49 pm.`
+First playback 2971ms, playback 1650ms, total 4621ms; Core roundtrip 2358ms.
+Thus normal Profile A voice operation passed one turn.
+
+Logs subsequently show additional wake events/captures beyond the requested
+single test: two failed `containsLikelySpeech` checks (peak1152/RMS144 and
+peak1053/RMS137), one successful ASR `how tall is big band.` with Core reply
+about Big Ben, and another successful odd query transcript `Explain the gray
+elephants in Denmark trick.` with ~87.9s Core roundtrip / ~91.5s total. Do not
+attribute these extra stimuli to user or false wakes without confirmation; log
+shows actual events. Preserve as evidence of VAD rejection and latency variance.
+
+Next: prepare controlled raw capture (max 300 s), but diagnostics remain OFF
+until user confirms readiness and instructions delivered. Baseline settings
+remain 15/+6dB/1x/.95.
+
+## Pico microphone I2S receive-format review (2026-10-06; no firmware edits)
+
+Reviewed `src/audio.c`, `src/i2s_input.pio`, `src/config.h`, and handoff/docs.
+No authoritative MSM261S4030H0 timing/datasheet is checked into the project; the
+24-bit-in-32-bit assertion is a comment in config.h, and AE_I2S_SLOT_BITS is not
+referenced by extraction code. Existing 8-channel WAVs are post-conversion PCM16,
+not raw slots; they cannot prove bit alignment.
+
+Source-derived timing: clock generator uses CK=Fs*64=1.024MHz (if clk_sys/div
+as coded), with 32 CK low/high per WS half-cycle. WS changes on `set x` while CK
+is low; CK is then raised by the first `nop`. Input PIO waits for CK high then
+executes `in pins,4` one input-SM cycle later while CK remains high (input SM
+uses default clk divider 1; clock-gen high state lasts its divided instruction
+period). Standard Philips I2S convention is transmitter data transition on
+falling CK, receiver samples rising CK; source aligns its sample near rising but
+the MSM261 part's exact setup/hold/change edge still needs vendor documentation
+or a logic-analyzer measurement. The clock/data sample edges were not physically
+measured in this review.
+
+Critical structural gap: input PIO captures only D0..D3; it never samples WS.
+Clock SM is enabled before input SM, then input SM is enabled before RX DMA is
+configured. There is no WS-based reset/start alignment. Therefore DMA raw[0] and
+`w[0..7]` grouping are NOT proven to start at WS/slot boundary; `w[0..3]` left,
+`w[4..7]` right is an assumption, potentially shifted by 0/8/16/24 CK.
+
+Conditional bit-level finding: if raw slot starts exactly at WS transition and
+mic follows conventional 24-bit I2S, sequence is one delay bit at slot position
+0, sample sign/MSB at position 1, then sample bits through position 24, followed
+by seven padding bits. Current first-16 extraction (positions 0..15) then puts
+the delay zero in PCM bit15 and sign in bit14: a one-bit right misalignment,
+loses proper sign extension, and discards nine low sample bits rather than the
+usual eight for deliberate 24->16 truncation. If microphone is left-justified or
+raw slot offset differs, this conditional analysis changes. It is NOT yet an
+empirically established diagnosis. Existing 0.5m output has suspicious asymmetry
+(e.g. ch7 selected interval mean +34 vs demeaned RMS 28, only ~10% negative
+samples), and raw quiet channels previously had large DC biases; that is
+supporting evidence only, not proof because 16-bit data already lost slot bits.
+
+Smallest diagnostic recommendation (not built or flashed): separate compile-time
+`AE_MIC_RAW_DIAG` firmware variant, production source behavior unchanged by
+default. In that variant, dedicated PIO receiver samples D0..D3 plus WS on both
+CK-high and CK-low phases into a bounded ~50-100ms DMA buffer, preserving phase
+order; no WiFi/TCP audio conversion needed in diag build. Dump raw packed samples
+and metadata over USB CDC after capture. Offline decode aligns to sampled WS,
+inspects every full slot/padding bit, tests candidate 24-bit offsets around the
+standard one-bit delay, and compares DC, min/max sign symmetry, RMS, clipping,
+changing bits, waveform/candidate correlations and per-lane levels against a
+controlled steady acoustic tone. High/low captures plus a logic analyzer (if
+available) establish data-change edge/setup timing. Diagnostic build is a
+one-off only; do not flash until user authorizes. No TCP/protocol/lwIP/buffer/
+watchdog/assertion/playback source changed in this review.
+
+Current 0.5m labelled raw capture remains valid and file recovery fix is deployed;
+next distance test is paused for this receive-alignment investigation.
+
+## Controlled 0.5 m raw 8-channel capture salvaged and verified (2026-10-06)
+
+After user completed prescribed 0.5m sequence, sidecar recorder produced frame-
+aligned raw PCM payload but shutdown did not await asynchronous WAV finalization:
+RIFF sizes remained zero and JSON absent. Recovered WAV headers + metadata from
+exact frame-aligned payload byte counts (PCM unchanged), labeled 0.5m test with
+approx speech block offset t=70s using matching VAD/turn logs. Valid file:
+`artifacts/audio-endpoint-baseline/captures/controlled-0.5m/canvas-audio-raw-2026-10-06T12-03-28-316Z-434d5df8.wav` SHA256 d1c47dd435bbda9c2fad45ce069247875bc94cd2c4cb8da850e378e3d1a1b0c0; 8ch 16k PCM16, 155.72s (includes 70s prep/ambient pre-roll); metadata sibling says recovered finalization. Analyzer output at `.../channel-analysis.json`; one capture slice output `.../asr-success-channel-analysis.json`. Success slice estimated raw ch RMS [41,26,31,74,31,33,0,28], peak max249, no clipped samples; variable across channels and ch6 is spare. Per-channel correlation with centre ch7 [0.56,0.61,0.73,0.34,0.72,0.59,0,1]. A 3.3s success window includes silence so these are not calibrated microphone gains or SNR. Logs during 0.5m: multiple VAD end-of-speech events rejected by containsLikelySpeech (RMS 83-166/peak 764-1172); one accepted transcript `How tall is Big Bend.` (Core replied with Big Ben answer) capture duration 3260ms, first playback 5878ms, total 12855ms. This is useful baseline evidence: VAD rejected majority, ASR confused Ben/Bend. No algorithm tuning was done.
+
+Fixed shutdown finalization locally: RemoteEndpoint.stop returns/awaits diagnostic finish; added regression test. Server package version bumped 0.1.2 ->0.1.3 and deployed while diagnostic flag OFF; test/typecheck 82/82 PASS. Pi sidecar restarted 23:12:22, both sockets ready, listening 23:12:25, PID 164007. Core settings remain Profile A. Diagnostic drop-in absent and no fresh raw files. Backups before this minor fix: `/usr/bin/canvas-display-server.before-diag-finalize-20261006`, bundle equivalent, and `<local-home>/build/canvas-server-before-diag-finalize-20261006.tar.gz`.
+
+Next: give exact 2m instructions, wait for user ready, enable new bounded capture, verify WAV arm, then collect 2m separately. Do not ask across-room until its 2m file is finalized and analyzed.
+
+## User's first diagnostic procedure attempt: diagnostics remained off (2026-10-06)
+
+After exact recording instructions, operator replied `done`. Strictly followed
+instruction not to enable unless explicit ready/confirmation; therefore no raw
+8-channel files exist and controlled baseline did NOT get captured. Current logs
+22:54:44-22:56:01 show ~12 wake triggers; one successful What time turn at 22:55:
+capture 2200ms, final frame RMS149/peak1627, capture activity RMS149 peak1627,
+Core ASR `What time is it?`, reply `It is 10:55 pm.`, first playback 2922ms,
+playback 1501ms, total 4424ms, Core roundtrip 2191ms. Most other turns ended VAD
+speech-ended but failed containsLikelySpeech: captured activity RMS 98-137 and
+peak 670-1159, below hard RMS120/peak1200; several `no-speech` turns. This is a
+significant repeatability issue; do not change VAD before actual multichannel
+recording. Core heartbeat online .27, controls remain Profile A 15/+6/1/.95,
+diagnostics off. Ask operator whether `done` meant all 12 prompts were completed;
+explain we need rerun after explicit enable because no raw capture was saved.
+
+## Profile A restored; awaiting normal voice sanity test (2026-10-06)
+
+Per user, restored through the same deployed Core settings API route called by
+Restore Profile A (browser connector unavailable; used exact action payload; did
+not invoke any other setting writes): 15% playback volume, +6dB treble, 1x mic
+gain, .95 pre-emphasis. Core GET confirms exact values, endpoint online at
+<LAN_IP>, assigned to Pi `.216`, heartbeat 11:48:13Z. Edge poller applied
+settings at SQLite updated_at 11:48:13; process PID 162523 consumes those
+controls (volume/gain/pre-emphasis queried per playback/capture; EQ on object
+construction after settings were written). Both fresh ESTAB TCP sockets fd28/31,
+valid MIC and playback ready events 22:48:13, wake model listening 22:48:15.
+ICMP from Pi 2.6ms, neighbor REACHABLE. `CANVAS_AUDIO_DIAGNOSTICS` absent in
+service config/process; no diagnostic WAVs. No Pico firmware or transport work.
+Normal spoken test not yet performed by agent; owner is about to speak.
+
+## Pico reconnected; deployment verification awaits normal human voice turn (2026-10-06)
+
+Following operator normal power-cycle, Core heartbeat now `2026-10-06T11:45:58Z`,
+address <LAN_IP>, online true. Pi ARP REACHABLE, ping ~2.5-3.2ms. Edge owner
+PID 162523 has ESTAB sockets to <LAN_IP>:8090 fds 27/28; its parser emitted
+`mic-ready` and `playback-ready` only on valid protocol ACK; wake model loaded and
+listening at 22:44:29 AEDT. No raw diagnostic WAV exists; environment probe
+confirms CANVAS_AUDIO_DIAGNOSTICS absent/off. All deployments unchanged otherwise.
+
+Current authoritative Core audio settings remain 100 volume / 0 dB treble / 3x
+capture gain / .95 pre-emphasis. No write/restore occurred. Core schema has no
+settings updated_at/audit/history table; `created_at` is endpoint registration
+only. Container request logs have no settings PUT entry; cannot attribute who
+changed values or exact change time. Edge SQLite assignment cache has same values
+and `updated_at=2026-10-06 11:19:35` (UTC/local DB time), proving latest config
+was applied then; Core endpoint last_seen continued to 11:45:58Z. Running code
+reads playback_volume at each play, mic_capture_gain and mic_preemphasis before
+ASR processing; playbackTrebleDb read into RemoteEndpoint construction. The
+process restarted 22:41 with current assignment polling; cache was already
+updated by 22:41 boot, so all four current values are what the current owner
+will use. Could not prove origin of change; likely UI/API config update is an
+inference only, not evidenced.
+
+No normal voice turn was performed by agent (requires speech/listening). Stop
+here and ask owner to say `Hey Jarvis`, pause briefly, then `What time is it?`
+from normal operating position. Warning: current configured playback volume is
+100%; do not increase/modify; stop the test if reply is uncomfortably loud.
+Await observed transcript/clear audible reply before enabling diagnostics.
+
+## Audio-quality diagnostics first slice deployed; Pico connectivity blocks acceptance (2026-10-06)
+
+User authorized Core .108 + edge .216 deployment with diagnostics off. Web/Core
+rebuilt; remote dist/public backed up at
+`<local-home>/canvas-core/core/{dist,public}.before-audio-diagnostics-approved-20261006`;
+Core image rebuilt and only canvas-core restarted (TLS proxy untouched). Health
+OK 0.3.2. Linux sidecar rebuilt natively and installed; backups
+`/usr/bin/canvas-display-server.before-raw-diag-20261006`, bundled equivalent,
+and `<local-home>/build/canvas-server-before-raw-diag-20261006.tar.gz`.
+Build emitted existing pkg `resolvedPath` warning. Kiosk process 162523 active,
+wake model listening; environment/config inspection confirms
+CANVAS_AUDIO_DIAGNOSTICS unset/off.
+
+After restart the Pico `<LAN_IP>` is UNREACHABLE from edge `.216`: ARP
+INCOMPLETE, ping returns Destination Host Unreachable, TCP sockets only SYN-SENT;
+Core lists endpoint offline (last heartbeat 11:35Z). Therefore cannot verify
+fresh MIC/playback authenticated/ready or normal voice turns. No evidence this
+was caused by code; link-level reachability indicates endpoint power/network
+condition. Do not start diagnostics or claim deployment fully accepted until
+Pico is back online.
+
+Important settings verification: current Core endpoint settings are playback
+volume 100, treble 0 dB, capture gain 3, pre-emphasis .95, whereas saved Profile
+A snapshot is 15/+6/1/.95. Deployment did not call save/reset; no Restore Profile
+A used. Preserve current values pending owner confirmation. The previously
+verified edge DB held 15/+6/1/.95 before this rollout; after its assignment poll,
+it may consume the current Core values. Do not call Profile A unchanged relative
+to Core until values discrepancy is resolved; user requested normal operation
+unchanged. Snapshot file remains a record of the earlier accepted baseline.
+
+Local checks: server 81/81 and typecheck; web production build; analyzer compiled
+and passed smoke test using existing all-channel per-file captures. Core health
+and settings API verified; Core endpoint online=false. Diagnostics feature
+locally bounded to 180 s by default, opt-in only, record stream creates combined
+8-channel 16k PCM WAV and JSON metadata; analyzer reports per-channel RMS/peak/DC,
+relative gain, broad band energy and correlation. No processing/Pico firmware/
+protocol/transport changes. Next: operator physically verifies Pico power/Wi-Fi;
+if safe, power-cycle only (not BOOTSEL/flash), wait up to 60 s, then agent checks
+heartbeat and both authenticated sockets. Once ready, request confirmation of
+current endpoint settings before capturing. Then enable diagnostics only for
+explicit controlled recording window and switch off after capture.
+
+## Audio-quality project — first slice implemented locally (2026-10-06)
+
+Approved order begins with Profile A + opt-in diagnostics only. Saved exact
+rollback record at `artifacts/audio-endpoint-baseline/profile-A.json`: Core
+endpoint <audio-endpoint-id> settings 15/+6dB/1x/.95, wake ch7 with existing gate/AGC,
+ASR raw ch7 with existing enhancement, and current adaptive VAD options. Added
+Core Settings `Restore Profile A` action (writes baseline through existing
+per-endpoint API); no profile framework or B processing implemented.
+
+Added `server/src/voice/raw-mic-diagnostics.ts`, an opt-in 8-channel interleaved
+PCM16 WAV + JSON metadata tap attached to the already authenticated mic stream.
+Enable only via CANVAS_AUDIO_DIAGNOSTICS=1; defaults to /tmp and maximum 180 s,
+can be shortened 1-300 s. It never opens a second mic socket and leaves PCM,
+VAD, wake, ASR and playback unchanged. `tools/audio/analyze_raw_capture.py`
+reports per-channel RMS/peak/DC/clipping/relative RMS gain, broad band power and
+correlation for whole-file or selected time ranges. Band powers are descriptive,
+not frequency-response calibration. Added bounded-WAV regression test.
+
+Validation: server typecheck and 81/81 tests PASS; web production build PASS
+(existing ineffective dynamic-import warnings); analyzer py_compile PASS and
+smoke run PASS on synthetic interleaving composed from existing per-channel raw
+captures (expected format rejection of mono ASR WAV); `git diff --check` PASS.
+Not deployed yet: explicit deploy approval is not included in this approval, and
+project policy requires explicit device deployment authorization. Diagnostic
+mode is OFF. No new physical recording has been made. Existing material includes
+~1.88s raw ambient 8-channel capture, 2s Pico-speaker sweep, and saved speech
+captures; no labelled controlled speech at distances, so calibration baseline
+is incomplete. Continue order: obtain deploy approval for this diagnostic slice,
+then install with capture explicitly enabled, ask operator for controlled test,
+collect data, turn diagnostics off and analyze before VAD/high-pass changes.
+
+## ASR capture enhancement deployed; live test pending (2026-10-06)
+
+Root cause found for `Big Ben` -> `big bend`: the Sipeed array + Pico path
+captures speech with only ~2-3% of energy above 1 kHz (vs ~12% normal) and at
+-20 dBFS. Verified with controlled tests: (1) the exact WAV fed to Core ASR
+directly still says `big bend`; (2) Piper-generated `How tall is Big Ben?`
+transcribes correctly through the same ASR; (3) a 100Hz-8kHz chirp played
+through the Pico speaker and captured by the mic tracks to 6 kHz (mic path
+handles high frequencies; the speech's consonants are simply weak); (4) a
+6 kHz tone is captured acoustically (level scales with volume), ruling out
+crosstalk. Fix: ASR front-end pre-emphasis (y[n]=x[n]-0.95*x[n-1]) plus peak
+normalization to 25000 (max gain 10) applied to the raw centre-mic capture
+before WAV/ASR. The enhanced saved capture transcribes `How tall is Big Ben?`
+correctly through Core ASR. Wake word keeps the DSP output; VAD keeps raw
+chunks; env CANVAS_VOICE_ENHANCE=0 and CANVAS_VOICE_PREEMPHASIS tune it.
+Local typecheck and 78/78 tests PASS. Deployed at 08:37:39; remote-pico, both
+sockets, voiceState ready, listening at 08:37:41, embedded PID 155646.
+Capture-save debug drop-in still enabled for one more verification cycle.
+Next: operator repeats `How tall is Big Ben?` and other multi-word commands;
+then remove the voice-debug drop-in and record final baseline timings.
+
+## Centre-mic DSP baseline deployed for ASR accuracy (2026-10-06)
+
+Centre-mic-only DSP did NOT fix `Big Ben` -> `big bend` and introduced a new
+problem: captures ran 7-8 s (near the 8 s cap) because the higher AGC gain
+amplified room noise above the VAD threshold, so Whisper received seconds of
+boosted noise. Diagnosis: the gate/AGC chain attenuates quiet consonants and
+amplifies inter-word noise. Split the streams: wake word keeps the DSP output
+(gate/AGC, unchanged sensitivity); the ASR capture now consumes the raw centre
+mic (ch7) via a new RemoteEndpoint `rawdata` event, bypassing gate/AGC. Added
+env-gated capture save (`CANVAS_VOICE_SAVE_CAPTURE=1` writes the exact WAV sent
+to Core to /tmp/canvas-capture-<turnId>.wav) and a rawdata unit test. Local
+typecheck and 78/78 tests PASS. Deployed at 07:54:46 with the debug env drop-in
+~/.config/systemd/user/canvas-display-browser.service.d/voice-debug.conf;
+remote-pico, both sockets, voiceState ready, listening at 07:54:48, embedded
+PID 154472. The earlier centre-mic-only DSP change (below) remains for the
+wake-word path; the capture now bypasses it.
+
+### Centre-mic DSP change (earlier same-day attempt)
+
+Operator reported ASR mishearing: `How tall is Big Ben?` transcribed as
+`big bed`/`big bend`/`has it been`. Core ASR is already
+Systran/faster-whisper-large-v3, so the model is not the cause. No input
+clipping (inputClipped 0) and negligible output clipping. Diagnosis: the
+previous weighted sum over channels 0,1,3,4,7 (centre 2x) summed mics at
+different positions without delay compensation, creating comb-filter notches
+in the 5-7 kHz consonant range. Changed RemoteMicDsp to use the centre mic
+(ch7) alone; gate/AGC unchanged. Regenerated golden vectors (test 1 values
+unchanged because ch7=1000 in that fixture; hash test vectors replaced).
+Local typecheck and 77/77 tests PASS. Deployed at 07:40:57; remote-pico,
+both authenticated sockets, voiceState ready, listening at 07:41:00, embedded
+PID 154081. This is a baseline experiment, not a beamformer; revisit with a
+real delay-and-sum beamformer after acceptance. Next: operator repeats
+`How tall is Big Ben?` and other multi-word commands at 50 cm, then farther.
+
+## Capture window widened; LED visible test passed (2026-10-06)
+
+Operator reported the post-wake listening window closed too early for longer
+commands. Direct-owner EndOfSpeechDetector options widened: no-speech wait
+1200 -> 2500 ms and trailing silence 650 -> 1000 ms; 8 s hard cap unchanged.
+Only the direct path constructs the detector. Updated the direct-owner test to
+feed 1120 ms of trailing silence (was 720 ms). Local typecheck and 77/77 tests
+PASS. Deployed sidecar to Pi at 02:08:15; remote-pico, both authenticated
+sockets, voiceState ready and hey_jarvis listening at 02:08:17, embedded PID
+151745. LED visible test passed: blue idle, green on wake, amber processing,
+blue after turn. Tones remain disabled; TTS volume 15. Next: repeat longer
+commands (weather, multi-sentence) at 50 cm and farther distances before any
+DSP or AEC work.
+
+## LED firmware flashed; visible-colour test pending (2026-10-06)
+
+Operator entered BOOTSEL; verified /media/spetchal/RP2350/INFO_UF2.TXT reports
+RP2350, verified prepared LED UF2 SHA256, copied UF2 at approximately 01:56.
+Device rebooted and USB CDC returned. MIC auto-reconnected at 01:56:49, detector
+listening at 01:56:51. Physical reboot exposed an edge recovery bug: playback
+socket retained ready=true despite Pico serial status mic=1 play=0 (idle playback
+socket has no timeout/liveness checks). Do NOT claim automatic playback reboot
+recovery. Restarted kiosk user service at 01:57:30; both roles freshly authenticated,
+embedded PID 151320; serial then confirmed mic=1 play=1 and ongoing frame counts.
+Bounded serial reads used timeout (exit 124 expected). No extra firmware changes.
+Next operator action: check blue idle, say Hey Jarvis and observe green, speak
+What time is it, observe amber then blue and confirm speaker answer. Stale idle
+playback recovery needs a separate focused edge fix after visible LED acceptance.
+
+## Wake-state LED extension built; Pico flash pending (2026-10-06)
+
+User explicitly approved a narrow firmware exception for Sipeed LED feedback.
+Added message 8, one-byte state 0 blue/ready, 1 green/listening, 2 amber/processing
+or speaking, 3 red/error. Firmware only accepts it from authenticated current MIC
+owner; resets to ready on MIC ownership loss. No audio/DSP/lwIP lifecycle changes.
+Main reads state inside existing lwIP lock and renders outside; persistent playback
+socket no longer means amber. LED renderer retains existing 250-ms poll cadence.
+Edge RemoteEndpoint sends state on MIC auth/reconnect and direct voice owner sends
+green on wake, amber after successful capture, blue at turn completion/no-speech,
+red on turn/mic error. Tests cover state framing, MIC role and reconnect replay.
+Sidecar version bumped 0.1.1 -> 0.1.2 (package and lockfile).
+
+Validation: local `npm run type-check && npm test` in server PASS, 77/77 twice;
+firmware native toolchain build PASS (agent); Pi TypeScript/esbuild/pkg PASS with
+existing dynamic resolvedPath warning; `git diff --check` PASS. Installed sidecar
+in /usr/bin and bundled binaries location, restarted user kiosk at 01:54:10;
+remote-pico and both authenticated sockets verified, listening at 01:54:14,
+embedded PID 151099, voiceState ready. Existing running system sidecar was not
+restarted. Backups: <local-home>/build/canvas-server-before-led-20261006.tar.gz,
+/usr/bin/canvas-display-server.before-led-20261006 and bundled equivalent.
+Deployed sidecar SHA256 90c8645a34b6c32c1e816848ec8519fa59c078256d7a95d56bd69eb9be84d6cb.
+
+Pico LED firmware NOT FLASHED; old firmware ignores message 8. Prepared
+`artifacts/audio-endpoint-baseline/canvas_audio_endpoint-led-20261006.uf2`, SHA256
+6062e6160e17b7a017c460fea74eedf2163672315b84198f9b2cf5ec0861ef65.
+Next physical action: operator puts Pico into BOOTSEL (hold while reconnecting
+USB), then agent verifies RP2350 mount and copies prepared UF2, checks automatic
+edge reconnection and requests human green/amber/blue wake-turn test. Keep all
+voice cues disabled and TTS at 15. No AEC or additional DSP tuning.
+
+## First successful Linux Pico voice turns (2026-10-06)
+
+After all cues were disabled and TTS volume reduced to 15, operator reported
+`that seemed to work`. Journal confirms two complete software turns using the
+remote-pico owner:
+- 01:43:23: transcript `What time is it?`, reply `It is 1:43 am.`;
+  capture 1940 ms, captured RMS 1951/peak 14390, first playback 2413 ms,
+  playback 1641 ms, total 4054 ms, Core round trip (includes playback) 2073 ms.
+- 01:44:07: transcript `How tall is the Empire State Building?`, reply
+  `The Empire State Building is 1,454 feet (443.2 meters) tall.`;
+  capture 3300 ms, RMS 2171/peak 15117, first playback 5948 ms,
+  playback 5997 ms, total 11945 ms, Core round trip 8600 ms.
+These are software timings, not calibrated acoustic latency. Operator's report
+is provisional acoustic success; exact speaker location/clarity still needs
+explicit confirmation. Surrounding attempts include no-speech outcomes; do not
+claim reliable repeated-turn or far-field acceptance. No firmware, AEC, DSP,
+VAD or wake-threshold changes. Evidence:
+`artifacts/audio-endpoint-baseline/first-successful-turns-20261006.log`.
+Next: explicitly confirm Pico-speaker response, then controlled three repetitions
+at 50 cm before farther-distance tests or algorithm tuning.
+
+## Linux spoken-test observations and all-cues-disabled retry (2026-10-06)
+
+Operator still heard a loud tone after wake-ack disable. Success/no-intent cues
+were still enabled: repeated 1200-ms no-speech captures can play the failure cue.
+At 01:39:26 one 2000-ms capture reached Core: RMS 2344, peak 19517, ASR
+`Hey, Jarvis.`, reply `Hello, how can I assist you today?`. This is NOT correct
+command transcription or acoustic TTS acceptance. Logged first playback 5005 ms,
+playback 2277 ms, total 7285 ms; these are software timings, not audible latency.
+Other captures had noise floors 11–36 and threshold 350, unlike earlier high
+floors, so the prior cue-contamination diagnosis remains only partial evidence.
+At 01:41:39 disabled all three embedded voice cues (success/no-intent previously
+1; wake ack already 0), reduced TTS volume 80 -> 15, restarted kiosk user unit.
+Verified remote-pico and both authenticated roles, listening at 01:41:41.
+No firmware/DSP/VAD/wake-threshold changes. Operator retry pending: Hey Jarvis,
+brief 0.3–0.5-second pause, What time is it; no tones expected. Capture's
+1200-ms no-speech timeout and initial 320-ms calibration warrant investigation
+if the controlled retry still misses the command. Focused logs saved in
+`artifacts/audio-endpoint-baseline/cue-free-attempts-20261006.log`.
+
+## Cue-free Linux voice test prepared (2026-10-06)
+
+Operator confirms saying Hey Jarvis triggered an excessively loud tone that masked
+his command. Journal shows no-speech captures at 00:34:41 and 00:35:00, with
+noise-floor/threshold 2106/4027 and 2660/5050 respectively. Cue contamination is
+suspected, not yet proven by a controlled comparison. Disabled only embedded DB
+`voice_wake_ack_enabled` (previous value 1, now 0) and restarted the user unit
+`canvas-display-browser.service` at 01:38. Startup confirms remote-pico,
+mic-ready, playback-ready and hey_jarvis listening; embedded PID 150325 owns two
+Pico sockets. No actual parec/arecord process observed (pgrep matched the
+inspection shell only). No firmware, DSP or wake threshold changes. Current
+source/binary parity is still unverified; do not call this a new source deployment.
+Next: operator says Hey Jarvis, pauses about half a second, then What time is it;
+correlate journal capture, transcription and reply before further changes.
+
+## Playback path now acoustically verified (2026-10-06)
+
+Pico DAC output was hiss, then a non-stopping tone. Three fixes: (1) the board's
+WSEL/LRCK and DIN were physically swapped; (2) the output PIO was left-justified
+while the UDA1334A expects I2S-bus 1-bit delay, so samples were shifted one bit
+and lost the sign bit (fixed with `<< 15`); (3) the continuous ring DMA looped
+the last ~93 ms of audio forever (fixed with `ae_audio_fill_silence()` keeping
+~2 ms of silence queued). A 440 Hz tone now plays cleanly and stops. See
+`firmware/audio-endpoint/HANDOFF.md` §2. The edge remote-audio pipeline is
+deployed on Pi `.216`; wake-word/ASR/TTS conversation acceptance is still
+pending a real spoken test.
 
 ## Start here
 
@@ -81,8 +683,8 @@ There is no trustworthy single task pointer. `HANDOFF.md`'s August Linux geometr
 - Rust agent → `edge/target/release/canvas-edge-agentd`; `strings` shows the embedded `0.3.2` literal (source is `env!("CARGO_PKG_VERSION")`).
 
 **Deployed and verified (2026-09-29, owner-authorized):**
-- Core: `core/dist` + `core/public` were already rsynced to `spetchal@192.168.1.108:/home/spetchal/canvas-core/core/` (md5 of `dist/version.js`, `dist/index.js`, `dist/gateway.js`, `dist/devices.js`, `public/index.html`, `public/assets/index-Dsz29HQM.js` all match local; 95 files each side). The running container predated the sync, so it was rebuilt/recreated from the **canonical parent** Compose project: `cd /home/spetchal/canvas-core && docker compose up -d --build canvas-core`. Running from `core/` fails safely first because that compose file requires `CANVAS_CORE_TLS_DIR`; the parent compose hardcodes the TLS generation dir. `http://192.168.1.108:3101/health` now returns `version: 0.3.2`.
-- Rust agent (Pi `192.168.1.216`, arm64): synced `edge/` (excluding `target/`) to `/home/spetchal/build/canvas-edge`, built natively (`cargo build --release -p canvas-edge-agentd`, 32s), backed up the old binary, `sudo install -m 0755` to `/usr/bin/canvas-edge-agentd`, restarted the **system** unit `canvas-edge-agent.service` (active).
+- Core: `core/dist` + `core/public` were already rsynced to `spetchal@<LAN_IP>:<local-home>/canvas-core/core/` (md5 of `dist/version.js`, `dist/index.js`, `dist/gateway.js`, `dist/devices.js`, `public/index.html`, `public/assets/index-Dsz29HQM.js` all match local; 95 files each side). The running container predated the sync, so it was rebuilt/recreated from the **canonical parent** Compose project: `cd <local-home>/canvas-core && docker compose up -d --build canvas-core`. Running from `core/` fails safely first because that compose file requires `CANVAS_CORE_TLS_DIR`; the parent compose hardcodes the TLS generation dir. `http://<LAN_IP>:3101/health` now returns `version: 0.3.2`.
+- Rust agent (Pi `<LAN_IP>`, arm64): synced `edge/` (excluding `target/`) to `<local-home>/build/canvas-edge`, built natively (`cargo build --release -p canvas-edge-agentd`, 32s), backed up the old binary, `sudo install -m 0755` to `/usr/bin/canvas-edge-agentd`, restarted the **system** unit `canvas-edge-agent.service` (active).
 - Android: `adb install -r browser/android-native/app/build/outputs/apk/debug/app-debug.apk` (Success, preserves the debug signing identity/enrollment); the app was not auto-relaunched, so `am start -n com.bushrangerlabs.canvas_display_edge/.MainActivity` was issued.
 - Live DB check (`docker exec canvas-core-canvas-core-1 node` + `pg`): `pi5-living-room` (arm64) and `Android Edge` (android) both report `software_version = 0.3.2`, `status = connected`. The served UI bundle `assets/index-Dsz29HQM.js` contains `software_version`, and `GET /api/admin/devices` → `listDevices` → `rowToDevice` returns it, so the new **Version** column renders `0.3.2` for both devices.
 
@@ -102,7 +704,7 @@ Validation/deployment: `cd core && npx tsx --test test/gateway-command.test.ts` 
 
 **Home Assistant-independent playback follow-up (2026-09-28, deployed).** Canvas Core and the edge players now treat Home Assistant strictly as an optional adapter for explicitly selected HA `media_player` entities and HA/MCP entity operations. Music Assistant playback no longer calls HA: voice search resolves a URI through MA's HTTP API, uses the per-device `music_assistant` destination, and sends `player_queues/play_media` directly; voice transport and generic destination playback/control use MA's `players/cmd/*` and queue APIs directly as well. Canvas gateway playback, DLNA, DAB/SDR and Snapcast already operate without HA. The Canvas HA custom integration remains the correct outward adapter for exposing each independent edge as an HA `media_player`; HA automations call Core, while Core/edges continue functioning if HA is absent.
 
-Validation: `cd core && npx tsx --test test/ma-routes.test.ts test/media-routes.test.ts test/devices.test.ts test/device-audio.test.ts test/broadcast-delivery.test.ts` PASS 83/83; `npm run type-check` PASS; `npm run build` PASS; `git diff --check` PASS. A source scan found no remaining `ha.callService('music_assistant', ...)` or HA-required MA playback/control messages. Synced `core/dist` and rebuilt/recreated `canvas-core` with the canonical parent Compose project. The first attempt from `core/` failed safely before changing the container because that compose file requires `CANVAS_CORE_TLS_DIR`; rerunning from `/home/spetchal/canvas-core` succeeded. Strict-CA `/health` returned `ok`, and Core's direct `/api/ma/players` call returned 12 MA players, 9 available.
+Validation: `cd core && npx tsx --test test/ma-routes.test.ts test/media-routes.test.ts test/devices.test.ts test/device-audio.test.ts test/broadcast-delivery.test.ts` PASS 83/83; `npm run type-check` PASS; `npm run build` PASS; `git diff --check` PASS. A source scan found no remaining `ha.callService('music_assistant', ...)` or HA-required MA playback/control messages. Synced `core/dist` and rebuilt/recreated `canvas-core` with the canonical parent Compose project. The first attempt from `core/` failed safely before changing the container because that compose file requires `CANVAS_CORE_TLS_DIR`; rerunning from `<local-home>/canvas-core` succeeded. Strict-CA `/health` returned `ok`, and Core's direct `/api/ma/players` call returned 12 MA players, 9 available.
 
 Final device rollout after owner authorization: rebuilt Android JVM tests + debug APK with the cached Gradle wrapper, installed it in place with `adb install -r` (preserving the enrolled debug signing identity), relaunched it, and observed `Core: connected` / `Core: online`. The Linux kiosk and sidecar had no source changes in this patch, so no identical binary was reinstalled; live checks on the Pi confirmed the kiosk user service and system sidecar service are active, the DLNA endpoint is healthy on port 49500, and both expected sidecar processes are present.
 
@@ -159,7 +761,7 @@ Objective: the Linux Pi 5 display felt slow to refresh/update. Root causes were 
 - **Push instead of poll.** Core now broadcasts `ha_state_update` frames to `role=display` WebSocket clients from the existing `ha.onEntityChange` handler (`core/src/index.ts`); `ClientType` gained a `display` role (`core/src/legacy-routes.ts`). The display's `WebSocketProvider` opens `/ws?role=display`, applies pushed entities, and coalesces bursts into one render every 120 ms.
 - **Fallback poll is now adaptive.** Full `/api/ha/entities` snapshots poll every 15 s while the socket is healthy and every 2 s when it is down, so a blocked WebSocket can never be slower than the previous always-poll behaviour.
 - **Removed a redundant 1 s poller.** `EntitySubscriptionManager` polled every second on top of the provider's own updates; `useEntityBinding`/`useVisibility` already re-evaluate when the provider swaps `entities`, so the manager and its timer were deleted.
-- Validation: `core` and `web` production builds PASS. Deployed Core to `192.168.1.108` (rebuilt only the `canvas-core` service; `tls-proxy` untouched). Live: Core health `ok`; a `role=display` test client received 40 `ha_state_update` frames for 29 distinct entities in 12 s; the Pi (`192.168.1.216`) and Android scene windows reconnected as `display` and loaded the new bundle.
+- Validation: `core` and `web` production builds PASS. Deployed Core to `<LAN_IP>` (rebuilt only the `canvas-core` service; `tls-proxy` untouched). Live: Core health `ok`; a `role=display` test client received 40 `ha_state_update` frames for 29 distinct entities in 12 s; the Pi (`<LAN_IP>`) and Android scene windows reconnected as `display` and loaded the new bundle.
 
 ### Playback destination routing and expanded media widgets (2026-09-28)
 
@@ -177,7 +779,7 @@ Objective: the Linux Pi 5 display felt slow to refresh/update. Root causes were 
 
 Objective: make DAB+, Dispatcharr and Music Assistant work end-to-end with the widgets, voice and MQTT, and verify the new Settings → Media configuration the operator entered.
 
-Live verification against the deployed Core (`https://192.168.1.108:3100`, TLS proxy → `canvas-core-canvas-core-1`):
+Live verification against the deployed Core (`https://<LAN_IP>:3100`, TLS proxy → `canvas-core-canvas-core-1`):
 
 - `GET /api/dab/test` → 117 DAB+ stations; `GET /api/dispatcharr/test` → 55,382 channels; `GET /api/ma/test` → 12 players. Settings → Media tab is present with per-source cards and working "Test connection" buttons.
 - Before this session `GET /api/ma/radios` returned only 2 stations (the ones in the MA library). The operator's `sdrradio` "SDR Radio (DAB+)" provider exposes 117 radios via `music/browse` but only 2 were in the library.
@@ -219,7 +821,7 @@ Validation: web and server type-checks and the existing test suites pass.
 
 The Core settings UI (Settings → AI providers) exposes a per-provider model/voice selector for ASR (Whisper) and TTS (Piper) providers: it lists what the server reports, lets the operator set the active model, and downloads new Whisper models on demand (`GET/POST /api/admin/ai-providers/:id/models`, `PUT /api/admin/ai-providers/:id/model`). A curated "Recommended" row was added to the ASR panel (base / small / medium / distil-large-v3 / large-v3) so a stronger model can be picked in one click.
 
-Root cause of poor recognition on the live Core (`192.168.1.108`): the `local-asr` provider's active model had been set to `speaches-ai/Kokoro-82M-v1.0-ONNX-fp16` — a text-to-speech model, not a Whisper ASR model — so transcription requests were sent a TTS model id.
+Root cause of poor recognition on the live Core (`<LAN_IP>`): the `local-asr` provider's active model had been set to `speaches-ai/Kokoro-82M-v1.0-ONNX-fp16` — a text-to-speech model, not a Whisper ASR model — so transcription requests were sent a TTS model id.
 
 Fixes applied on the Core host:
 
@@ -227,7 +829,7 @@ Fixes applied on the Core host:
 - Switched `localcut-whisper` from the CPU-only image to `ghcr.io/speaches-ai/speaches:latest-cuda` with an NVIDIA GPU reservation (`/var/lib/casaos/apps/mystifying_tiger/docker-compose.yml`), `WHISPER__COMPUTE_TYPE=float16`, `WHISPER__INFERENCE_DEVICE=cuda`, `WHISPER__TTL=-1` (keep the model resident) and `cpu_shares` raised from 90 to 2048. A backup of the previous compose file is kept alongside it.
 - Set the `local-asr` active model to `Systran/faster-whisper-large-v3`.
 
-Verified: warm transcription of a ~4 s clip is ~0.7 s on GPU (was ~22 s on CPU with large-v3, ~1.4 s with base.en); a round-trip TTS→ASR test and a full Core `/api/edge/voice/turn` call both returned the correct transcript. `local-asr` health is `UP`. The web build with the new "Recommended" row was rebuilt and deployed to `192.168.1.108`.
+Verified: warm transcription of a ~4 s clip is ~0.7 s on GPU (was ~22 s on CPU with large-v3, ~1.4 s with base.en); a round-trip TTS→ASR test and a full Core `/api/edge/voice/turn` call both returned the correct transcript. `local-asr` health is `UP`. The web build with the new "Recommended" row was rebuilt and deployed to `<LAN_IP>`.
 
 Note: the local dev Core on this workstation has no ASR provider rows and no Whisper service on `:10301`; it is not the instance the user's voice devices use.
 
@@ -264,10 +866,10 @@ Validation completed so far:
 
 Deployment and live acceptance:
 
-- Rebuilt and deployed Core/web to `192.168.1.108`; health returns `status: ok`, role `canvas-core`, version `0.3.1`. PostgreSQL contains the new output/event/delivery tables. The catalog found both Canvas edges and HA media players; only the two Canvas edge routes default to selected.
+- Rebuilt and deployed Core/web to `<LAN_IP>`; health returns `status: ok`, role `canvas-core`, version `0.3.1`. PostgreSQL contains the new output/event/delivery tables. The catalog found both Canvas edges and HA media players; only the two Canvas edge routes default to selected.
 - Built the sidecar natively on the Pi using the documented TypeScript → esbuild → `pkg --no-bytecode` path, then built the arm64 kiosk with `npx tauri build --no-bundle`. Backed up and replaced `/usr/bin/canvas-display-server`, `/usr/lib/Canvas Display/binaries/canvas-display-server`, and `/usr/bin/canvas-display-browser-linux`.
 - The first Pi delivery exposed a historical-schema compatibility issue: its SQLite migration cursor was already version 9, so migration 8 was skipped. `initDb()` now idempotently asserts the receipt table independently of the cursor. After rebuilding/redeploying both sidecar copies, the pending delivery was recovered and completed with one claimed attempt.
-- Installed the debug Android APK in place on tablet `A1064US260402203`, preserving enrollment, then relaunched it. Its activity is resumed and `http://192.168.1.41:49500/description.xml` advertises `Android Edge`.
+- Installed the debug Android APK in place on tablet `A1064US260402203`, preserving enrollment, then relaunched it. Its activity is resumed and `http://<LAN_IP>:49500/description.xml` advertises `Android Edge`.
 - A synthetic one-second WAV targeted only the two Canvas edge outputs. Android acknowledged started/completed in one attempt; the Pi recovered its initially pending row after the compatibility fix and then acknowledged started/completed in one attempt. Both final delivery rows are `completed` with no error.
 - Pi services are active: system sidecar, user kiosk and Snapcast. Exactly one process listens on DLNA port 49500 (system sidecar); the embedded sidecar logs `[device-services] disabled`. Snapcast was active after announcement completion. Pi and Android DLNA description endpoints both responded successfully.
 
@@ -295,8 +897,8 @@ Committed and deployed after explicit owner authorization:
 
 - Commit `5cc131f` (`feat: configure default start page per device`) was pushed to `origin/main`.
 - Rebuilt `web/`, synchronized `web/dist/` into `core/public/`, and rebuilt Core successfully.
-- Synchronized `core/dist/` and `core/public/` to `/home/spetchal/canvas-core/core/` on the Core host, then ran `docker compose up -d --build canvas-core`.
-- `docker compose ps canvas-core` reported the recreated container running; `GET http://127.0.0.1:3101/health` returned `status: ok`, role `canvas-core`, version `0.3.1`.
+- Synchronized `core/dist/` and `core/public/` to `<local-home>/canvas-core/core/` on the Core host, then ran `docker compose up -d --build canvas-core`.
+- `docker compose ps canvas-core` reported the recreated container running; `GET http://<LAN_IP>:3101/health` returned `status: ok`, role `canvas-core`, version `0.3.1`.
 - The bundle served by the deployed Core was `/assets/index-DobzDV3h.js`; it contains `Default start page` and no longer contains `Save default pages`.
 
 The admin UI and Core reconnect behavior are deployed. A physical edge reboot was not performed, so boot-page selection remains locally tested and production-served but not yet accepted through a full device restart.
@@ -348,17 +950,17 @@ Built both edge-app artifacts, including their arch-correct/signed variants:
   - Credentials: `browser/android-native/keystore.properties` (gitignored). `app/build.gradle.kts` reads it for `signingConfigs.release` and falls back to unsigned when absent. `.gitignore` now excludes `*.keystore`/`*.jks`/`keystore.properties`.
   - Signed release APK: `app/build/outputs/apk/release/app-release.apk` (28.0 MB) — SHA-256 `ac13fc4d12a9d078dfa8054bce2eb3efadf21e9301e05c5af28f59400a8eb040`. Verified with `apksigner verify` (cert CN `Canvas Display Edge`, SHA-256 `fbb88ba1d3b1a63196a2aaffb3af15d693c9cf11fb7d1b504b674b9a37a75fc1`).
   - Debug APK still available: `debug/app-debug.apk` (29.5 MB) — SHA-256 `3583d7a4d69f202a1866ee77870b47159119eff5c113e3f5e3f80ad7104e2844`.
-- **Linux kiosk arm64 (fixed via native Pi build)** — built natively on the Pi (`192.168.1.216`, `housedisplay`), with SSH authorized by the owner:
+- **Linux kiosk arm64 (fixed via native Pi build)** — built natively on the Pi (`<LAN_IP>`, `housedisplay`), with SSH authorized by the owner:
   - Backed up remote `src-tauri/src/lib.rs` and `src/screens/KioskScreen.tsx` to `*.bak-20260926` before syncing my updated versions (which add `set_kiosk_visible` + the show/hide handling).
   - The Pi's `PATH` lacked `~/.cargo/bin`, so `/usr/bin/rustc` 1.85 was picked up and failed the MSRV check; building with rustup's `1.88.0` toolchain (`PATH=~/.cargo/bin:...`) succeeded.
-  - `npm run tauri:build -- --bundles deb` succeeded (2m54s Rust release). Artifacts under `/home/spetchal/build/canvas-browser/src-tauri/target/release/`:
+  - `npm run tauri:build -- --bundles deb` succeeded (2m54s Rust release). Artifacts under `<local-home>/build/canvas-browser/src-tauri/target/release/`:
     - binary `canvas-display-browser-linux` (ARM aarch64, 6.2 MB) — SHA-256 `9bddf1557beab733890df742ba446235f2df979ba5ab6c8e112e2215150fd60b`.
     - `bundle/deb/Canvas Display_0.3.1_arm64.deb` (28 MB) — SHA-256 `8f18bbb3e59dda5b748353cf2afe1c029027f47966a173331962089f018839e7`.
   - x86_64 reference build (local host) also produced `Canvas Display_0.3.1_amd64.deb` (36.5 MB) — SHA-256 `18d6955b347ec32462d596026e914b6ffe1ff4a9b28daea1523a902055263e2b`.
 - **Deployed (2026-09-26, owner-authorized)** — both edge apps now run the new show/hide/restart build:
   - **Pi kiosk** — old binary backed up to `/usr/bin/canvas-display-browser-linux.bak-20260926` (SHA-256 `527ab69d…`), new arm64 binary installed to `/usr/bin/` (`sudo install`) and `systemctl --user restart canvas-display-browser.service`. Verified: service `active` with a new MainPID, `/tmp/canvas-ui-kiosk.log` shows a clean `setup: done`, and the on-disk binary SHA matches the arm64 build (`9bddf155…`). Sidecar/resources at `/usr/lib/Canvas Display/binaries/` unchanged.
   - **Android tablet** (`A1064US260402203`) — `adb install -r app-debug.apk` succeeded as an **in-place update** of the debug-signed app (firstInstallTime preserved → enrollment retained). Merged manifest confirms `KioskService`, `BootReceiver`, and both `FOREGROUND_SERVICE`/`RECEIVE_BOOT_COMPLETED` (granted).
-  - **Core + web deployed (2026-09-26, owner-authorized)** — rebuilt `core/dist` + `core/public` locally, backed up the remote `core/dist`/`core/public` (`/home/spetchal/canvas-core/dist-public-backup-20260926.tar.gz`), rsync'd only those two dirs (nginx.conf/docker-compose.yml/tls/.env/mcp scripts **untouched**, preserving the remote's live divergences), and `docker compose up -d --build canvas-core`. Verified: health `200` (`role canvas-core v0.3.1`), the running image contains the new `show|hide|restart` route, and the served web admin (`public/assets/index-v0b-wjyF.js`) contains "Show app"/"Hide app". The Pi kiosk is already re-requesting `/api/*` from the new Core.
+  - **Core + web deployed (2026-09-26, owner-authorized)** — rebuilt `core/dist` + `core/public` locally, backed up the remote `core/dist`/`core/public` (`<local-home>/canvas-core/dist-public-backup-20260926.tar.gz`), rsync'd only those two dirs (nginx.conf/docker-compose.yml/tls/.env/mcp scripts **untouched**, preserving the remote's live divergences), and `docker compose up -d --build canvas-core`. Verified: health `200` (`role canvas-core v0.3.1`), the running image contains the new `show|hide|restart` route, and the served web admin (`public/assets/index-v0b-wjyF.js`) contains "Show app"/"Hide app". The Pi kiosk is already re-requesting `/api/*` from the new Core.
   - **Still to verify live** — no real show/hide/restart button press yet (requires admin login in the web UI); that is a user click-test, not an infra step.
 
 ### Post-deploy bug fixes (2026-09-26)
@@ -431,7 +1033,7 @@ On 2026-09-26 the user recalled that the previous task was a Core certificate is
 ### Certificate investigation (read-only, 2026-09-26)
 
 - `core/nginx.conf` and Compose already configure RSA plus Ed25519 server certificates; these changes are committed at HEAD. This is compatibility work, not proof that deployment/trust is complete.
-- Local public certificates `core/tls/server.crt` and `core/tls/rsa-server.crt` are self-issued, CA:TRUE, valid September 10, 2026 through September 10, 2027. SANs cover IP `192.168.1.108` and DNS `localhost`, not `canvas-core.local`. Explicit-trust OpenSSL IP verification passed; RSA hostname verification for `canvas-core.local` failed.
+- Local public certificates `core/tls/server.crt` and `core/tls/rsa-server.crt` are self-issued, CA:TRUE, valid September 10, 2026 through September 10, 2027. SANs cover IP `<LAN_IP>` and DNS `localhost`, not `canvas-core.local`. Explicit-trust OpenSSL IP verification passed; RSA hostname verification for `canvas-core.local` failed.
 - Both private-key paths are tracked in Git (contents were not read). Coordinate owner-controlled rotation and exposure/history review; do not reuse exposed keys as a production trust solution.
 - Native Android `CoreTls.kt` bundles certificates matching both local Core public certificates. Its clients disable hostname verification. Its custom store does not include normal system roots.
 - Android WebView's `network_security_config.xml` includes only the generic bundled certificate, now Ed25519. The deleted legacy Android app's generic certificate was RSA: this trust change during migration is a concrete compatibility clue.
@@ -444,17 +1046,17 @@ On 2026-09-26 the user recalled that the previous task was a Core certificate is
 
 ## TLS repair and edge rollout completed (2026-09-26)
 
-- Read-only live checks reached Core (`192.168.1.108`), Pi (`192.168.1.216`) and ADB tablet `A1064US260402203`; both legacy and native Android apps are installed.
+- Read-only live checks reached Core (`<LAN_IP>`), Pi (`<LAN_IP>`) and ADB tablet `A1064US260402203`; both legacy and native Android apps are installed.
 - **Confirmed root cause:** live Core still serves July RSA material with no SANs, unlike local September certificates. Strict `https://localhost:3100/health` failed hostname validation. Live nginx has SSE/WebSocket improvements absent locally; preserve those during TLS-only changes.
-- New RSA-3072 CA and SAN-bearing server certificate generated ON Core only, under `/home/spetchal/canvas-core-tls-private-20260926/generation-1`. Private keys never transferred/read into tool output. SANs: IP `192.168.1.108`, DNS `localhost`, DNS `canvas-core.local`; leaf expires 2027-10-28. Public CA SHA-256: `6F:A2:C5:29:BB:12:39:AB:5D:07:1B:6D:B5:87:7D:34:A2:15:E6:14:41:4D:D7:18:92:8C:A1:81:B6:76:D9:86`.
+- New RSA-3072 CA and SAN-bearing server certificate generated ON Core only, under `<local-home>/canvas-core-tls-private-20260926/generation-1`. Private keys never transferred/read into tool output. SANs: IP `<LAN_IP>`, DNS `localhost`, DNS `canvas-core.local`; leaf expires 2027-10-28. Public CA SHA-256: `6F:A2:C5:29:BB:12:39:AB:5D:07:1B:6D:B5:87:7D:34:A2:15:E6:14:41:4D:D7:18:92:8C:A1:81:B6:76:D9:86`.
 - Added `scripts/provision-core-tls.sh`, `tests/tls/test_provision_core_tls.py`, `docs/CORE_TLS.md`; nine real-OpenSSL offline tests passed. Script refuses existing output/Git destinations and protects key permissions.
 - Linux WebKit certificate bypass removed, updater manifest bypass removed. Source-policy tests and both Cargo checks passed. Pi-native kiosk build passed and the final candidate was installed at `/usr/bin/canvas-display-browser-linux`; both the build and installed binary SHA-256 are `c2017b3e38eca5216467bd88bb6dc2a1665083ee3707353fd230fe50a09c30ba`. Remote source formatting differences were preserved; source backup lives alongside remote lib.rs.
 - Android uses platform trust in all four OkHttp clients, standard hostname checking, no HTTPS downgrade. NSC scopes only the new public CA (`res/raw/canvas_core_ca.pem`) to Core IP and `canvas-core.local`, prohibits Core HTTP and preserves explicit external-panel policy. Seven JVM tests passed. Built debug app and instrumentation APK; instrumented device tests not yet run at this checkpoint.
 - Final Android debug candidate SHA-256 is `4169a2b71656faec97009643db7fd9ccefdc0d1fd47ab8bd112722695bf83daa`; instrumentation APK SHA-256 is `402c79328d8b78064f8b66bb46e347eb886a05164f8448ae868bb41710789d37`. Both are under `browser/android-native/app/build/outputs/apk/`. The candidate and installed APK signing-certificate SHA-256 matched before install, so `adb install -r` preserved app data/enrollment and the original `firstInstallTime` (`2026-09-13 01:33:47`).
-- Pi public trust is installed at `/usr/local/share/ca-certificates/canvas-core-ca.crt` and matches the authenticated public CA fingerprint. Strict `wget` and OpenSSL verification from the Pi pass for Core IP `192.168.1.108` and DNS SAN `canvas-core.local`.
-- Core now serves the new RSA leaf from all four nginx certificate mount paths. nginx configuration validation passed before restart. Strict OpenSSL verification passes for the IP, `localhost`, and `canvas-core.local`; strict `curl --cacert` health returns Core `0.3.1`. The served leaf fingerprint is `4C:30:2D:56:3D:1F:35:91:82:8C:AD:C6:FA:0F:FE:93:56:E3:6B:80:47:AC:58:59:6A:92:C8:91:B1:E6:6D:A2`. Rollback copies are on Core under `/home/spetchal/canvas-core-tls-backup-20260926-before-san-switch`; private material was not copied into this repository or output.
-- Android main and instrumentation APKs were installed in place. `am instrument -e coreHealthUrl https://192.168.1.108:3100/health ...` completed `OK (5 tests)`: Core HTTP rejection, untrusted-chain rejection in OkHttp and WebView, and live strict Core HTTPS in OkHttp and WebView passed; two coordinator-only wrong-host fixture cases were skipped by JUnit assumptions. After relaunch, Core logged a new Android WSS connection, active-page replay, `stream.ack`, and `state.reported`; Android reported a fullscreen resumed activity and foreground `KioskService`.
-- Restarted the Pi kiosk after the Core switch. No WebKit certificate rejection appeared, the service remained active, and `setup: done` was logged. A controlled service stop/start confirmed one embedded sidecar owns `127.0.0.1:3100`. A second `canvas-display-server` process is intentional: the enabled system `canvas-display-server.service` runs standalone on `0.0.0.0:8099`; both `/health` endpoints return `{"ok":true}`. The stop/start briefly terminated that system instance while checking for a suspected stale process, and systemd restored it immediately. Do not count the two different service modes as a duplicate-port fault.
+- Pi public trust is installed at `/usr/local/share/ca-certificates/canvas-core-ca.crt` and matches the authenticated public CA fingerprint. Strict `wget` and OpenSSL verification from the Pi pass for Core IP `<LAN_IP>` and DNS SAN `canvas-core.local`.
+- Core now serves the new RSA leaf from all four nginx certificate mount paths. nginx configuration validation passed before restart. Strict OpenSSL verification passes for the IP, `localhost`, and `canvas-core.local`; strict `curl --cacert` health returns Core `0.3.1`. The served leaf fingerprint is `4C:30:2D:56:3D:1F:35:91:82:8C:AD:C6:FA:0F:FE:93:56:E3:6B:80:47:AC:58:59:6A:92:C8:91:B1:E6:6D:A2`. Rollback copies are on Core under `<local-home>/canvas-core-tls-backup-20260926-before-san-switch`; private material was not copied into this repository or output.
+- Android main and instrumentation APKs were installed in place. `am instrument -e coreHealthUrl https://<LAN_IP>:3100/health ...` completed `OK (5 tests)`: Core HTTP rejection, untrusted-chain rejection in OkHttp and WebView, and live strict Core HTTPS in OkHttp and WebView passed; two coordinator-only wrong-host fixture cases were skipped by JUnit assumptions. After relaunch, Core logged a new Android WSS connection, active-page replay, `stream.ack`, and `state.reported`; Android reported a fullscreen resumed activity and foreground `KioskService`.
+- Restarted the Pi kiosk after the Core switch. No WebKit certificate rejection appeared, the service remained active, and `setup: done` was logged. A controlled service stop/start confirmed one embedded sidecar owns `<LAN_IP>:3100`. A second `canvas-display-server` process is intentional: the enabled system `canvas-display-server.service` runs standalone on `<LAN_IP>:8099`; both `/health` endpoints return `{"ok":true}`. The stop/start briefly terminated that system instance while checking for a suspected stale process, and systemd restored it immediately. Do not count the two different service modes as a duplicate-port fault.
 - No commit or release was created. `AGENTS.md` was reviewed at completion; no durable guidance change was needed.
 
 ## Recommended next session
@@ -463,7 +1065,7 @@ On 2026-09-26 the user recalled that the previous task was a Core certificate is
 2. Android reboot boot-autostart test — DONE (2026-09-27); see the Android boot-autostart fix above. Remaining Android item: decide the signing rollout (installed tablets are debug-signed; moving to the release keystore needs a same-key reinstall or `adb uninstall`, which wipes enrollment).
 3. Core-issued scoped HA display sessions (Linux still injects a legacy local HA long-lived token) and the capability/settings/voice acceptance + final platform functionality matrix remain from the parity objective.
 4. Optionally test `https://canvas-core.local:3100` from Android if tablet mDNS is intended to be supported; IP-based strict native and WebView acceptance is complete.
-5. See `AGENTS.md` → "Build & deployment" for exact commands. Rollback pointers include Core `/home/spetchal/canvas-core-tls-backup-20260926-before-san-switch`, remote `dist-public-backup-20260926.tar.gz`, Pi `/usr/bin/canvas-display-browser-linux.bak-20260926` and `/usr/bin/canvas-display-browser-linux.bak-20260926-parity`, Pi `/usr/bin/canvas-display-server.bak-20260926-parity`, Pi `/usr/bin/canvas-edge-agentd.bak-20260926-parity`, Core `/home/spetchal/canvas-core/core-dist-backup-parity-20260926.tar.gz`, and the arm64 build dirs on the Pi.
+5. See `AGENTS.md` → "Build & deployment" for exact commands. Rollback pointers include Core `<local-home>/canvas-core-tls-backup-20260926-before-san-switch`, remote `dist-public-backup-20260926.tar.gz`, Pi `/usr/bin/canvas-display-browser-linux.bak-20260926` and `/usr/bin/canvas-display-browser-linux.bak-20260926-parity`, Pi `/usr/bin/canvas-display-server.bak-20260926-parity`, Pi `/usr/bin/canvas-edge-agentd.bak-20260926-parity`, Core `<local-home>/canvas-core/core-dist-backup-parity-20260926.tar.gz`, and the arm64 build dirs on the Pi.
 
 Update this file at the end of each session with exact changes, tests/results, unresolved risks and next action. Do not store secrets or replace evidence with assumptions about previous conversations.
 
@@ -478,7 +1080,7 @@ Update this file at the end of each session with exact changes, tests/results, u
 
 ## Edge parity deployment + kiosk registration fix (2026-09-26/27)
 
-Owner-authorized staged deployment to the existing Pi (`192.168.1.216`, `housedisplay`) and tablet (`A1064US260402203`). All builds were native on the Pi (arm64, rustup 1.88.0; the Pi's `PATH` lacks `~/.cargo/bin`). The Pi is SD-card-bound and stalls (`mmc0: Card stuck being busy`), so long links were run as low-priority single-job background builds with a status file; one earlier build was lost to a Pi reboot mid-link.
+Owner-authorized staged deployment to the existing Pi (`<LAN_IP>`, `housedisplay`) and tablet (`A1064US260402203`). All builds were native on the Pi (arm64, rustup 1.88.0; the Pi's `PATH` lacks `~/.cargo/bin`). The Pi is SD-card-bound and stalls (`mmc0: Card stuck being busy`), so long links were run as low-priority single-job background builds with a status file; one earlier build was lost to a Pi reboot mid-link.
 
 ### Android (deployed + on-device validated)
 
@@ -489,22 +1091,22 @@ Owner-authorized staged deployment to the existing Pi (`192.168.1.216`, `housedi
 ### Pi native builds + deployment
 
 - Kiosk `canvas-display-browser-linux` — full `npm run tauri:build -- --bundles deb` (not bare `cargo build`; see build-hygiene note). Installed binary SHA-256 `2a0d729595ad17a60f0d18e2e75ed51e4fdc3f14a55e9b1a27fc61dfa29643fd`.
-- Sidecar `canvas-display-server` — `npm run build` + `esbuild` bundle + `pkg --target node20-linux-arm64 --no-bytecode`. SHA-256 `9fc52a004bd12728d221d9a6148575192d286a331df509581d0e2fba87aaf092`. Standalone smoke test on `127.0.0.1:3199` returned `{"ok":true}`. This rebuild also carries the earlier `mpvAudioDevice()` speaker-device fix that had been blocked by the arm64 `pkg` bytecode bug (the `--no-bytecode` invocation now produces a working arm64 binary).
+- Sidecar `canvas-display-server` — `npm run build` + `esbuild` bundle + `pkg --target node20-linux-arm64 --no-bytecode`. SHA-256 `9fc52a004bd12728d221d9a6148575192d286a331df509581d0e2fba87aaf092`. Standalone smoke test on `<LAN_IP>:3199` returned `{"ok":true}`. This rebuild also carries the earlier `mpvAudioDevice()` speaker-device fix that had been blocked by the arm64 `pkg` bytecode bug (the `--no-bytecode` invocation now produces a working arm64 binary).
 - Agent `canvas-edge-agentd` — `cargo build --release -p canvas-edge-agentd` (9m18s). SHA-256 `9572f572d5afe4fe2a4e33a800194abcf2c9a6211ebf65c91d6a7483f6a6e8da`. Restarted; logs show `canvas-edge-agent v0.3.0`, `connected to Core`, `core.welcome`, `state.desired`, `stream.ack`, `state.reported`.
 - Backups before install: `/usr/bin/canvas-display-browser-linux.bak-20260926-parity`, `/usr/bin/canvas-display-server.bak-20260926-parity`, `/usr/bin/canvas-edge-agentd.bak-20260926-parity`.
 
 ### Core (deployed)
 
-- Backed up remote `core/dist` → `/home/spetchal/canvas-core/core-dist-backup-parity-20260926.tar.gz`; rsync'd `core/dist/`; `docker compose up -d --build canvas-core`. Health `200`; logs show live traffic (assets, `/api/scenes/*/published`, `/api/ha/entities`, gateway `state.reported`).
+- Backed up remote `core/dist` → `<local-home>/canvas-core/core-dist-backup-parity-20260926.tar.gz`; rsync'd `core/dist/`; `docker compose up -d --build canvas-core`. Health `200`; logs show live traffic (assets, `/api/scenes/*/published`, `/api/ha/entities`, gateway `state.reported`).
 
 ### CRITICAL BUG FOUND + FIXED: kiosk never registered with the embedded loopback sidecar
 
-- Symptom: `POST http://127.0.0.1:3100/api/app/hide` returned `504 {"ok":false,"error":"no kiosk renderer is connected"}`.
-- Diagnosis: `ss -tnp` showed **no established WebSocket** from the WebView to `127.0.0.1:3100`, while a direct `ws` probe from the Pi connected fine and received `hello_ack` + `load_page` (so the sidecar was healthy). The Pi screen was blank white (the main webview was not rendering the kiosk UI).
+- Symptom: `POST http://<LAN_IP>:3100/api/app/hide` returned `504 {"ok":false,"error":"no kiosk renderer is connected"}`.
+- Diagnosis: `ss -tnp` showed **no established WebSocket** from the WebView to `<LAN_IP>:3100`, while a direct `ws` probe from the Pi connected fine and received `hello_ack` + `load_page` (so the sidecar was healthy). The Pi screen was blank white (the main webview was not rendering the kiosk UI).
 - Root cause: `browser/linux/src/hooks/useServerSocket.ts` `onerror` called `ws.close()` unconditionally. The local renderer socket connects at kiosk start, before the embedded sidecar is listening; the initial connection refusal fired `onerror`, and the unconditional `close()` prevented the normal `onclose`→reconnect path, so the socket never recovered. The control-channel socket was unaffected because Core was already up on its first attempt.
 - Fix: only call `ws.close()` when `ws.readyState === WebSocket.OPEN`.
-- Validation after fix: established WS to `127.0.0.1:3100` present; kiosk log shows `[create_panel_webviews]`; `/api/app/hide` → `200 {"ok":true,"action":"hide","result":{"action":"hide"}}`; `/api/app/show` → `200`; `grim` screenshots show the Pi desktop (brown wallpaper) when hidden and kiosk content when shown. Full hide/show cycle confirmed on-device.
-- Core→agent→sidecar path verified in code: `edge/agent/src/transport/connection.rs` `handle_device_action` forwards `app.show|hide|restart` to `scene_server_url`, which defaults to `http://127.0.0.1:3100` (`edge/agentd/src/main.rs`); `/etc/canvas-edge-agent/renderer.env` sets `CANVAS_EDGE_SCENE_RENDERER_MODE=core`. The kiosk registration was the missing link.
+- Validation after fix: established WS to `<LAN_IP>:3100` present; kiosk log shows `[create_panel_webviews]`; `/api/app/hide` → `200 {"ok":true,"action":"hide","result":{"action":"hide"}}`; `/api/app/show` → `200`; `grim` screenshots show the Pi desktop (brown wallpaper) when hidden and kiosk content when shown. Full hide/show cycle confirmed on-device.
+- Core→agent→sidecar path verified in code: `edge/agent/src/transport/connection.rs` `handle_device_action` forwards `app.show|hide|restart` to `scene_server_url`, which defaults to `http://<LAN_IP>:3100` (`edge/agentd/src/main.rs`); `/etc/canvas-edge-agent/renderer.env` sets `CANVAS_EDGE_SCENE_RENDERER_MODE=core`. The kiosk registration was the missing link.
 
 ### Build hygiene (learned this session)
 
@@ -537,14 +1139,14 @@ User directive: **both** edge apps (Linux kiosk + native Android) must support t
 
 ### Voice control
 
-- `[x]` **1. Intent model routing + conversation model + vision model + cloud fallback.** VERIFIED + EXTENDED (2026-09-27): the live Core DB has providers `router-qwen3`, `hermes-conversation`, `vision-qwen3vl` (→ `http://192.168.1.108:8083/v1`), `Gemini`, `Openrouter`, `unsloth/Qwen3.6-35B…`, with `ai_task_assignments`: `intent_routing→router-qwen3`, `conversation→hermes-conversation`, `vision→vision-qwen3vl`, `embedding→unsloth/…`, `asr→local-asr`, `tts→local-tts`. The vision model (`Qwen3-VL-8B-Instruct`) answered a test image correctly. **Cloud policy (new):** `CANVAS_CORE_CLOUD_AI_ENABLED` (master switch, default off) + `CANVAS_CORE_CLOUD_AI_PROVIDER` (provider id; empty = first non-local LLM). When enabled, the cloud model is used (a) directly for coding/HA-automation drafting (`checkAutomationGaps`) and (b) only as the **last-resort** candidate in chat (`conversationCandidates` appends it after all local candidates). Every cloud invocation is logged separately to the new `cloud_ai_usage` table (purpose/provider/model/device/operation/latency/ok/error/prompt/response) for later fine-tuning. Note: `local-asr`/`local-tts` assignments have no matching provider row (dangling).
+- `[x]` **1. Intent model routing + conversation model + vision model + cloud fallback.** VERIFIED + EXTENDED (2026-09-27): the live Core DB has providers `router-qwen3`, `hermes-conversation`, `vision-qwen3vl` (→ `http://<LAN_IP>:8083/v1`), `Gemini`, `Openrouter`, `unsloth/Qwen3.6-35B…`, with `ai_task_assignments`: `intent_routing→router-qwen3`, `conversation→hermes-conversation`, `vision→vision-qwen3vl`, `embedding→unsloth/…`, `asr→local-asr`, `tts→local-tts`. The vision model (`Qwen3-VL-8B-Instruct`) answered a test image correctly. **Cloud policy (new):** `CANVAS_CORE_CLOUD_AI_ENABLED` (master switch, default off) + `CANVAS_CORE_CLOUD_AI_PROVIDER` (provider id; empty = first non-local LLM). When enabled, the cloud model is used (a) directly for coding/HA-automation drafting (`checkAutomationGaps`) and (b) only as the **last-resort** candidate in chat (`conversationCandidates` appends it after all local candidates). Every cloud invocation is logged separately to the new `cloud_ai_usage` table (purpose/provider/model/device/operation/latency/ok/error/prompt/response) for later fine-tuning. Note: `local-asr`/`local-tts` assignments have no matching provider row (dangling).
 - `[~]` **2. Full YouTube control.** Findings (2026-09-27): both platforms expose the same `__canvasYouTubeControl` API (`pause`/`resume`/`stop`/`next`) and Core routes `media.play`/`media.control` to both. The Linux gaps vs Android were: no plain-HTML5 fallback (so non-YouTube `<video>`/`<audio>` could not be controlled) and the Rust command only targeted the `floating` webview. FIXED: `control_youtube_webview` now tries the IFrame bridge then falls back to HTML5 media control, and falls back to the last `panel-*` webview when the requested label is gone. Remaining: seek/volume/previous are not exposed by the player bridge on either platform — confirm whether "full" control needs them.
 - `[x]` **3. General-question intents → Wikipedia page, search-engine fallback, settable auto-return timer (configurable in code).** Findings (2026-09-27): already implemented — `resolveKnowledgeUrl` opens the Wikipedia article (opensearch) and falls back to a search engine; `openUrl` sends `revert_after_ms` (Android `navigate.search`, Linux `/api/media/open` → `show_floating`/`hide_floating`); the period comes from the `knowledge_display_seconds` setting, defaulting to `config.knowledgeDisplaySeconds` (`CANVAS_CORE_KNOWLEDGE_DISPLAY_SECONDS`, default 30). FIXED: the configured LAN SearXNG (`SEARXNG_PUBLIC_URL`) was never used — the fallback now prefers it and only uses public DuckDuckGo as a last resort.
-- `[x]` **4. DAB+ radio.** IMPLEMENTED + VERIFIED (2026-09-27): the SDR radio runs as `sdr-radio-1`/`sdr-radio-2` containers on the Core host (192.168.1.108) with a REST API (`:8088`/`:8091`) and Icecast (`:8001`/`:8002`). `dab.play` resolves the station via `GET /api/stations` (`{dab:[{id,name,city}]}`), tunes via `POST /api/tuners/<tuner>/play {"station":"dab:<id>"}`, and plays the Icecast stream (`http://192.168.1.108:8001/tuner1.mp3`) on the device. Verified: tuning `dab:triplem` → Triple M (9B, 204.64 MHz), Icecast serves `audio/mpeg`. Config: `SDR_RADIO_URL`, `SDR_RADIO_TUNER`, `SDR_RADIO_STREAM_URL`. Note: this is the SDR REST API directly, not routed through Music Assistant.
+- `[x]` **4. DAB+ radio.** IMPLEMENTED + VERIFIED (2026-09-27): the SDR radio runs as `sdr-radio-1`/`sdr-radio-2` containers on the Core host (<LAN_IP>) with a REST API (`:8088`/`:8091`) and Icecast (`:8001`/`:8002`). `dab.play` resolves the station via `GET /api/stations` (`{dab:[{id,name,city}]}`), tunes via `POST /api/tuners/<tuner>/play {"station":"dab:<id>"}`, and plays the Icecast stream (`http://<LAN_IP>:8001/tuner1.mp3`) on the device. Verified: tuning `dab:triplem` → Triple M (9B, 204.64 MHz), Icecast serves `audio/mpeg`. Config: `SDR_RADIO_URL`, `SDR_RADIO_TUNER`, `SDR_RADIO_STREAM_URL`. Note: this is the SDR REST API directly, not routed through Music Assistant.
 - `[~]` **5. Works with Music Assistant.** Findings (2026-09-27): the server (sidecar) already supports `source: 'music_assistant'` on `/api/media/play` and `/api/media/control` (resolves via HA/Music Assistant), but Core's voice path hard-rejected any non-YouTube source (`playMedia`/`controlMedia` returned "not supported"), and the intent router's music pattern emitted an unregistered `media.search` tool with no source. FIXED: Core `playMedia`/`controlMedia` now route `source: 'music_assistant'` to the device's local server via `device_http` (Linux), and the intent router's music pattern now emits `media.play` with `source: 'music_assistant'`. **Remaining:** Android has no local server, so Music Assistant playback there depends on the HA media_player workstream item (item 1).
 - `[x]` **6. Works with the MCP servers set up in Core.** VERIFIED (2026-09-27): Core loaded 8 MCP servers from the DB and registered 154 MCP tools into the tool registry (`[core][mcp] registered 154 MCP tools into tool registry`). Servers include `ha-mcp` (camera images → vision), `node-red mcp`, `web-search`, `au-weather`, `bowling`, `afl-mcp`.
 - `[~]` **7. Custom skills in Core.** DECISION (2026-09-27): treat the visual **Flow** engine as the custom-skill mechanism; ensure voice can trigger Flows (there is already a `trigger_intent` flow trigger). No separate Skills system will be built.
-- `[x]` **8. Dispatcharr voice commands.** IMPLEMENTED + VERIFIED (2026-09-27): Dispatcharr runs on the Core host (192.168.1.108:9191, v0.28.2, 55,382 channels). Core resolves channels from the unauthenticated HDHomeRun lineup (`GET /api/hdhr/lineup.json`) and plays the stream URL on the device. Added `dispatcharr.play` + `dispatcharr_play` intent. The authenticated API (`X-API-Key`) also works (for channel/EPG browsing later). Config: `DISPATCHARR_URL`. The API key is NOT stored in the repo — pass it via env if authenticated access is needed. Remaining: on-device playback check.
+- `[x]` **8. Dispatcharr voice commands.** IMPLEMENTED + VERIFIED (2026-09-27): Dispatcharr runs on the Core host (<LAN_IP>:9191, v0.28.2, 55,382 channels). Core resolves channels from the unauthenticated HDHomeRun lineup (`GET /api/hdhr/lineup.json`) and plays the stream URL on the device. Added `dispatcharr.play` + `dispatcharr_play` intent. The authenticated API (`X-API-Key`) also works (for channel/EPG browsing later). Config: `DISPATCHARR_URL`. The API key is NOT stored in the repo — pass it via env if authenticated access is needed. Remaining: on-device playback check.
 
 ### Other functions
 
@@ -571,7 +1173,7 @@ User directive: **both** edge apps (Linux kiosk + native Android) must support t
 
 Decision: **neither SIP nor WebRTC** for this feature. The flow is record-then-playback (store-and-forward), no tight sync is needed, and the fan-out must reach HA media players / Music Assistant — which SIP/WebRTC cannot address (they're HA entities). So Core stores the clip and hands out a URL; HA/MA play it via `media_player.play_media`. WebRTC is deferred to a future *live* intercom; the SIP container stays as an optional telephony bridge.
 
-- **Core** (`core/src/broadcast.ts` + `index.ts`): `BroadcastStore` (in-memory, 10-min TTL) + `POST /api/edge/broadcast` (authenticated) stores a clip, serves it at `GET /api/broadcast/:id.<ext>`, and fans out to **every connected edge device** (reusing the `direct_audio` play path) and **every HA `media_player.*` entity** (`media_player.play_media`). `CANVAS_CORE_PUBLIC_URL` (default `https://192.168.1.108:3100`) forms the served URL.
+- **Core** (`core/src/broadcast.ts` + `index.ts`): `BroadcastStore` (in-memory, 10-min TTL) + `POST /api/edge/broadcast` (authenticated) stores a clip, serves it at `GET /api/broadcast/:id.<ext>`, and fans out to **every connected edge device** (reusing the `direct_audio` play path) and **every HA `media_player.*` entity** (`media_player.play_media`). `CANVAS_CORE_PUBLIC_URL` (default `https://<LAN_IP>:3100`) forms the served URL.
 - **Voice flow**: `POST /api/edge/voice/turn` — a transcript matching `broadcast` arms a recording (`pendingBroadcasts`) and replies "What do you want to broadcast?"; the next turn's `audioBase64` is stored + fanned out instead of transcribed. No edge changes needed (the edge already records + uploads audio).
 - **Widget**: `BroadcastWidget` (`broadcast`) — records via `MediaRecorder`, uploads to the Display server's `POST /api/broadcast` (new `server/src/routes/broadcast.ts`, which proxies to Core with the edge token).
 - **Automation node**: `action_broadcast_announce` (flow) — speaks a message on every display + media player via `broadcastAnnounce` (Core TTS → clip → fan-out).
@@ -595,18 +1197,18 @@ Root causes and fixes:
 
 ### CRITICAL operational finding: nftables port redirect 3100 → 8099 on the Pi
 
-The Pi runs **two** Display servers: the kiosk-spawned one on `127.0.0.1:3100` and the system service `canvas-display-server.service` on `0.0.0.0:8099`. `canvas-port-redirect.service` installs an nftables `nat OUTPUT` rule:
+The Pi runs **two** Display servers: the kiosk-spawned one on `<LAN_IP>:3100` and the system service `canvas-display-server.service` on `<LAN_IP>:8099`. `canvas-port-redirect.service` installs an nftables `nat OUTPUT` rule:
 
 ```
-ip daddr != 192.168.1.108 tcp dport 3100 redirect to :8099
+ip daddr != <LAN_IP> tcp dport 3100 redirect to :8099
 ```
 
-So the kiosk's `fetch('http://127.0.0.1:3100/...')` is **redirected to the system service on 8099**. Updating only `/usr/bin/canvas-display-server` is not enough — `canvas-display-server.service` must be restarted too, or the old code keeps serving. This cost real debugging time; check it first for any "the sidecar change didn't take effect" symptom.
+So the kiosk's `fetch('http://<LAN_IP>:3100/...')` is **redirected to the system service on 8099**. Updating only `/usr/bin/canvas-display-server` is not enough — `canvas-display-server.service` must be restarted too, or the old code keeps serving. This cost real debugging time; check it first for any "the sidecar change didn't take effect" symptom.
 
 ### Verification (live)
 
 - Broadcast: `edges=2` (Pi + Android). Pi `mpv` played the clip; Android `MediaPlayer` fetched and played the 6 s clip natively (`setDataSource` → `onAudioDeviceUpdate` → played ~6 s).
-- DAB+: `play triple m on dab` → `dab.play` → SDR tuned `dab:triplem`; Pi `mpv` playing `http://192.168.1.108:8001/tuner1.mp3` (title "Triple M").
+- DAB+: `play triple m on dab` → `dab.play` → SDR tuned `dab:triplem`; Pi `mpv` playing `http://<LAN_IP>:8001/tuner1.mp3` (title "Triple M").
 - Dispatcharr: `play the news channel on dispatcharr` → Pi `mpv` playing the Dispatcharr proxy stream ("UK: SKY SPORT NEWS").
 - Voice broadcast arming: `broadcast` → "What do you want to broadcast?"; `announce dinner is ready` → "Announcing: dinner is ready".
 - Cloud-AI switch: `cloud_ai_enabled` / `cloud_ai_provider` are read from the `settings` table (env only as defaults); no rows set → disabled (correct default). The deployed bundle contains the Cloud AI settings UI.
@@ -624,7 +1226,7 @@ Consequence: per-device HA media players must come from the **`canvas_display` c
 **Implemented (needs HA deployment):**
 - Core: `GET /api/edge/devices` (edge-token auth) returns every registered device with `{id,name,architecture,online,media}`; `POST /api/edge/devices/:id/media/play` and `/media/control` route to the device (gateway `media.play`/`media.control` for Android, `device_http` for the kiosk) and update the MQTT media state. Verified live: play reached the Pi (`mpv` playing) and stop returned it to idle.
 - `custom_components/canvas_display`: new **Core mode** (`core_mode` + `edge_token` in the config/options flow). In Core mode the coordinator polls `/api/edge/devices` and the media_player platform creates **one entity per device** (dynamic — new devices are added on refresh). Legacy single-device mode is unchanged.
-- **Deployment still required**: copy `custom_components/canvas_display` into the HA config dir (or update via HACS) and add a Core-mode config entry (URL `https://192.168.1.108:3100`, edge token). This session had no HA config access, so the entities are not yet live in HA. A helper is provided: `scripts/deploy-ha-component.sh` (set `HA_CONFIG_DIR`, or `HA_SMB_HOST`/`HA_SMB_USER`/`HA_SMB_PASS`).
+- **Deployment still required**: copy `custom_components/canvas_display` into the HA config dir (or update via HACS) and add a Core-mode config entry (URL `https://<LAN_IP>:3100`, edge token). This session had no HA config access, so the entities are not yet live in HA. A helper is provided: `scripts/deploy-ha-component.sh` (set `HA_CONFIG_DIR`, or `HA_SMB_HOST`/`HA_SMB_USER`/`HA_SMB_PASS`).
 
 ### Full YouTube control (previous / volume / mute)
 
@@ -646,13 +1248,13 @@ Investigated the MA path end-to-end. Findings:
 - **MA has no music providers with content.** `settings.json` shows music providers `builtin` (empty) and `sdrradio` (the user's SDR plugin). A `music_assistant.search` for "bohemian rhapsody" returns empty; a search for "triple m" returns `library://radio/22` (the SDR station). So MA can only serve DAB+ radio, not general music, until a music provider (Spotify/etc.) is added.
 - **MA cannot target the Canvas edges.** MA's player providers are `airplay`, `chromecast`, `dlna`, `sendspin`, `snapcast`, `squeezelite`, `sync_group`, `universal_player` — there is **no "Home Assistant Media Players" provider**, so MA cannot play to the Canvas HA media_player entities. To make the edges MA players they would need a native MA player protocol (DLNA renderer / Snapcast / Squeezelite / Sendspin) — a real architecture decision.
 - **The Linux MA voice path is circular.** The sidecar's `music_assistant` branch calls HA `media_player.play_media` on `media_player.canvas_ui_device`, which *is* the `canvas_display` custom component entity (confirmed via the HA entity registry: `platform: canvas_display`). That entity's `async_play_media` calls back into the sidecar's `/api/media/play` with `source: music_assistant` — a loop. It needs to target a real MA player instead.
-- The installed `canvas_display` entry "Canvas UI Device" points at `http://192.168.1.216:8099` (the Pi sidecar) and its coordinator is failing to connect (HA system log), so that entity is effectively dead. The new **Core mode** replaces this.
+- The installed `canvas_display` entry "Canvas UI Device" points at `http://<LAN_IP>:8099` (the Pi sidecar) and its coordinator is failing to connect (HA system log), so that entity is effectively dead. The new **Core mode** replaces this.
 
 **Not fixed** (needs a decision): making the edges MA players, and the circular sidecar MA branch.
 
 ### Broadcast to HA Cast devices — fixed
 
-HA's system log showed Cast devices rejecting the broadcast clip: `Failed to cast media https://192.168.1.108:3100/api/broadcast/...wav` — they cannot validate the self-signed TLS proxy on 3100. `CANVAS_CORE_PUBLIC_URL` was never passed through the compose file, so the HTTPS default always applied. Added the passthrough and set the remote to the plain-HTTP trusted-LAN address (`http://192.168.1.108:3101`). Verified: the clip URL is now HTTP, fetches 200, and the Cast error is gone.
+HA's system log showed Cast devices rejecting the broadcast clip: `Failed to cast media https://<LAN_IP>:3100/api/broadcast/...wav` — they cannot validate the self-signed TLS proxy on 3100. `CANVAS_CORE_PUBLIC_URL` was never passed through the compose file, so the HTTPS default always applied. Added the passthrough and set the remote to the plain-HTTP trusted-LAN address (`http://<LAN_IP>:3101`). Verified: the clip URL is now HTTP, fetches 200, and the Cast error is gone.
 
 ### Intent-router media-source fix
 
@@ -660,7 +1262,7 @@ The LLM request classifier's free-form `source` was used verbatim, so "play bohe
 
 ### Remote compose repair (important)
 
-While adding the `CANVAS_CORE_PUBLIC_URL` passthrough I overwrote the remote `core/docker-compose.yml` with the repo's version, which requires `CANVAS_CORE_TLS_DIR` (not set on the host). The authoritative remote compose is `/home/spetchal/canvas-core/docker-compose.yml` (build context `.`, TLS dir hardcoded to `/home/spetchal/canvas-core-tls-private-20260926/generation-1`). Both `/home/spetchal/canvas-core/docker-compose.yml` and `/home/spetchal/canvas-core/core/docker-compose.yml` were rewritten with the hardcoded TLS paths + the `PUBLIC_URL` passthrough and now validate. **Note:** the `core/` compose reads `core/.env`; the parent compose reads the (empty) parent `.env` — the `core/` one is the one that carries the real env.
+While adding the `CANVAS_CORE_PUBLIC_URL` passthrough I overwrote the remote `core/docker-compose.yml` with the repo's version, which requires `CANVAS_CORE_TLS_DIR` (not set on the host). The authoritative remote compose is `<local-home>/canvas-core/docker-compose.yml` (build context `.`, TLS dir hardcoded to `<local-home>/canvas-core-tls-private-20260926/generation-1`). Both `<local-home>/canvas-core/docker-compose.yml` and `<local-home>/canvas-core/core/docker-compose.yml` were rewritten with the hardcoded TLS paths + the `PUBLIC_URL` passthrough and now validate. **Note:** the `core/` compose reads `core/.env`; the parent compose reads the (empty) parent `.env` — the `core/` one is the one that carries the real env.
 
 ### Ambient-noise / false-wake fix
 
@@ -747,15 +1349,15 @@ The display has one audio output; mpv (voice TTS / radio / DLNA pushes) and the 
 
 ### Pi deployment + acceptance (2026-09-27/28)
 
-Deployed to the Pi (`192.168.1.216`) this session:
+Deployed to the Pi (`<LAN_IP>`) this session:
 
-- Built the arm64 sidecar natively on the Pi (`/home/spetchal/build/canvas-server`), installed to `/usr/bin/canvas-display-server` (backup `canvas-display-server.bak-20260927-dlna`), and restarted **both** `canvas-display-server.service` (system, `:8099`) and `canvas-display-browser.service` (user).
+- Built the arm64 sidecar natively on the Pi (`<local-home>/build/canvas-server`), installed to `/usr/bin/canvas-display-server` (backup `canvas-display-server.bak-20260927-dlna`), and restarted **both** `canvas-display-server.service` (system, `:8099`) and `canvas-display-browser.service` (user).
 - **Retired the gmrender prototype**: `systemctl --user stop/disable canvas-dlna-renderer.service`; port 49494 is now free. The manually-added HA `dlna_dmr` entry for it still needs removing in HA.
 
 **Verified on the Pi:**
 
-- `GET /api/dlna/state` → `enabled:true`, `base_url http://192.168.1.216:49500`; `GET /description.xml` serves a valid MediaRenderer description; the DLNA UUID is stable across restarts.
-- **DLNA audio push works end-to-end**: `SetAVTransportURI` + `Play` for `http://192.168.1.108:8001/tuner1.mp3` → `200`/`200`, state `PLAYING` with an advancing position, and `mpv` running with that URL.
+- `GET /api/dlna/state` → `enabled:true`, `base_url http://<LAN_IP>:49500`; `GET /description.xml` serves a valid MediaRenderer description; the DLNA UUID is stable across restarts.
+- **DLNA audio push works end-to-end**: `SetAVTransportURI` + `Play` for `http://<LAN_IP>:8001/tuner1.mp3` → `200`/`200`, state `PLAYING` with an advancing position, and `mpv` running with that URL.
 - **Audio arbiter works**: with `canvas-snapclient.service` active at sidecar start the arbiter reports `owner:"snapcast"`; the DLNA audio push then **stopped snapclient** (`inactive`) and reported `owner:"mpv"`.
 - The kiosk is connected to the **system** sidecar as a `browser` client (`Hello from browser (pi5-living-room)`), so `broadcast(..., 'browser')` reaches it. Note both sidecars run the same binary and both try to bind 49500; the system service wins (it starts first at boot) and the kiosk-spawned one logs `EADDRINUSE` and continues without DLNA. This ordering dependency is fragile — see the follow-up below.
 - **DLNA video push is classified and routed correctly**: a `.mp4` push reports `isVideo:true` and `PLAYING` and is dispatched to the kiosk `show_floating` path.
@@ -791,7 +1393,7 @@ A second, independent defect: panel/floating webviews are **child** webviews, so
 
 ### Operational notes learned this session
 
-- **`server/.env` sets `DB_PATH=./data/canvas-ui.db`**, which takes precedence over `CANVAS_DATA_DIR`. Local smoke tests therefore write to the repo's gitignored `server/data/`. When rsyncing `server/` to a Pi build dir, **exclude `data/`** or you will copy a dev database across (harmless for the running service, which uses `CANVAS_DATA_DIR=/home/spetchal/.local/share/canvas-display`, but confusing).
+- **`server/.env` sets `DB_PATH=./data/canvas-ui.db`**, which takes precedence over `CANVAS_DATA_DIR`. Local smoke tests therefore write to the repo's gitignored `server/data/`. When rsyncing `server/` to a Pi build dir, **exclude `data/`** or you will copy a dev database across (harmless for the running service, which uses `CANVAS_DATA_DIR=<local-home>/.local/share/canvas-display`, but confusing).
 - The kiosk's `/tmp/canvas-ui-kiosk.log` is **block-buffered** — recent lines may be missing until the buffer flushes. Do not treat a missing line as proof that something did not happen unless the log has since grown past it.
 - `screen_off`/`screen_on` use `xset dpms` (X11) and are **no-ops under Wayland/labwc**, so they cannot be used to test whether the kiosk is processing commands.
 - `grim` (with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0`) is a reliable way to capture the Pi's display; identical PNG hashes across commands are meaningful.
@@ -817,10 +1419,10 @@ Behaviour mirrors the sidecar: audio → native `MediaPlayer` (no window), video
 
 `MainActivity` starts the renderer once the `MultiPanelRenderer` exists and stops it in `onDestroy`. `playDirectAudio` (Core broadcast clips) now routes through the DLNA adapter so direct audio and DLNA pushes share one audio sink.
 
-### Verified on the tablet (`A1064US260402203`, 192.168.1.41)
+### Verified on the tablet (`A1064US260402203`, <LAN_IP>)
 
-- `GET http://192.168.1.41:49500/description.xml` serves a valid MediaRenderer description; `/health` reports renderer state.
-- **SSDP discovery works**: an M-SEARCH for `urn:schemas-upnp-org:device:MediaRenderer:1` gets a response from `192.168.1.41:1900` with `LOCATION=http://192.168.1.41:49500/description.xml` (probe helper: `scripts/ssdp-probe.py`).
+- `GET http://<LAN_IP>:49500/description.xml` serves a valid MediaRenderer description; `/health` reports renderer state.
+- **SSDP discovery works**: an M-SEARCH for `urn:schemas-upnp-org:device:MediaRenderer:1` gets a response from `<LAN_IP>:1900` with `LOCATION=http://<LAN_IP>:49500/description.xml` (probe helper: `scripts/ssdp-probe.py`).
 - **Audio**: `SetAVTransportURI` + `Play` for the DAB+ Icecast stream → `200`/`200`, state `PLAYING` with an advancing position.
 - **Video**: a `.mp4` push reports `isVideo:true` and opens the floating WebView with the `/video` wrapper (confirmed by screenshot — the test clip plays over the page panels).
 - `RenderingControl.GetVolume` and `AVTransport.GetTransportInfo` return well-formed SOAP responses.
@@ -857,7 +1459,7 @@ Option 2 was chosen and built: a **Kotlin Snapcast client** (`.../snapcast/`). T
 - `Time` (4) payload is just the client's `latency` (8 bytes); the sync clocks ride in the header's `sent`/`received` fields.
 - The bundled MA snapserver uses **flac @ 48000:16:2** (`/etc/snapserver.conf` leaves `codec` commented, and the default is flac).
 
-**Verified on the tablet (192.168.1.41):**
+**Verified on the tablet (<LAN_IP>):**
 
 - Client connects, handshake completes, `codec: flac (1362 byte header)`.
 - With a 440 Hz tone written into the snapserver's `/tmp/snapfifo`, the tablet received `WireChunk`s and `dumpsys media.audio_flinger` showed the app's `AudioTrack` **active at 48000 Hz stereo with 4.18 M frames written** — i.e. FLAC decode → PCM → speaker works end-to-end.
@@ -911,7 +1513,7 @@ after = round(r / (r - 1))      // frames between single-frame corrections
 - **Admin UI**: the device Audio tab gained a *Snapcast (multi-room audio)* section — enable switch, server (blank = Core host) and port.
 - **Android**: `VoiceConfigClient` parses the new fields and `MainActivity.applySnapcastConfig` applies them, restarting the Snapcast client only when they actually change. The on-device fields remain as a fallback for an unconfigured device.
 
-**Verified end-to-end:** the Core endpoint returns the stored values (`snapcast_host: "192.168.1.108"`), and the tablet logged `Snapcast config from Core changed; restarting client` followed by a reconnect to the Core-provided host.
+**Verified end-to-end:** the Core endpoint returns the stored values (`snapcast_host: "<LAN_IP>"`), and the tablet logged `Snapcast config from Core changed; restarting client` followed by a reconnect to the Core-provided host.
 
 **Known gaps:**
 
@@ -995,7 +1597,7 @@ Both scenes are 1280×800 and contain the same nine source-specific widgets as t
 
 A stray `resolution` debug widget had been staged onto the Dispatcharr Android scene (revision 2, ~11 min after creation) at `20,20 200×150`, overlapping the picker; the DAB+ scene never had it, so the two pages did not match. It was removed by staging and publishing revision 3, leaving both Android scenes with the identical nine-widget layout.
 
-The creator runs inside the Core container so the automation token is never handled locally: `ssh <core-host> 'docker exec -i -e CANVAS_DEMO_BASE=http://127.0.0.1:3100 canvas-core-canvas-core-1 node -' < scripts/create-media-control-demos.mjs`. It is idempotent (skips a page whose name already exists). Verified via the read-only API: both pages resolve to their published scenes, each manifest reports nine widgets at 1280×800, and each page has a single full-bleed `Main` panel.
+The creator runs inside the Core container so the automation token is never handled locally: `ssh <core-host> 'docker exec -i -e CANVAS_DEMO_BASE=http://<LAN_IP>:3100 canvas-core-canvas-core-1 node -' < scripts/create-media-control-demos.mjs`. It is idempotent (skips a page whose name already exists). Verified via the read-only API: both pages resolve to their published scenes, each manifest reports nine widgets at 1280×800, and each page has a single full-bleed `Main` panel.
 
 ## Linux force-display delivery fix (2026-09-28)
 
@@ -1047,7 +1649,7 @@ Validation and deployment:
 - `cd core && npx tsx --test test/media-routes.test.ts` — PASS, 41/41 tests.
 - `cd core && npm run build` — PASS.
 - Synced only `core/dist/`, rebuilt and restarted only `canvas-core`.
-- Production-path acceptance selected the Chromecast entity temporarily and called `/api/dispatcharr/play` with only `channel: AU: ABC news` (no manually modified URL). Core returned HTTP 200. Seven seconds later HA reported `playing`, Default Media Receiver, `media_content_type: video`, and advancing position/duration. The URL reported by HA used host `192.168.1.108`, retained `output_profile=1`, and added `output_format=fmp4`. Playback was intentionally left running for owner visual confirmation.
+- Production-path acceptance selected the Chromecast entity temporarily and called `/api/dispatcharr/play` with only `channel: AU: ABC news` (no manually modified URL). Core returned HTTP 200. Seven seconds later HA reported `playing`, Default Media Receiver, `media_content_type: video`, and advancing position/duration. The URL reported by HA used host `<LAN_IP>`, retained `output_profile=1`, and added `output_format=fmp4`. Playback was intentionally left running for owner visual confirmation.
 
 Audio follow-up:
 
@@ -1065,7 +1667,7 @@ Implemented and deployed (owner-authorized):
 - Android now routes `dispatcharr` media to a persistent Media3 ExoPlayer/PlayerView overlay; direct audio still uses MediaPlayer and other web media still uses the floating WebView. The video owner participates in `AudioSinkArbiter`, so acquiring video releases Snapcast and stopping video permits the configured idle handler to resume it.
 - Play, stop, volume and mute operate on the native player. Live pause stops network loading; resume reopens the current channel at its live edge. A rolling-window read-position error also reloads at live.
 - Core gives Android an AAC/fMP4 Dispatcharr variant through a validated HTTPS relay (`/api/dispatcharr/stream/:uuid`). This avoids Android cleartext-policy failures without weakening TLS or accepting arbitrary proxy URLs. The relay's 15-second limit applies only while opening the upstream; continuous playback is not timed out, and client disconnect aborts the Dispatcharr request.
-- Corrected live `CANVAS_CORE_PUBLIC_URL` from the HTTP control port to `https://192.168.1.108:3100`, then recreated Core. No credentials were printed or stored here.
+- Corrected live `CANVAS_CORE_PUBLIC_URL` from the HTTP control port to `https://<LAN_IP>:3100`, then recreated Core. No credentials were printed or stored here.
 - Installed the final debug APK in place on tablet `A1064US260402203`, preserving its enrollment. Synced only `core/dist/` to the Core host and rebuilt/recreated only `canvas-core` from the canonical parent Compose project.
 
 Validation:
@@ -1073,7 +1675,7 @@ Validation:
 - `cd core && npx tsx --test test/media-routes.test.ts && npm run build` — PASS, 44/44 tests and TypeScript build.
 - `cd browser/android-native && <cached Gradle 8.14.3> --offline :app:testDebugUnitTest :app:assembleDebug` — PASS, including three media-routing JVM tests.
 - `adb install -r app/build/outputs/apk/debug/app-debug.apk` — PASS.
-- Strict TLS health with the Android-bundled public CA: `curl --cacert browser/android-native/app/src/main/res/raw/canvas_core_ca.pem -fsS https://192.168.1.108:3100/health` — PASS (`status: ok`).
+- Strict TLS health with the Android-bundled public CA: `curl --cacert browser/android-native/app/src/main/res/raw/canvas_core_ca.pem -fsS https://<LAN_IP>:3100/health` — PASS (`status: ok`).
 - Live production path on Android Edge: play `AU: ABC news`, wait, pause for 3.5 seconds, resume, wait 10 seconds — all three Core calls returned HTTP 200. Logcat progressed from Media3 buffering (`state=2`) to ready (`state=3`) after resume. `/tmp/canvas-android-native-video-final.png` shows the live ABC News frame. Android audio diagnostics show the app's active 48 kHz stereo `AudioTrack`, increasing frames written and non-silent signal power.
 - The first live iteration exposed indefinite buffering: Core's timeout covered the continuous body and pause retained the upstream. The final relay/player lifecycle changes above fixed it. The player also retries up to twice when a live fMP4 open remains buffering for eight seconds or lands between fragments. A fresh play after installing this final build recovered automatically and `/tmp/canvas-android-native-video-autoretry-final.png` shows live video.
 
@@ -1097,7 +1699,7 @@ Validation and live acceptance:
 - Android final APK installed in place. Live ABC News rendered with the Exit button (`/tmp/android-video-touch-exit.png`); an ADB touch at the button stopped Media3 (`active=false`) and restored the scene (`/tmp/android-video-after-touch-exit.png`).
 - Built the arm64 sidecar natively on the Pi using the documented `tsc` → esbuild → `pkg --no-bytecode` path, backed up and installed `/usr/bin/canvas-display-server`, then restarted the system sidecar and kiosk. Both sidecars run the updated binary.
 - Built the arm64 kiosk natively on the Pi with rustup Rust and `npx tauri build --no-bundle`, backed up and installed `/usr/bin/canvas-display-browser-linux`, then restarted its user service. Both services report active.
-- Synced Core `dist/`, rebuilt/recreated `canvas-core`, and confirmed production dispatch now sends the Pi `192.168.1.108:9191`, output profile 2 and fMP4.
+- Synced Core `dist/`, rebuilt/recreated `canvas-core`, and confirmed production dispatch now sends the Pi `<LAN_IP>:9191`, output profile 2 and fMP4.
 - Live Pi screenshot `/tmp/canvas-linux-mpv-touch-final.png` shows fullscreen ABC News through mpv with the visible **✕ EXIT** target. PipeWire reported an active 48 kHz stereo mpv sink input. Sending mpv's quit command stopped the process with code 0, released playback and revealed the scene (`/tmp/canvas-linux-after-exit.png`). Physical contact with the Pi touchscreen's Exit target remains the owner acceptance check because no remote touch-injection tool is installed.
 
 Follow-up completed in source and on Linux: local player Exit reports `idle` through authenticated `POST /api/edge/media/state`. Core tracks the active Canvas target and accepts a report only from that device, preventing another edge from clearing current playback. Linux mpv reports after a local/natural video exit; Android reports when its native Exit button is pressed.

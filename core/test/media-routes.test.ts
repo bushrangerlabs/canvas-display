@@ -509,6 +509,21 @@ test('targeted Dispatcharr playback is dispatched as video', async () => {
   }
 });
 
+test('saving a DLNA default media playback device persists across reloads', async () => {
+  clearMediaCaches();
+  const { fastify, pool } = await buildServer();
+  await pool.query("INSERT INTO devices (id, name, architecture) VALUES ('device-linux', 'Pi', 'arm64')");
+  const save = await fastify.inject({
+    method: 'PUT',
+    url: '/api/admin/devices/device-linux/media-defaults',
+    payload: { defaults: { dab: { kind: 'dlna', id: 'uuid:renderer-1' } } },
+  });
+  assert.equal(save.statusCode, 200, save.body);
+  const reload = await fastify.inject({ method: 'GET', url: '/api/admin/devices/device-linux/media-defaults' });
+  assert.equal(reload.statusCode, 200);
+  assert.deepEqual(reload.json().defaults.dab, { kind: 'dlna', id: 'uuid:renderer-1' });
+});
+
 test('Android Dispatcharr playback receives a resolvable AAC fMP4 variant', async () => {
   clearMediaCaches();
   const urls: string[] = [];

@@ -34,6 +34,27 @@ export function createTestDb(): { db: Db; pool: Pool } {
       challenge_issued_at TIMESTAMPTZ,
       challenge_id    TEXT
     );
+    CREATE TABLE IF NOT EXISTS device_media_defaults (
+      device_id   TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      media_type  TEXT NOT NULL CHECK (media_type IN ('dab','dispatcharr','music_assistant','youtube','youtube_music')),
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('canvas','music_assistant','dlna','media_player')),
+      target_id   TEXT NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (device_id, media_type)
+    );
+    CREATE TABLE IF NOT EXISTS audio_endpoints (
+      id                 TEXT PRIMARY KEY,
+      name               TEXT NOT NULL DEFAULT '',
+      address            TEXT,
+      port               INTEGER NOT NULL DEFAULT 8090,
+      token              TEXT NOT NULL,
+      token_hash         TEXT NOT NULL,
+      assigned_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+      firmware_version   TEXT,
+      settings           JSONB NOT NULL DEFAULT '{"playback_volume":15,"treble_db":6,"mic_capture_gain":1,"mic_preemphasis":0.95}'::jsonb,
+      last_seen          TIMESTAMPTZ,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS pending_enrollment_challenges (
       challenge_id    TEXT PRIMARY KEY,
       invitation_id   TEXT NOT NULL,

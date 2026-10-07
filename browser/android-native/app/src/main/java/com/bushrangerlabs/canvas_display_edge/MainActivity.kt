@@ -165,9 +165,14 @@ class MainActivity : AppCompatActivity() {
         discoveryFallback?.let { discoveryFallbackHandler.removeCallbacks(it) }
         discoveryFallback = Runnable {
             if (!config.configured) {
-                config.coreUrl = "https://192.168.1.108:3100"
-                discovery?.stop()
-                showRenderer()
+                val fallbackCoreUrl = BuildConfig.DEFAULT_CORE_URL.trim()
+                if (fallbackCoreUrl.isNotBlank()) {
+                    config.coreUrl = fallbackCoreUrl
+                    discovery?.stop()
+                    showRenderer()
+                } else {
+                    message.text = "Canvas Edge Android\nCore not discovered. Configure CANVAS_CORE_URL locally for a fallback."
+                }
             }
         }
         discoveryFallbackHandler.postDelayed(discoveryFallback!!, 3_000)
@@ -468,6 +473,7 @@ class MainActivity : AppCompatActivity() {
             goodIntentSound = voiceConfig.goodIntentSound,
             noIntentEnabled = voiceConfig.noIntentEnabled,
             noIntentSound = voiceConfig.noIntentSound,
+            remoteEndpoint = voiceConfig.remoteEndpoint,
             onStatus = { text -> android.util.Log.i("CanvasVoice", text) },
         )
         runCatching { voicePipeline?.start() }

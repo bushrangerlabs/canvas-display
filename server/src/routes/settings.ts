@@ -75,6 +75,10 @@ const SETTING_DEFAULTS: Record<string, string> = {
   voice_no_intent_sound:   'builtin:wood_tap',
   voice_port:           '6053',
   voice_friendly_name:  'Canvas Display',
+  audio_endpoint_host:  '',
+  audio_endpoint_port:  '8090',
+  audio_endpoint_token: '',
+  audio_endpoint_id:    '',
   voice_ha_url:         'http://homeassistant.local:8123',  // DEPRECATED (Phase 4): not used by the ESPHome satellite voice pipeline
   voice_ha_token:       '',                                    // DEPRECATED (Phase 4): not used by the ESPHome satellite voice pipeline
   voice_pipeline_id:    '',
@@ -84,7 +88,7 @@ const SETTING_DEFAULTS: Record<string, string> = {
   youtube_safe_search:  'strict',
 };
 
-const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token', 'youtube_api_key', 'edge_voice_token']);
+const REDACTED_KEYS = new Set(['mqtt_password', 'voice_ha_token', 'youtube_api_key', 'edge_voice_token', 'audio_endpoint_token']);
 
 function getAllSettings(): Record<string, string> {
   const db = getDb();

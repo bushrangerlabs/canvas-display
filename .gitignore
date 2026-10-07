@@ -1,6 +1,9 @@
 node_modules/
 dist/
 build/
+# Firmware CMake builds and generated UF2/dependency outputs.
+firmware/audio-endpoint/build-*/
+firmware/audio-endpoint.zip
 data/
 *.db
 *.db-shm

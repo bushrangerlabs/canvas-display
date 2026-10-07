@@ -50,6 +50,21 @@ test('detects speech above a loud calibrated microphone noise floor', () => {
   assert.equal(pushFor(detector, 1_500, 800), 'speech-ended');
 });
 
+test('direct-edge profile accepts quiet raw-centre speech above its learned room floor', () => {
+  const detector = new EndOfSpeechDetector({
+    noSpeechTimeoutMs: 4000,
+    trailingSilenceMs: 1000,
+    minimumSpeechMs: 120,
+    thresholdFloor: 120,
+    noiseMultiplier: 1.5,
+    thresholdOffset: 50,
+  });
+  assert.equal(pushFor(detector, 170, 320), 'continue');
+  assert.equal(pushFor(detector, 500, 160), 'continue');
+  assert.equal(detector.detectedSpeech, true);
+  assert.equal(pushFor(detector, 40, 1040), 'speech-ended');
+});
+
 test('hard maximum bounds continuous loud input', () => {
   const detector = new EndOfSpeechDetector();
   assert.equal(pushFor(detector, 40, 400), 'continue');

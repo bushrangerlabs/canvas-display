@@ -66,12 +66,17 @@ function dbGet(key: string, fallback: string): string {
 /** Load current satellite settings from DB (with env-var / hostname fallbacks). */
 export function loadSettingsFromDb(): SatelliteSettings {
   const defaultName = hostname().toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'canvas-display';
+  const host = dbGet('audio_endpoint_host', process.env.AUDIO_ENDPOINT_HOST ?? '').trim();
+  const port = dbGet('audio_endpoint_port', process.env.AUDIO_ENDPOINT_PORT ?? '').trim();
+  const token = dbGet('audio_endpoint_token', process.env.AUDIO_ENDPOINT_TOKEN ?? '').trim();
+  const remoteEndpoint = host && port && token ? `${host}:${port}:${token}` : '';
   return {
     port:         parseInt(dbGet('voice_port',          process.env.VOICE_PORT          ?? '6053')),
     name:         dbGet('voice_friendly_name', process.env.VOICE_FRIENDLY_NAME ?? defaultName)
                     .toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-') || defaultName,
     friendlyName: dbGet('voice_friendly_name', process.env.VOICE_FRIENDLY_NAME ?? 'Canvas Display'),
     micDevice:    dbGet('voice_mic_device',    process.env.VOICE_MIC_DEVICE    ?? 'default'),
+    remoteEndpoint,
     wakeWord:     dbGet('voice_wake_word',     process.env.VOICE_WAKE_WORD     ?? 'okay_nabu'),
     ttsVolume:    parseInt(dbGet('voice_tts_volume', process.env.VOICE_TTS_VOLUME ?? '80')),
     wakeAckEnabled: dbGet('voice_wake_ack_enabled', process.env.VOICE_WAKE_ACK_ENABLED ?? '0') === '1',
@@ -107,6 +112,7 @@ let _settings: SatelliteSettings = {
   name:         'canvas-display',
   friendlyName: 'Canvas Display',
   micDevice:    'default',
+  remoteEndpoint: '',
   wakeWord:     'okay_nabu',
   ttsVolume:    80,
   wakeAckEnabled: false,
@@ -151,6 +157,13 @@ export async function stopVoiceServer(): Promise<void> {
   _satellite = null;
   _status = 'stopped';
   console.log('[voice] Voice satellite stopped');
+}
+
+/** Stop and restart the satellite so DB settings (e.g. endpoint assignment) apply. */
+export async function restartVoiceServer(): Promise<void> {
+  if (!_satellite) return; // not running — nothing to restart
+  await stopVoiceServer();
+  await startVoiceServer();
 }
 
 export function getVoiceState(): VoiceState {

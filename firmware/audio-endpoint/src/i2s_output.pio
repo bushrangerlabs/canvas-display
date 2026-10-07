@@ -1,0 +1,26 @@
+; I2S master transmitter for the UDA1334A DAC.
+;
+; Sideset (2 pins, base = AE_PIN_DAC_BCLK = GPIO6):
+;   bit0 = BCLK (GPIO6)
+;   bit1 = LRCK (GPIO7)
+; Out pin (1 pin, base = AE_PIN_DAC_DIN = GPIO8): serial data, MSB first.
+;
+; One 32-bit FIFO word per channel slot. The CPU/DMA feeds left and right
+; words; for mono playback the same sample is written to both slots.
+;
+; Timing: 2 PIO cycles per bit (BCLK low on `out`, high on `jmp`), so
+; BCLK = clk_sys / (2 * clkdiv). LRCK toggles every 32 bits.
+
+.program i2s_out
+.side_set 2
+
+.wrap_target
+    set x, 31          side 0b00   ; left slot, 32 bits, LRCK low
+lslot:
+    out pins, 1        side 0b00   ; present data bit, BCLK low
+    jmp x-- lslot      side 0b01   ; BCLK high -> DAC latches
+    set x, 31          side 0b10   ; right slot, 32 bits, LRCK high
+rslot:
+    out pins, 1        side 0b10
+    jmp x-- rslot      side 0b11
+.wrap

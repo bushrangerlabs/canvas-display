@@ -54,6 +54,7 @@ import { startVoiceServer, stopVoiceServer, isVoiceEnabled } from './voice/index
 import { getCoreBridgeConfig, startDirectWakeword, stopDirectWakeword } from './voice/direct-wakeword';
 import { claimVoiceOwnership, releaseVoiceOwnership } from './voice/ownership';
 import { startBroadcastDeliveryPoller, stopBroadcastDeliveryPoller } from './voice/broadcast-delivery-poller';
+import { startAudioEndpointPoller, stopAudioEndpointPoller } from './voice/audio-endpoint-poller';
 
 function useDirectCoreVoice(): boolean {
   const { baseUrl, token } = getCoreBridgeConfig();
@@ -245,14 +246,19 @@ async function main() {
     // A Core-enrolled Edge owns its complete wake -> Core -> local TTS loop.
     // The ESPHome satellite is the fallback for HA-owned installations. Never
     // start both because they would compete for the same microphone.
+    let ownsDirectVoice = false;
     if (isVoiceEnabled()) {
       const direct = useDirectCoreVoice();
       const owner = claimVoiceOwnership(direct ? 'core-direct' : 'ha-satellite');
       if (!owner.owned || owner.pid !== process.pid) {
         console.error(`[voice] Microphone ownership denied: ${owner.error ?? 'owned by another process'}`);
-      } else if (direct) await startDirectWakeword();
-      else await startVoiceServer();
+      } else if (direct) {
+        await startDirectWakeword();
+        ownsDirectVoice = true;
+      } else await startVoiceServer();
     }
+    // Embedded Core-direct owners still need assignments, not the other device services.
+    if (ownsDirectVoice || config.deviceServicesEnabled) startAudioEndpointPoller();
     // Start TTS broadcast poller if Core URL is configured (polls for server-pushed TTS)
     if (config.deviceServicesEnabled) {
       startBroadcastDeliveryPoller(config.port);
@@ -267,8 +273,8 @@ async function main() {
   }
 }
 
-process.on('SIGTERM', async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
-process.on('SIGINT',  async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGTERM', async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); stopAudioEndpointPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
+process.on('SIGINT',  async () => { stopDlna(); await stopDirectWakeword(); await stopVoiceServer(); stopBroadcastDeliveryPoller(); stopAudioEndpointPoller(); releaseVoiceOwnership(); disconnectMqtt(); process.exit(0); });
 
 process.on('uncaughtException', (err) => {
   console.error('[canvas-ui] Uncaught exception:', err);

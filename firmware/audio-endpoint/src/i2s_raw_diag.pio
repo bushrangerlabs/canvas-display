@@ -1,0 +1,35 @@
+; Temporary raw microphone-bus probe. This is built only by the opt-in
+; canvas_audio_raw_i2s_diag CMake target. It records GPIO0..5 at both stable
+; CK phases; GPIO0..3 are D0..D3, GPIO4 is WS, and GPIO5 is CK.
+;
+; Each observation is a 6-bit GPIO snapshot pushed as a separate FIFO word.
+; The host decoder uses sample index parity: even=CK high, odd=CK low.
+
+.program raw_i2s_probe
+.wrap_target
+probe_high:
+    wait 1 pin, 5       ; wait until MIC_CK is high
+    mov isr, null
+    in pins, 6          ; D0,D1,D2,D3,WS,CK near start of CK-high plateau
+    push block
+probe_low:
+    wait 0 pin, 5       ; wait until MIC_CK is low
+    mov isr, null
+    in pins, 6          ; same pins near start of CK-low plateau
+    push block
+.wrap
+
+; Same 32-bit-slot, 64-BCLK/frame clock generator as production.
+; Sideset bit 0 = WS (GPIO4), bit 1 = CK (GPIO5).
+.program raw_i2s_clock
+.side_set 2
+.wrap_target
+    set x, 31          side 0b00
+clock_left:
+    nop                side 0b10
+    jmp x-- clock_left side 0b00
+    set x, 31          side 0b01
+clock_right:
+    nop                side 0b11
+    jmp x-- clock_right side 0b01
+.wrap

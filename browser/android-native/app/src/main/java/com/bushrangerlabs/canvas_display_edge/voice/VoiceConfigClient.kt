@@ -22,6 +22,8 @@ data class VoiceConfig(
     val snapcastEnabled: Boolean,
     val snapcastHost: String,
     val snapcastPort: Int,
+    // Assigned Pico audio endpoint as "host:port:token" (empty = local mic).
+    val remoteEndpoint: String,
 )
 
 /**
@@ -59,6 +61,13 @@ class VoiceConfigClient(context: Context, private val coreUrl: String) {
                 snapcastEnabled = json.optBoolean("snapcast_enabled", true),
                 snapcastHost = json.optString("snapcast_host", ""),
                 snapcastPort = json.optInt("snapcast_port", 1704),
+                remoteEndpoint = run {
+                    val ep = json.optJSONObject("audio_endpoint") ?: return@run ""
+                    val address = ep.optString("address", "")
+                    val port = ep.optInt("port", 8090)
+                    val token = ep.optString("token", "")
+                    if (address.isBlank() || token.isBlank()) "" else "$address:$port:$token"
+                },
             )
         }
     }

@@ -37,6 +37,7 @@ Consult component manifests for versions and commands. Components currently have
 
 ## Safe changes
 
+* Pico LED voice feedback uses authenticated current MIC-owner message 8 (ready/listening/processing/error). LED GPIO rendering stays outside the lwIP lock; continuous socket connectivity is not a voice-state indicator. Verify visible colours after flashing, not just edge state logs.
 * Preserve existing modified, deleted and untracked files. The checkout contains substantial in-progress work; consult `PROJECT_STATUS.md` for the recorded baseline and recheck Git for current state.
 * Do not restore deleted legacy Android sources or remove their native replacement merely to clean Git status.
 * Make focused changes that address the requested behavior. Avoid unrelated refactors, dependency upgrades, generated-asset churn and formatting sweeps.
@@ -109,6 +110,8 @@ Deploy/build only with explicit owner authorization for the release/deploy path 
 * The Pi previously ran a `gmediarender` prototype (`canvas-dlna-renderer.service`, port 49494) that is **audio-only** and superseded — remove it and its manual HA `dlna_dmr` entry when deploying this renderer.
 * DLNA state is exposed at `GET /api/dlna/state`; Snapcast/sink state at `GET /api/audio/snapcast`.
 * The system sidecar (`:8099`) is the canonical owner of DLNA, Snapcast arbitration and durable Core broadcast polling. The kiosk-spawned sidecar sets `CANVAS_DEVICE_SERVICES_ENABLED=false`, so it still serves kiosk-local APIs without binding DLNA port 49500 or starting duplicate device workers.
+* Voice ownership is separate from the device-services flag. On the deployed Pi, the kiosk embedded process owns Core-direct voice and uses a different SQLite DB from the system sidecar. Assigned Pico polling must run in that active owner. Resolve canonical DB `edge_device_id`, then native-host `CANVAS_EDGE_DEVICE_ID`, before legacy DB `device_id`; the legacy id can otherwise hide the enrolled device's assignment.
+* Pi nftables may redirect OUTPUT port 3100 to 8099: a loopback curl to 3100 is not proof of the embedded voice process's state. Verify PID/environment/socket ownership and `/tmp/canvas-ui-kiosk.log` before diagnosing local fallback or a stopped pipeline.
 * When rsyncing `server/` to a Pi build dir, **exclude `data/`** — `server/.env` sets `DB_PATH=./data/...`, so a local dev database lives there and would otherwise be copied across.
 * The kiosk's `/tmp/canvas-ui-kiosk.log` is block-buffered; a missing line is not proof something did not happen. `screen_off`/`screen_on` use `xset` (X11) and are no-ops under Wayland/labwc. Capture the Pi display with `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim <file>`.
 * **Build the kiosk with the Tauri CLI** (`npx tauri build --no-bundle`), never raw `cargo build --release` — the latter compiles with `--cfg dev` and produces a binary that expects the Vite dev server (`Could not connect to React: Connection refused`).

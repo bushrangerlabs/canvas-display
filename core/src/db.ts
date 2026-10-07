@@ -99,12 +99,46 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     CREATE TABLE IF NOT EXISTS device_media_defaults (
       device_id   TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       media_type  TEXT NOT NULL CHECK (media_type IN ('dab','dispatcharr','music_assistant','youtube','youtube_music')),
-      target_kind TEXT NOT NULL CHECK (target_kind IN ('canvas','music_assistant')),
+      target_kind TEXT NOT NULL CHECK (target_kind IN ('canvas','music_assistant','dlna','media_player')),
       target_id   TEXT NOT NULL,
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (device_id, media_type)
     )
   `);
+
+  // The table originally allowed only canvas/music_assistant destinations. DLNA
+  // renderers and Home Assistant media players were added later, so widen the
+  // check constraint on already-migrated databases. Without this, saving a DLNA
+  // or media_player default violates the old constraint and the whole save is
+  // rolled back (the setting silently fails to persist). Fresh installs get the
+  // widened definition from the CREATE TABLE above.
+  await pool.query(`
+    ALTER TABLE device_media_defaults DROP CONSTRAINT IF EXISTS device_media_defaults_target_kind_check;
+    ALTER TABLE device_media_defaults ADD CONSTRAINT device_media_defaults_target_kind_check
+      CHECK (target_kind IN ('canvas','music_assistant','dlna','media_player'));
+  `);
+
+  // --- audio_endpoints: network mic+speaker peripherals (Pico W) ------------
+  // Core is the control plane only: it holds the registry, issues per-endpoint
+  // tokens, and records which device each endpoint is assigned to. Audio flows
+  // directly between the endpoint and the edge on the LAN.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audio_endpoints (
+      id                 TEXT PRIMARY KEY,
+      name               TEXT NOT NULL DEFAULT '',
+      address            TEXT,
+      port               INTEGER NOT NULL DEFAULT 8090,
+      token              TEXT NOT NULL,
+      token_hash         TEXT NOT NULL,
+      assigned_device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+      firmware_version   TEXT,
+      settings           JSONB NOT NULL DEFAULT '{"playback_volume":15,"treble_db":6,"mic_capture_gain":1,"mic_preemphasis":0.95}'::jsonb,
+      last_seen          TIMESTAMPTZ,
+      created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query("ALTER TABLE audio_endpoints ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{\"playback_volume\":15,\"treble_db\":6,\"mic_capture_gain\":1,\"mic_preemphasis\":0.95}'::jsonb");
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_audio_endpoints_device ON audio_endpoints(assigned_device_id)');
 
   // --- device_invitations: one-time pairing tokens (P-003 bootstrap) ---------
   await pool.query(`

@@ -6,6 +6,9 @@ export interface EndOfSpeechOptions {
   maximumCaptureMs?: number;
   minimumSpeechMs?: number;
   calibrationMs?: number;
+  thresholdFloor?: number;
+  noiseMultiplier?: number;
+  thresholdOffset?: number;
 }
 
 export type CaptureDecision = 'continue' | 'speech-ended' | 'no-speech' | 'maximum';
@@ -19,6 +22,9 @@ export class EndOfSpeechDetector {
   private readonly maximumCaptureMs: number;
   private readonly minimumSpeechMs: number;
   private readonly calibrationMs: number;
+  private readonly thresholdFloor: number;
+  private readonly noiseMultiplier: number;
+  private readonly thresholdOffset: number;
   private elapsedMs = 0;
   private speechMs = 0;
   private silenceAfterSpeechMs = 0;
@@ -35,6 +41,9 @@ export class EndOfSpeechDetector {
     this.maximumCaptureMs = options.maximumCaptureMs ?? 8_000;
     this.minimumSpeechMs = options.minimumSpeechMs ?? 240;
     this.calibrationMs = options.calibrationMs ?? 320;
+    this.thresholdFloor = options.thresholdFloor ?? 350;
+    this.noiseMultiplier = options.noiseMultiplier ?? 1.8;
+    this.thresholdOffset = options.thresholdOffset ?? 120;
   }
 
   push(chunk: Buffer): CaptureDecision {
@@ -91,7 +100,7 @@ export class EndOfSpeechDetector {
   }
 
   private threshold(): number {
-    return Math.max(350, (this.noiseFloor ?? 0) * 1.8 + 120);
+    return Math.max(this.thresholdFloor, (this.noiseFloor ?? 0) * this.noiseMultiplier + this.thresholdOffset);
   }
 }
 

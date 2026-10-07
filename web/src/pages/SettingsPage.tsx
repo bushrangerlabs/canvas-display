@@ -11,7 +11,7 @@
  * Per-device settings will land with the desired/reported state model; for now
  * the device list links to /devices.
  */
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { Fragment, useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box, Stack, Typography, Paper, Button, TextField, Switch, FormControlLabel,
   Divider, Alert, Chip, MenuItem, Select, InputLabel, FormControl, IconButton, Tabs, Tab,
@@ -28,7 +28,7 @@ import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
-import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate, type BroadcastOutput, type BroadcastEventSummary, type MediaConnectionTest } from '../api/client';
+import { coreApi, ApiError, type AiProviderInfo, type AiProviderType, type AiProviderKind, type PrivacySettings, type StorageStatus, type AudioState, type LegacySettings, type MqttStatus, type RequestClassification, type VoiceCommandTemplate, type BroadcastOutput, type BroadcastEventSummary, type MediaConnectionTest, type AudioEndpointRow, type AudioEndpointSettings, type DeviceRow } from '../api/client';
 import { PageHeader, PageBody, LoadingBox, ErrorBanner, fmtBytes } from '../components/ui';
 
 const PROVIDER_FIELDS: { key: string; label: string; placeholder?: string }[] = [
@@ -54,12 +54,12 @@ const CORE_PROVIDER_FIELDS: { key: string; label: string; placeholder: string; e
 interface MediaField { key: string; label: string; placeholder: string; secret?: boolean }
 
 const DAB_FIELDS: MediaField[] = [
-  { key: 'sdr_radio_url', label: 'SDR radio 1 URL', placeholder: 'http://192.168.1.108:8088' },
+  { key: 'sdr_radio_url', label: 'SDR radio 1 URL', placeholder: 'http://core.local:8088' },
   { key: 'sdr_radio_tuner', label: 'SDR radio 1 tuner id', placeholder: 'tuner1' },
-  { key: 'sdr_radio_stream_url', label: 'SDR radio 1 stream URL (Icecast)', placeholder: 'http://192.168.1.108:8001/tuner1.mp3' },
-  { key: 'sdr_radio_2_url', label: 'SDR radio 2 URL', placeholder: 'http://192.168.1.108:8091' },
+  { key: 'sdr_radio_stream_url', label: 'SDR radio 1 stream URL (Icecast)', placeholder: 'http://core.local:8001/tuner1.mp3' },
+  { key: 'sdr_radio_2_url', label: 'SDR radio 2 URL', placeholder: 'http://core.local:8091' },
   { key: 'sdr_radio_2_tuner', label: 'SDR radio 2 tuner id', placeholder: 'tuner1' },
-  { key: 'sdr_radio_2_stream_url', label: 'SDR radio 2 stream URL (Icecast)', placeholder: 'http://192.168.1.108:8002/tuner1.mp3' },
+  { key: 'sdr_radio_2_stream_url', label: 'SDR radio 2 stream URL (Icecast)', placeholder: 'http://core.local:8002/tuner1.mp3' },
 ];
 
 const DISPATCHARR_FIELDS: MediaField[] = [
@@ -68,7 +68,7 @@ const DISPATCHARR_FIELDS: MediaField[] = [
 ];
 
 const MA_FIELDS: MediaField[] = [
-  { key: 'music_assistant_url', label: 'Music Assistant URL', placeholder: 'http://192.168.1.108:8095' },
+  { key: 'music_assistant_url', label: 'Music Assistant URL', placeholder: 'http://core.local:8095' },
   { key: 'music_assistant_token', label: 'Music Assistant token (optional)', placeholder: '••••••••', secret: true },
   { key: 'music_assistant_username', label: 'Music Assistant username', placeholder: 'admin' },
   { key: 'music_assistant_password', label: 'Music Assistant password', placeholder: '••••••••', secret: true },
@@ -265,6 +265,7 @@ export default function SettingsPage() {
               <Tab value="privacy-storage" label="Privacy &amp; storage" />
               <Tab value="ai" label="AI providers" />
               <Tab value="voice-commands" label="Voice commands" />
+              <Tab value="audio-endpoints" label="Audio endpoints" />
             </Tabs>
           </Paper>
           {loading ? <LoadingBox /> : (
@@ -323,7 +324,7 @@ export default function SettingsPage() {
                       label="Canvas Core URL"
                       size="small" fullWidth
                       value={settings.canvas_core_url ?? ''}
-                      placeholder="http://192.168.1.108:3101"
+                      placeholder="http://core.local:3101"
                       onChange={e => setSettings({ ...settings, canvas_core_url: e.target.value })}
                     />
                     <TextField
@@ -431,7 +432,7 @@ export default function SettingsPage() {
                       control={<Switch checked={settings.mqtt_enabled === '1'} onChange={e => setSettings({ ...settings, mqtt_enabled: e.target.checked ? '1' : '0' })} />}
                       label="Enable MQTT in Core"
                     />
-                    <TextField label="Broker URL" size="small" value={settings.mqtt_broker_url ?? ''} placeholder="mqtt://192.168.1.10:1883" onChange={e => setSettings({ ...settings, mqtt_broker_url: e.target.value })} />
+                    <TextField label="Broker URL" size="small" value={settings.mqtt_broker_url ?? ''} placeholder="mqtt://core.local:1883" onChange={e => setSettings({ ...settings, mqtt_broker_url: e.target.value })} />
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
                       <TextField label="Username" size="small" value={settings.mqtt_username ?? ''} onChange={e => setSettings({ ...settings, mqtt_username: e.target.value })} sx={{ flex: 1 }} />
                       <TextField label="Password" type="password" size="small" value={settings.mqtt_password ?? ''} onChange={e => setSettings({ ...settings, mqtt_password: e.target.value })} sx={{ flex: 1 }} />
@@ -591,6 +592,7 @@ export default function SettingsPage() {
                 <AiProvidersSection />
               </>}
               {activeTab === 'voice-commands' && <VoiceCommandTemplatesSection />}
+              {activeTab === 'audio-endpoints' && <AudioEndpointsSection />}
             </>
           )}
         </Stack>
@@ -870,7 +872,7 @@ function BroadcastOutputsSection({ outputs, events, discovering, onDiscover, onU
         <Divider sx={{ mb: 2 }} />
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 2 }}>
           <TextField fullWidth size="small" label="DLNA description URL"
-            placeholder="http://192.168.1.50:49500/description.xml" value={dlnaLocation}
+            placeholder="http://core.local:49500/description.xml" value={dlnaLocation}
             onChange={event => setDlnaLocation(event.target.value)} />
           <Button variant="outlined" disabled={!dlnaLocation.trim()} onClick={() => void onAddDlna(dlnaLocation.trim()).then(() => setDlnaLocation(''))}>
             Add DLNA
@@ -1709,6 +1711,235 @@ function VoiceCommandTemplatesSection() {
           </TableRow>)}</TableBody>
         </Table></TableContainer>
       </>}
+    </Paper>
+  );
+}
+
+/**
+ * Audio endpoints — network mic+speaker peripherals (Pico 2 W). Lists the
+ * registry from Core, shows online/offline, and lets an admin mate an endpoint
+ * to an edge device. Assignment pushes the endpoint into the device's `audio`
+ * desired-state domain so the edge connects automatically.
+ */
+const AUDIO_PROFILE_A: AudioEndpointSettings = { playback_volume: 15, treble_db: 6, mic_capture_gain: 1, mic_preemphasis: 0.95 };
+
+function AudioEndpointsSection() {
+  const [endpoints, setEndpoints] = useState<AudioEndpointRow[]>([]);
+  const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [micResult, setMicResult] = useState<{ id: string; rms: number[] } | null>(null);
+  const [speakerResult, setSpeakerResult] = useState<{ id: string; ok: boolean; detail: string } | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<Record<string, AudioEndpointSettings>>({});
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [ep, dev] = await Promise.all([coreApi.audioEndpoints(), coreApi.devices()]);
+      setEndpoints(ep.endpoints);
+      setDevices(dev.devices);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function assign(id: string, deviceId: string | null) {
+    setBusyId(id);
+    setError(null);
+    setSaved(null);
+    try {
+      await coreApi.assignAudioEndpoint(id, deviceId);
+      setSaved(deviceId ? 'Endpoint assigned — the edge will connect automatically.' : 'Assignment cleared.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function testMic(id: string) {
+    setBusyId(id);
+    setError(null);
+    setMicResult(null);
+    setSpeakerResult(null);
+    try {
+      const res = await coreApi.testAudioEndpointMic(id);
+      if (!res.ok) throw new Error(res.error ?? 'mic test failed');
+      setMicResult({ id, rms: res.rms });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function testSpeaker(id: string) {
+    setBusyId(id);
+    setError(null);
+    setMicResult(null);
+    setSpeakerResult(null);
+    try {
+      const res = await coreApi.testAudioEndpointSpeaker(id);
+      setSpeakerResult({ id, ok: res.ok, detail: res.ok ? `tone sent (${res.bytesSent} bytes)` : (res.error ?? 'failed') });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveAudioSettings(id: string, restoreProfileA = false) {
+    const settings = restoreProfileA ? AUDIO_PROFILE_A : settingsDraft[id];
+    if (!settings) return;
+    setBusyId(id);
+    setError(null);
+    setSaved(null);
+    try {
+      const result = await coreApi.updateAudioEndpointSettings(id, settings);
+      setSettingsDraft(current => ({ ...current, [id]: result.settings }));
+      setSaved('Audio controls saved and pushed to the assigned edge.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(id: string) {
+    if (!window.confirm('Delete this audio endpoint from the registry?')) return;
+    setBusyId(id);
+    setError(null);
+    try {
+      await coreApi.deleteAudioEndpoint(id);
+      setSaved('Endpoint deleted.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // Channel labels for the mic test report (Sipeed R6+1 map).
+  const CHANNEL_LABELS = ['mic0', 'mic1', 'mic2', 'mic3', 'mic4', 'mic5', 'spare', 'centre'];
+
+  return (
+    <Paper sx={{ p: 2 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1 }}>
+        <Typography variant="subtitle1">Audio endpoints</Typography>
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="Refresh"><IconButton size="small" onClick={() => void load()}><RefreshIcon fontSize="small" /></IconButton></Tooltip>
+      </Stack>
+      <Alert severity="info" sx={{ fontSize: 12, bgcolor: 'rgba(100,181,246,0.1)', mb: 2 }}>
+        Network sound cards (Pico 2 W): each one is a speaker + beamforming mic
+        for the edge device it is assigned to. Wake word, ASR and TTS still run
+        on the edge — audio flows directly on the LAN; Core only records the
+        mating and lets you test each Pico.
+      </Alert>
+      {error && <ErrorBanner error={error} onRetry={load} />}
+      {saved && <Alert severity="success" sx={{ bgcolor: 'rgba(74,222,128,0.1)' }} onClose={() => setSaved(null)}>{saved}</Alert>}
+      {micResult && (
+        <Alert severity="info" sx={{ fontSize: 12, bgcolor: 'rgba(100,181,246,0.1)', mb: 1 }} onClose={() => setMicResult(null)}>
+          Mic levels: {micResult.rms.map((r, i) => `${CHANNEL_LABELS[i]}=${r}`).join('  ')}
+        </Alert>
+      )}
+      {speakerResult && (
+        <Alert severity={speakerResult.ok ? 'success' : 'error'} sx={{ fontSize: 12, bgcolor: speakerResult.ok ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)', mb: 1 }} onClose={() => setSpeakerResult(null)}>
+          Speaker test: {speakerResult.detail}
+        </Alert>
+      )}
+      {loading ? <LoadingBox /> : endpoints.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">No endpoints registered yet. Power on a Pico audio endpoint and it will appear here.</Typography>
+      ) : (
+        <TableContainer><Table size="small">
+          <TableHead><TableRow>
+            <TableCell>Endpoint</TableCell>
+            <TableCell>Address</TableCell>
+            <TableCell>Firmware</TableCell>
+            <TableCell>Status</TableCell>
+            <TableCell>Assigned to device</TableCell>
+            <TableCell>Test</TableCell>
+            <TableCell /></TableRow></TableHead>
+          <TableBody>{endpoints.map(ep => {
+            const draft = settingsDraft[ep.id] ?? ep.settings;
+            const changeSetting = (key: keyof AudioEndpointSettings, raw: string) => {
+              const value = Number(raw);
+              if (Number.isFinite(value)) setSettingsDraft(current => ({ ...current, [ep.id]: { ...draft, [key]: value } }));
+            };
+            return (
+              <Fragment key={ep.id}>
+              <TableRow>
+                <TableCell>
+                  <Typography variant="body2">{ep.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">{ep.id}</Typography>
+                </TableCell>
+                <TableCell><Typography variant="caption">{ep.address ? `${ep.address}:${ep.port}` : '—'}</Typography></TableCell>
+                <TableCell><Typography variant="caption">{ep.firmwareVersion ?? '—'}</Typography></TableCell>
+                <TableCell>
+                  <Chip size="small" icon={ep.online ? <WifiIcon /> : <WifiOffIcon />}
+                    label={ep.online ? 'Online' : 'Offline'}
+                    color={ep.online ? 'success' : 'default'} />
+                </TableCell>
+                <TableCell>
+                  <FormControl size="small" fullWidth sx={{ minWidth: 180 }}>
+                    <Select
+                      value={ep.assignedDeviceId ?? ''}
+                      disabled={busyId === ep.id}
+                      displayEmpty
+                      onChange={(e) => void assign(ep.id, e.target.value || null)}
+                      renderValue={(v) => v ? (devices.find(d => d.id === v)?.name ?? v) : 'Unassigned'}
+                    >
+                      <MenuItem value=""><em>Unassigned</em></MenuItem>
+                      {devices.map(d => <MenuItem key={d.id} value={d.id}>{d.name} <Typography variant="caption" color="text.secondary">({d.id})</Typography></MenuItem>)}
+                    </Select>
+                  </FormControl>
+                </TableCell>
+                <TableCell>
+                  <Stack direction="row" spacing={0.5}>
+                    <Tooltip title="Test microphone — reads live levels from the Pico">
+                      <Button size="small" variant="outlined" disabled={busyId === ep.id || !ep.online} onClick={() => void testMic(ep.id)} sx={{ textTransform: 'none', fontSize: 11 }}>Mic</Button>
+                    </Tooltip>
+                    <Tooltip title="Test speaker — plays a tone through the Pico's DAC">
+                      <Button size="small" variant="outlined" disabled={busyId === ep.id || !ep.online} onClick={() => void testSpeaker(ep.id)} sx={{ textTransform: 'none', fontSize: 11 }}>Speaker</Button>
+                    </Tooltip>
+                  </Stack>
+                </TableCell>
+                <TableCell>
+                  <Tooltip title="Delete endpoint"><IconButton size="small" color="error" disabled={busyId === ep.id} onClick={() => void remove(ep.id)}><DeleteForeverIcon fontSize="small" /></IconButton></Tooltip>
+                </TableCell>
+              </TableRow>
+              <TableRow key={`${ep.id}-controls`}>
+                <TableCell colSpan={7} sx={{ pt: 0, pb: 1.5, bgcolor: 'action.hover' }}>
+                  <Stack direction="row" spacing={1.5} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap', pl: 1 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 700, mr: 0.5 }}>Per-endpoint audio controls</Typography>
+                    <TextField size="small" type="number" label="Playback volume %" value={draft.playback_volume} onChange={e => changeSetting('playback_volume', e.target.value)} slotProps={{ htmlInput: { min: 0, max: 100, step: 1 } }} sx={{ width: 140 }} />
+                    <TextField size="small" type="number" label="Treble EQ dB" value={draft.treble_db} onChange={e => changeSetting('treble_db', e.target.value)} slotProps={{ htmlInput: { min: -6, max: 9, step: 1 } }} sx={{ width: 125 }} />
+                    <TextField size="small" type="number" label="Mic capture gain" value={draft.mic_capture_gain} onChange={e => changeSetting('mic_capture_gain', e.target.value)} slotProps={{ htmlInput: { min: 0.5, max: 8, step: 0.1 } }} sx={{ width: 145 }} />
+                    <TextField size="small" type="number" label="Mic pre-emphasis" value={draft.mic_preemphasis} onChange={e => changeSetting('mic_preemphasis', e.target.value)} slotProps={{ htmlInput: { min: 0, max: 0.99, step: 0.01 } }} sx={{ width: 150 }} />
+                    <Tooltip title="Applies playback volume/EQ and raw-mic capture gain/pre-emphasis to the assigned edge">
+                      <span><Button size="small" variant="contained" startIcon={<SaveIcon />} disabled={busyId === ep.id} onClick={() => void saveAudioSettings(ep.id)}>Save</Button></span>
+                    </Tooltip>
+                    <Button size="small" variant="text" disabled={busyId === ep.id} onClick={() => void saveAudioSettings(ep.id, true)}>Restore Profile A</Button>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, pl: 1 }}>
+                    Output volume and treble affect endpoint playback. Capture gain and pre-emphasis affect ASR input only; wake-word DSP is unchanged. Changes apply after the edge polls Core.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+              </Fragment>
+            );
+          })}</TableBody>
+        </Table></TableContainer>
+      )}
     </Paper>
   );
 }

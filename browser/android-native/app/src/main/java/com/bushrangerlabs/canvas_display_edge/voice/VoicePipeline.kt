@@ -45,6 +45,8 @@ class VoicePipeline(
     private val goodIntentSound: String,
     private val noIntentEnabled: Boolean,
     private val noIntentSound: String,
+    /** Assigned Pico audio endpoint as "host:port:token" (empty = local mic). */
+    private val remoteEndpoint: String = "",
     private val onStatus: (String) -> Unit = {},
 ) {
     private companion object {
@@ -70,6 +72,7 @@ class VoicePipeline(
     private val audioManager by lazy { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private var mediaDucked = false
     private var mic: MicCapture? = null
+    private var remote: RemoteAudioEndpoint? = null
     private var mediaPlayer: MediaPlayer? = null
     private var streamingTrack: AudioTrack? = null
     @Volatile private var streamingQueue: LinkedBlockingQueue<ByteArray>? = null
@@ -99,12 +102,23 @@ class VoicePipeline(
     )
 
     fun start() {
-        if (mic?.isRunning == true) return
+        if (mic?.isRunning == true || remote?.isRunning == true) return
         stopped.set(false)
         resumingWakeWord.set(false)
         state = State.WAKE_WORD
         setMediaDucked(true)
         onStatus("listening for wake word")
+        if (remoteEndpoint.isNotBlank()) {
+            val parts = remoteEndpoint.split(":")
+            if (parts.size == 3) {
+                val ep = RemoteAudioEndpoint(parts[0], parts[1].toIntOrNull() ?: 8090, parts[2], deviceId) { chunk -> onMicChunk(chunk) }
+                remote = ep
+                ep.start()
+                onStatus("listening via audio endpoint ${parts[0]}")
+                return
+            }
+            Log.w(TAG, "Invalid remoteEndpoint '$remoteEndpoint' — falling back to local mic")
+        }
         mic = MicCapture(context) { chunk -> onMicChunk(chunk) }.also { it.start() }
     }
 
@@ -112,6 +126,8 @@ class VoicePipeline(
         stopped.set(true)
         mic?.stop()
         mic = null
+        remote?.stop()
+        remote = null
         wakeWordDetector.close()
         mediaPlayer?.release()
         mediaPlayer = null
@@ -258,6 +274,20 @@ class VoicePipeline(
 
     private fun playReply(audioBytes: ByteArray) {
         if (stopped.get()) return
+        val remote = remote
+        if (remote != null) {
+            // Send the PCM straight to the Pico's DAC.
+            val samples = ShortArray(audioBytes.size / 2)
+            for (i in samples.indices) {
+                samples[i] = ((audioBytes[i * 2].toInt() and 0xFF) or ((audioBytes[i * 2 + 1].toInt() and 0xFF) shl 8)).toShort()
+            }
+            remote.play(samples, PIPER_SAMPLE_RATE)
+            Thread {
+                try { Thread.sleep((samples.size * 1000L / PIPER_SAMPLE_RATE) + WAKE_ECHO_COOLDOWN_MS) } catch (_: InterruptedException) { }
+                resumeWakeWord()
+            }.start()
+            return
+        }
         try {
             val tmp = File.createTempFile("canvas-voice-reply", ".wav", context.cacheDir)
             FileOutputStream(tmp).use { it.write(pcm16ToWav(audioBytes, PIPER_SAMPLE_RATE)) }
@@ -337,6 +367,15 @@ class VoicePipeline(
         if (stopped.get() || pcm.isEmpty() || turnGeneration.get() != generation ||
             (state != State.PROCESSING && state != State.PLAYING)
         ) return
+        val remote = remote
+        if (remote != null) {
+            val samples = ShortArray(pcm.size / 2)
+            for (i in samples.indices) {
+                samples[i] = ((pcm[i * 2].toInt() and 0xFF) or ((pcm[i * 2 + 1].toInt() and 0xFF) shl 8)).toShort()
+            }
+            remote.play(samples, PIPER_SAMPLE_RATE)
+            return
+        }
         val now = System.currentTimeMillis()
         if (responseAudioStartedAtMs == 0L) {
             responseAudioStartedAtMs = now
@@ -485,6 +524,11 @@ class VoicePipeline(
                 samples[toneIndex * samplesPerTone + sampleIndex] =
                     (kotlin.math.sin(2.0 * Math.PI * frequency * t) * Short.MAX_VALUE * envelope).toInt().toShort()
             }
+        }
+        val remote = remote
+        if (remote != null) {
+            remote.play(samples, sampleRate)
+            return
         }
         val minBuffer = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val track = AudioTrack.Builder()

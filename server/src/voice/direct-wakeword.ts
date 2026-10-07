@@ -6,6 +6,9 @@ import path from 'path';
 import { getDb } from '../db/index';
 import { config } from '../config';
 import { MicCapture } from './mic';
+import { RemoteEndpoint } from './remote-endpoint';
+import { decodeRemoteAudio } from './remote-audio-output';
+import { getEdgeDeviceId } from './edge-identity';
 import { WakeWordDetector } from './wakeword-local';
 import { runVoiceTurn } from '../services/voice';
 import { buildMpvAudioArgs } from './audio-utils.js';
@@ -54,6 +57,7 @@ export interface DirectWakewordState {
   wakeWord: string;
   wakeThreshold: number;
   micDevice: string;
+  remoteAudio?: ReturnType<RemoteEndpoint['getDiagnostics']>;
   lastDetectionAt?: string;
   lastError?: string;
 }
@@ -67,7 +71,9 @@ const BUILTIN_WAKE_ACK_SOUNDS = new Set([
   'confirm_tone',
 ]);
 
-let mic: MicCapture | null = null;
+let mic: MicCapture | RemoteEndpoint | null = null;
+let outputAbort = new AbortController();
+let turnAbort = new AbortController();
 let detector: WakeWordDetector | null = null;
 let state: DirectWakewordState = {
   status: 'stopped',
@@ -107,6 +113,14 @@ let restartBackoffMs = 2000;
 let ignoreDetectionsUntil = 0;
 const turnStartedAt = new Map<number, number>();
 
+function audioEndpointControl(key: 'playback_volume' | 'treble_db' | 'mic_capture_gain' | 'mic_preemphasis', fallback: number): number {
+  try {
+    const controls = JSON.parse(dbGet('audio_endpoint_controls', '{}')) as Record<string, unknown>;
+    const value = controls[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  } catch { return fallback; }
+}
+
 function dbGet(key: string, fallback: string): string {
   try {
     const row = getDb().prepare('SELECT value FROM server_settings WHERE key = ?').get(key) as { value: string } | undefined;
@@ -137,6 +151,41 @@ function resolveWakeAckSound(raw: string): string {
   if (existsSync(repoPublicPath)) return repoPublicPath;
 
   return packagedPath;
+}
+
+/**
+ * ASR front-end enhancement for the raw centre-mic capture.
+ *
+ * Baseline finding (2026-10-06): the Sipeed array + Pico path captures the
+ * user's speech with only ~2-3% of energy above 1 kHz (vs ~12% for normal
+ * speech), so Whisper loses final consonants ("Big Ben" -> "big bend").
+ * Pre-emphasis (y[n] = x[n] - k*x[n-1]) is the standard speech front-end that
+ * compensates for the mic's high-frequency rolloff; the peak normalization
+ * brings the quiet raw capture (-20 dBFS) up to a healthy ASR level.
+ */
+function enhanceCapture(pcm: Buffer, captureGain = 1, preemphasis = 0.95): Buffer {
+  if (process.env.CANVAS_VOICE_ENHANCE === '0') return pcm;
+  const envCoefficient = process.env.CANVAS_VOICE_PREEMPHASIS;
+  const coefficient = envCoefficient === undefined ? preemphasis : Number(envCoefficient);
+  const k = Number.isFinite(coefficient) ? Math.max(0, Math.min(0.99, coefficient)) : 0.95;
+  const samples = pcm.length / 2;
+  const floats = new Float32Array(samples);
+  let prev = 0;
+  let peak = 0;
+  for (let i = 0; i < samples; i++) {
+    const value = pcm.readInt16LE(i * 2);
+    const emphasized = value - k * prev;
+    floats[i] = emphasized;
+    peak = Math.max(peak, Math.abs(emphasized));
+    prev = value;
+  }
+  const targetPeak = Math.min(32000, 25000 * Math.max(0.5, Math.min(8, captureGain)));
+  const gain = peak > 0 ? Math.min(10, targetPeak / peak) : 1;
+  const out = Buffer.alloc(pcm.length);
+  for (let i = 0; i < samples; i++) {
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(floats[i] * gain))), i * 2);
+  }
+  return out;
 }
 
 function pcm16ToWav(pcm: Buffer, sampleRate = 16000, channels = 1): Buffer {
@@ -175,6 +224,16 @@ function stopWakeAckPlayback(): void {
 
 function playCueSound(soundPath: string): Promise<void> {
   if (!soundPath) return Promise.resolve();
+  if (mic instanceof RemoteEndpoint) {
+    const endpoint = mic;
+    const signal = outputAbort.signal;
+    return decodeRemoteAudio(soundPath, signal).then(pcm => {
+      signal.throwIfAborted();
+      // Cues are confirmations, not speech: keep them quiet so their echo does
+      // not drown out the user's command before AEC is implemented.
+      return endpoint.play(pcm, 22050, 40);
+    });
+  }
   stopWakeAckPlayback();
   return new Promise(resolve => {
     let settled = false;
@@ -206,6 +265,10 @@ function playCueSound(soundPath: string): Promise<void> {
   });
 }
 
+function setEndpointVoiceState(value: 'ready' | 'listening' | 'processing' | 'error'): void {
+  if (mic instanceof RemoteEndpoint) mic.setVoiceState(value);
+}
+
 function builtinCue(name: string): string {
   return resolveWakeAckSound(`builtin:${name}`);
 }
@@ -229,6 +292,9 @@ function containsLikelySpeech(pcm: Buffer): boolean {
 }
 
 function stopTtsPlayback(): void {
+  outputAbort.abort();
+  outputAbort = new AbortController();
+  if (mic instanceof RemoteEndpoint) mic.cancelPlayback();
   ttsPlaying = false;
   ttsPlaybackStartedAt = 0;
   if (!ttsProc) return;
@@ -253,6 +319,7 @@ function setSystemOutputMuted(muted: boolean): Promise<void> {
 }
 
 async function muteOutputForCapture(): Promise<void> {
+  if (mic instanceof RemoteEndpoint) return;
   if (outputMutedForCapture) return;
   outputMutedForCapture = true;
   await setSystemOutputMuted(true);
@@ -264,8 +331,29 @@ async function unmuteOutputAfterCapture(): Promise<void> {
   await setSystemOutputMuted(false);
 }
 
+function playCorePcm(pcm: Buffer, rate: number): Promise<void> {
+  if (!(mic instanceof RemoteEndpoint)) return playTtsAudioBuffer(pcm16ToWav(pcm, rate));
+  const signal = outputAbort.signal;
+  ttsPlaying = true;
+  ttsPlaybackStartedAt = Date.now();
+  return mic.play(pcm, rate, audioEndpointControl('playback_volume', Number(dbGet('voice_tts_volume', '80'))))
+    .finally(() => { if (signal === outputAbort.signal) ttsPlaying = false; });
+}
+
 function playTtsAudioBuffer(audio: Buffer): Promise<void> {
   if (!audio.length) return Promise.resolve();
+  if (mic instanceof RemoteEndpoint) {
+    const endpoint = mic;
+    const signal = outputAbort.signal;
+    const volume = audioEndpointControl('playback_volume', Number(dbGet('voice_tts_volume', '80')));
+    ttsPlaying = true;
+    ttsPlaybackStartedAt = Date.now();
+    return decodeRemoteAudio(audio, signal).then(pcm => {
+      signal.throwIfAborted();
+      return endpoint.play(pcm, 22050, volume);
+    })
+      .finally(() => { if (signal === outputAbort.signal) ttsPlaying = false; });
+  }
   stopTtsPlayback();
 
   const tmpFile = path.join('/tmp', `canvas-display-tts-${Date.now()}.wav`);
@@ -342,9 +430,10 @@ async function runCoreVoiceTurn(wav: Buffer, turnId: string): Promise<{
     },
     body: JSON.stringify({
       audioBase64: wav.toString('base64'),
-      deviceId: process.env.CANVAS_EDGE_DEVICE_ID ?? process.env.CANVAS_DEVICE_ID ?? 'unknown',
+      deviceId: getEdgeDeviceId(),
       turnId,
     }),
+    signal: AbortSignal.any([turnAbort.signal, AbortSignal.timeout(120_000)]),
   });
   const result = await response.json() as {
     transcript?: string;
@@ -389,11 +478,13 @@ async function runCoreVoiceTurnStream(
   wakeStartedAt: number,
 ): Promise<CoreTurnResult & { streamed: StreamPlayback }> {
   const { baseUrl, token } = getCoreBridgeConfig();
+  const signal = AbortSignal.any([turnAbort.signal, AbortSignal.timeout(120_000)]);
   const response = await fetch(`${baseUrl}/api/edge/voice/turn-stream`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ audioBase64: wav.toString('base64'), turnId,
-      deviceId: process.env.CANVAS_EDGE_DEVICE_ID ?? process.env.CANVAS_DEVICE_ID ?? 'unknown' }),
+      deviceId: getEdgeDeviceId() }),
+    signal,
   });
   if (!response.ok || !response.body) throw new Error(`Core streaming voice returned HTTP ${response.status}`);
   const reader = response.body.getReader();
@@ -407,9 +498,12 @@ async function runCoreVoiceTurnStream(
   for (;;) {
     const { value, done } = await reader.read();
     pending += decoder.decode(value, { stream: !done });
+    signal.throwIfAborted();
+    if (done && pending && !pending.endsWith('\n')) pending += '\n';
     const lines = pending.split('\n');
     pending = lines.pop() ?? '';
     for (const line of lines) {
+      signal.throwIfAborted();
       if (!line.trim()) continue;
       const event = JSON.parse(line) as Record<string, any>;
       if (event.type === 'error') throw new Error(String(event.error ?? 'streaming voice failed'));
@@ -448,7 +542,7 @@ async function runCoreVoiceTurnStream(
         const rate = Number.parseInt(process.env.CANVAS_CORE_TTS_SAMPLE_RATE ?? '22050', 10) || 22_050;
         if (firstPlaybackMs < 0) firstPlaybackMs = Math.round(performance.now() - wakeStartedAt);
         const started = performance.now();
-        await playTtsAudioBuffer(pcm16ToWav(raw, rate));
+        await playCorePcm(raw, rate);
         playbackMs += performance.now() - started;
       } else if (event.type === 'end') ttsMs = Number(event.ttsMs) || 0;
     }
@@ -466,7 +560,7 @@ async function reportVoiceMetrics(metrics: Record<string, unknown>): Promise<voi
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         ...metrics,
-        deviceId: process.env.CANVAS_EDGE_DEVICE_ID ?? process.env.CANVAS_DEVICE_ID ?? 'unknown',
+        deviceId: getEdgeDeviceId(),
       }),
     });
   } catch (error) {
@@ -554,15 +648,26 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
   captureActive = false;
   endOfSpeech = null;
   await unmuteOutputAfterCapture();
+  if (turnId !== activeTurnId) return;
+
+  if (process.env.CANVAS_VOICE_SAVE_CAPTURE === '1') {
+    try {
+      const file = path.join('/tmp', `canvas-capture-${correlationId}.wav`);
+      writeFileSync(file, pcm16ToWav(pcm));
+      console.log(`[wakeword:direct] Saved capture to ${file} bytes=${pcm.length}`);
+    } catch (error) {
+      console.warn('[wakeword:direct] Failed to save capture:', (error as Error).message);
+    }
+  }
 
   if (captureDecision === 'no-speech' || !containsLikelySpeech(pcm)) {
     if (activeSettings.noIntentEnabled) {
-      await playCueSound(activeSettings.noIntentSound);
+      await playCueSound(activeSettings.noIntentSound).catch(() => undefined);
     }
-    if (turnId === activeTurnId) {
-      processing = false;
-      state.status = 'running';
-    }
+    if (turnId !== activeTurnId) return;
+    processing = false;
+    state.status = 'running';
+    setEndpointVoiceState('ready');
     detector?.restart();
     ignoreDetectionsUntil = Date.now() + 1_500;
     captureFinishing = false;
@@ -571,7 +676,15 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
   }
 
   try {
-    const wav = pcm16ToWav(pcm);
+    setEndpointVoiceState('processing');
+    const enhanced = enhanceCapture(pcm, audioEndpointControl('mic_capture_gain', 1), audioEndpointControl('mic_preemphasis', 0.95));
+    const wav = pcm16ToWav(enhanced);
+    if (process.env.CANVAS_VOICE_SAVE_CAPTURE === '1') {
+      try {
+        const file = path.join('/tmp', `canvas-capture-enhanced-${correlationId}.wav`);
+        writeFileSync(file, wav);
+      } catch { /* diagnostic only */ }
+    }
     console.log('[wakeword:direct] Captured audio, running direct voice turn');
     const coreBridgeConfigured = Boolean(
       (() => { const { baseUrl, token } = getCoreBridgeConfig(); return baseUrl && token; })(),
@@ -651,7 +764,8 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
         // Capture itself still has exclusive access to microphone audio.
         const playbackStartedAt = performance.now();
         const firstPlaybackMs = Math.round(playbackStartedAt - wakeStartedAt);
-        await playTtsAudioBuffer(playable);
+        if (coreAudio) await playCorePcm(audioBuffer, ttsRate);
+        else await playTtsAudioBuffer(playable);
         const playbackMs = Math.round(performance.now() - playbackStartedAt);
         const totalMs = Math.round(performance.now() - wakeStartedAt);
         const coreTimings = 'timings' in result
@@ -681,6 +795,7 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
           totalMs,
         });
       } catch (err) {
+        if (mic instanceof RemoteEndpoint) throw err;
         console.warn('[wakeword:direct] Failed to decode TTS audio:', (err as Error).message);
       }
     }
@@ -711,13 +826,15 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     state.status = 'running';
     state.lastError = undefined;
   } catch (err) {
+    if (turnId !== activeTurnId || turnAbort.signal.aborted) return;
     const message = err instanceof Error ? err.message : String(err);
     state.status = 'error';
     state.lastError = message;
     setVoiceStateError(message);
+    setEndpointVoiceState('error');
     console.error('[wakeword:direct] Voice turn failed:', message);
     if (activeSettings.noIntentEnabled) {
-      await playCueSound(activeSettings.noIntentSound);
+      await playCueSound(activeSettings.noIntentSound).catch(() => undefined);
     }
   } finally {
     if (turnId !== activeTurnId) return;
@@ -732,6 +849,7 @@ async function finishCaptureAndRunTurn(turnId: number): Promise<void> {
     if (state.status !== 'error') {
       state.status = 'running';
     }
+    setEndpointVoiceState(state.status === 'error' ? 'error' : 'ready');
   }
 }
 
@@ -749,6 +867,8 @@ async function handleWakewordDetected(): Promise<void> {
   }
 
   const interruptedTts = ttsPlaying;
+  turnAbort.abort();
+  turnAbort = new AbortController();
   const turnId = ++activeTurnId;
   turnStartedAt.set(turnId, performance.now());
   for (const staleTurnId of turnStartedAt.keys()) {
@@ -762,19 +882,37 @@ async function handleWakewordDetected(): Promise<void> {
   processing = true;
   state.status = 'processing';
   state.lastDetectionAt = new Date().toISOString();
+  setEndpointVoiceState('listening');
+  console.log('[wakeword:direct] Wake triggered; endpoint indicator=listening');
   setVoiceStateListening();
   captureChunks = [];
   captureDecision = 'continue';
   captureActive = false;
   captureFinishing = false;
   await unmuteOutputAfterCapture();
+  if (turnId !== activeTurnId || turnAbort.signal.aborted) return;
 
   const wakeCue = activeSettings.wakeAckEnabled ? activeSettings.wakeAckSound : '';
-  await playCueSound(wakeCue);
+  try { await playCueSound(wakeCue); } catch (error) {
+    if (turnId !== activeTurnId) return;
+    console.warn('[wakeword:direct] Remote cue failed:', (error as Error).message);
+  }
+  if (turnId !== activeTurnId || turnAbort.signal.aborted) return;
 
   // Capture a short utterance window after wake word trigger.
   await muteOutputForCapture();
-  endOfSpeech = new EndOfSpeechDetector();
+  if (turnId !== activeTurnId || turnAbort.signal.aborted) return;
+  endOfSpeech = new EndOfSpeechDetector({
+    // Baseline tuning (2026-10-06): the previous 1.2 s wait-to-start and 650 ms
+    // trailing silence closed the window mid-utterance for longer commands.
+    // Keep the 8 s hard cap; revisit after repeated-turn acceptance.
+    noSpeechTimeoutMs: 4000,
+    trailingSilenceMs: 1000,
+    minimumSpeechMs: 120,
+    thresholdFloor: 120,
+    noiseMultiplier: 1.5,
+    thresholdOffset: 50,
+  });
   captureActive = true;
   captureTimer = setTimeout(() => {
     void finishCaptureAndRunTurn(turnId);
@@ -784,10 +922,53 @@ async function handleWakewordDetected(): Promise<void> {
 function attachMicAndDetector(): void {
   if (mic || detector) return;
 
-  mic = new MicCapture(activeSettings.micDevice);
+  const host = dbGet('audio_endpoint_host', process.env.AUDIO_ENDPOINT_HOST ?? '').trim();
+  mic = host ? new RemoteEndpoint({
+    host,
+    port: Number(dbGet('audio_endpoint_port', process.env.AUDIO_ENDPOINT_PORT ?? '8090')),
+    token: dbGet('audio_endpoint_token', process.env.AUDIO_ENDPOINT_TOKEN ?? ''),
+    deviceId: getEdgeDeviceId(),
+    playbackTrebleDb: audioEndpointControl('treble_db', 6),
+  }) : new MicCapture(activeSettings.micDevice);
+  console.log(`[wakeword:direct] audio source=${host ? 'remote-pico' : 'local'}`);
+  if (mic instanceof RemoteEndpoint) mic.on('status', status => {
+    console.log('[wakeword:direct] endpoint', status);
+    if (status === 'mic-disconnected') {
+      activeTurnId++;
+      turnAbort.abort();
+      stopTtsPlayback();
+      captureFinishing = false;
+      clearCaptureTimer();
+      captureActive = false;
+      captureChunks = [];
+      endOfSpeech = null;
+      processing = false;
+      state.status = 'starting';
+      setEndpointVoiceState('ready');
+    } else if (status === 'playback-disconnected') {
+      stopTtsPlayback();
+    } else if (status === 'mic-ready') {
+      turnAbort = new AbortController();
+      detector?.restart();
+      state.status = 'running';
+      setEndpointVoiceState('ready');
+    }
+  });
   detector = new WakeWordDetector(activeSettings.wakeWord, activeSettings.wakeThreshold);
 
   mic.on('data', (chunk: Buffer) => {
+    // Wake-word path consumes the DSP output (gate/AGC) unchanged.
+    if (processing) {
+      if (ttsPlaying) detector?.feed(chunk);
+      return;
+    }
+    if (Date.now() < ignoreDetectionsUntil) return;
+    detector?.feed(chunk);
+  });
+
+  // Capture path consumes the raw centre mic (ch7), bypassing the gate/AGC
+  // that can attenuate consonants and amplify room noise between words.
+  mic.on('rawdata', (chunk: Buffer) => {
     if (processing && captureActive) {
       captureChunks.push(chunk);
       const decision = endOfSpeech?.push(chunk) ?? 'continue';
@@ -797,24 +978,15 @@ function attachMicAndDetector(): void {
         console.log(`[wakeword:direct] Capture completed reason=${decision} duration_ms=${endOfSpeech?.durationMs ?? 0} rms=${diagnostics?.rms ?? 0} noise_floor=${diagnostics?.noiseFloor ?? 0} speech_threshold=${diagnostics?.speechThreshold ?? 0}`);
         void finishCaptureAndRunTurn(activeTurnId);
       }
-      return;
     }
-    // Keep the model current during response playback, while suppressing its
-    // own detections. Restarting after the turn discards speaker audio queued
-    // in the subprocess and gives the next real wake word a clean model state.
-    if (processing) {
-      if (ttsPlaying) detector?.feed(chunk);
-      return;
-    }
-    if (Date.now() < ignoreDetectionsUntil) return;
-    detector?.feed(chunk);
   });
 
   mic.on('error', (err: Error) => {
     state.status = 'error';
     state.lastError = err.message;
+    setEndpointVoiceState('error');
     console.error('[wakeword:direct] Microphone error:', err.message);
-    scheduleRestart(`Microphone error: ${err.message}`);
+    if (!(mic instanceof RemoteEndpoint)) scheduleRestart(`Microphone error: ${err.message}`);
   });
 
   mic.on('close', (code) => {
@@ -888,6 +1060,8 @@ function attachMicAndDetector(): void {
 }
 
 async function detachMicAndDetector(): Promise<void> {
+  turnAbort.abort();
+  activeTurnId++;
   clearCaptureTimer();
   stopWakeAckPlayback();
   stopTtsPlayback();
@@ -899,7 +1073,6 @@ async function detachMicAndDetector(): Promise<void> {
   processing = false;
   ttsPlaying = false;
   ttsPlaybackStartedAt = 0;
-  activeTurnId++;
 
   if (detector) {
     detector.removeAllListeners();
@@ -920,7 +1093,7 @@ export function isDirectWakewordEnabled(): boolean {
 }
 
 export function getDirectWakewordState(): DirectWakewordState {
-  return { ...state };
+  return { ...state, ...(mic instanceof RemoteEndpoint ? { remoteAudio: mic.getDiagnostics() } : {}) };
 }
 
 export function updateDirectWakewordSettings(settings: Partial<DirectWakewordSettings>): void {
@@ -956,6 +1129,7 @@ export async function startDirectWakeword(): Promise<void> {
 
   if (mic || detector) return;
 
+  turnAbort = new AbortController();
   state.status = 'starting';
   state.enabled = true;
   state.micDevice = loaded.micDevice;

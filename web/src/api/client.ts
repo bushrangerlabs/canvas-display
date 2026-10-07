@@ -160,6 +160,25 @@ export interface DevicesResponse {
   invitations: InvitationRecord[];
 }
 
+export interface AudioEndpointSettings {
+  playback_volume: number;
+  treble_db: number;
+  mic_capture_gain: number;
+  mic_preemphasis: number;
+}
+
+export interface AudioEndpointRow {
+  id: string;
+  name: string;
+  address: string | null;
+  port: number;
+  assignedDeviceId: string | null;
+  firmwareVersion: string | null;
+  lastSeen: string | null;
+  online: boolean;
+  settings: AudioEndpointSettings;
+}
+
 export interface BroadcastOutput {
   id: string;
   logical_id: string;
@@ -607,6 +626,31 @@ export const coreApi = {
     api.delete<{ ok: boolean }>(`/api/admin/devices/${id}`),
   updateDevice: (id: string, patch: { name?: string; display_width?: number | null; display_height?: number | null }) =>
     api.put<{ device: DeviceRow }>(`/api/admin/devices/${id}`, patch),
+
+  // Audio endpoints (Pico mic+speaker peripherals)
+  audioEndpoints: () =>
+    api.get<{ endpoints: AudioEndpointRow[] }>('/api/admin/audio-endpoints'),
+  updateAudioEndpointSettings: (id: string, settings: AudioEndpointSettings) =>
+    api.put<{ ok: boolean; id: string; settings: AudioEndpointSettings }>(
+      `/api/admin/audio-endpoints/${encodeURIComponent(id)}/settings`, { settings },
+    ),
+  assignAudioEndpoint: (id: string, deviceId: string | null) =>
+    api.put<{ ok: boolean; id: string; deviceId: string | null }>(
+      `/api/admin/audio-endpoints/${encodeURIComponent(id)}/assign`,
+      { deviceId },
+    ),
+  deleteAudioEndpoint: (id: string) =>
+    api.delete<{ ok: boolean }>(`/api/admin/audio-endpoints/${encodeURIComponent(id)}`),
+  testAudioEndpointMic: (id: string) =>
+    api.post<{ ok: boolean; frames: number; rms: number[]; error?: string }>(
+      `/api/admin/audio-endpoints/${encodeURIComponent(id)}/test-mic`,
+      undefined,
+    ),
+  testAudioEndpointSpeaker: (id: string) =>
+    api.post<{ ok: boolean; bytesSent: number; error?: string }>(
+      `/api/admin/audio-endpoints/${encodeURIComponent(id)}/test-speaker`,
+      undefined,
+    ),
 
   // Scenes
   scenes: () => api.get<ScenesResponse>('/api/admin/scenes'),

@@ -13,6 +13,14 @@ val keystorePropertiesFile = rootProject.file("keystore.properties")
 val hasReleaseSigning = keystorePropertiesFile.exists().also { ok ->
     if (ok) keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
+val defaultCoreUrl = providers.gradleProperty("canvasCoreUrl")
+    .orElse(providers.environmentVariable("CANVAS_CORE_URL"))
+    .getOrElse("")
+val escapedDefaultCoreUrl = defaultCoreUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+val defaultCoreUrl = providers.gradleProperty("canvasCoreUrl")
+    .orElse(providers.environmentVariable("CANVAS_CORE_URL"))
+    .getOrElse("")
+val escapedDefaultCoreUrl = defaultCoreUrl.replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
     namespace = "com.bushrangerlabs.canvas_display_edge"
@@ -25,6 +33,8 @@ android {
         versionCode = 4
         versionName = "0.3.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEFAULT_CORE_URL", "\"$escapedDefaultCoreUrl\"")
+        buildConfigField("String", "DEFAULT_CORE_URL", "\"$escapedDefaultCoreUrl\"")
     }
 
     buildFeatures {

@@ -1,0 +1,39 @@
+; 4-lane I2S receiver for the Sipeed mic array.
+;
+; The array exposes four stereo I2S data lines (MIC_D0..D3 on GPIO0..3) sharing
+; MIC_WS (GPIO4) and MIC_CK (GPIO5). We read the four data pins as a group on
+; each MIC_CK edge and autopush every 32 bits (8 CK samples). The CPU then
+; de-interleaves the 4-bit groups into 8 channels (see audio.c).
+;
+; In pins (4, base = AE_PIN_MIC_D0 = GPIO0): D0..D3.
+; The sampler waits on MIC_CK (GPIO5).
+
+.program i2s_in_4lane
+.wrap_target
+    wait 1 pin, 5      ; MIC_CK high
+    in pins, 4         ; sample D0..D3
+    wait 0 pin, 5      ; MIC_CK low
+.wrap
+
+; I2S master clock generator for MIC_CK + MIC_WS, used only when
+; AE_MIC_I2S_MASTER is 1 (the array is a slave and needs the host to clock it).
+;
+; Sideset (2 pins, base = AE_PIN_MIC_WS = GPIO4):
+;   bit0 = WS (GPIO4)
+;   bit1 = CK (GPIO5)
+;
+; One iteration = one CK period. WS toggles every 32 CK (32-bit slots).
+
+.program i2s_clk_gen
+.side_set 2
+
+.wrap_target
+    set x, 31          side 0b00   ; left slot, WS low
+lslot:
+    nop                side 0b10   ; CK high
+    jmp x-- lslot      side 0b00   ; CK low
+    set x, 31          side 0b01   ; right slot, WS high
+rslot:
+    nop                side 0b11   ; CK high
+    jmp x-- rslot      side 0b01   ; CK low
+.wrap

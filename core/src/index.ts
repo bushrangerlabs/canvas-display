@@ -71,6 +71,7 @@ import { createHermesClient } from './hermes-client.js';
 import { loadCorpus } from './hermes-corpus.js';
 import { registerLegacyRoutes, requestDeviceAction, sendCommand, hasConnectedBrowserClient, getDeviceIp, mediaSetting, broadcast, reportDeviceMediaState } from './legacy-routes.js';
 import { registerAiProviderRoutes, syncRegistryFromDb } from './ai-providers.js';
+import { registerAudioEndpointRoutes, assignedEndpointForDevice } from './audio-endpoints.js';
 import { registerMcpServerRoutes, loadMcpServerConfigs, buildMultiMcpFromDb, seedMcpServersFromEnv } from './mcp-servers.js';
 import { installLogger, setLevel, getLevel } from './logger.js';
 import type { LogLevel } from './logger.js';
@@ -514,6 +515,17 @@ async function main(): Promise<void> {
 
   // --- Phase 2 per-device desired/reported state (plan doc §10.2, §12.6) ---
   const stateRepo = new PgStateRepository(pool);
+
+  // Network mic+speaker peripherals (Pico W audio endpoints). Assignment pushes
+  // the endpoint into the device's `audio` desired-state domain; the edge polls
+  // /api/edge/audio/assignment to learn its mate.
+  registerAudioEndpointRoutes(fastify, pool, {
+    requireAdmin,
+    setDesiredState: (deviceId, domain, state) => setDesiredState(stateRepo, deviceId, domain, state),
+    resolveEdgeVoiceToken,
+    checkEdgeVoiceAuth,
+  });
+
   await registerStateRoutes(fastify, { repo: stateRepo, requireAdmin });
 
   // --- Phase 4 content-addressed asset storage (plan doc §18.1) ------------
@@ -1059,6 +1071,7 @@ async function main(): Promise<void> {
     const voice = res.rows[0].voice_config ?? {};
     const audio = res.rows[0].audio_config ?? {};
     const token = await resolveEdgeVoiceToken('');
+    const assignment = await assignedEndpointForDevice(pool, id);
     return {
       wake_word: voice.wake_word ?? 'hey_jarvis',
       wake_threshold: voice.wake_threshold ?? 0.5,
@@ -1075,6 +1088,10 @@ async function main(): Promise<void> {
       snapcast_enabled: audio.snapcast_enabled ?? true,
       snapcast_host: audio.snapcast_host ?? '',
       snapcast_port: audio.snapcast_port ?? 1704,
+      // Assigned Pico audio endpoint (mic+speaker). Null when unassigned.
+      audio_endpoint: assignment
+        ? { endpoint_id: assignment.id, address: assignment.address, port: assignment.port, token: assignment.token }
+        : null,
       edge_voice_token: token,
     };
   });

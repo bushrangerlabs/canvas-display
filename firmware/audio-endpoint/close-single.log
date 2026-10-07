@@ -1,0 +1,49 @@
+[ae] ACCEPT session=1 pcb=20029D80
+
+[ae] RX HELLO session=1 role=0
+
+[ae] MIC ENABLE session=1 pcb=20029D80
+
+[ae] AUTH OK session=1 role=0
+
+[ae] sending mic frame 0
+
+[ae] PUMP SEND session=1 len=5131 err=0 sndbuf=6544 qlen=5
+
+[ae] tcp_sent session=1 len=5 sndbuf=6549 qlen=4
+
+[ae] sending mic frame 1
+
+[ae] PUMP SEND session=1 len=5131 err=0 sndbuf=1418 qlen=9
+
+[ae] tcp_sent session=1 len=1460 sndbuf=2878 qlen=8
+
+[ae] tcp_sent session=1 len=1460 sndbuf=4338 qlen=7
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5798 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=7258 qlen=4
+
+[ae] tcp_sent session=1 len=1460 sndbuf=8718 qlen=3
+
+[ae] sending mic frame 2
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5047 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=6507 qlen=5
+
+[ae] tcp_sent session=1 len=1460 sndbuf=2836 qlen=8
+
+[ae] tcp_sent session=1 len=1460 sndbuf=4296 qlen=7
+
+[ae] tcp_sent session=1 len=1460 sndbuf=5756 qlen=6
+
+[ae] tcp_sent session=1 len=1460 sndbuf=7216 qlen=4
+
+[ae] RX FIN session=1 pcb=20029D80
+
+[ae] CLOSE REQUEST session=1 pcb=20029D80 sndbuf=7216 qlen=4 slots=1
+
+[ae] tcp_close session=1 err=0
+
+[ae] CLOSE RELEASE session=1 slots=0
